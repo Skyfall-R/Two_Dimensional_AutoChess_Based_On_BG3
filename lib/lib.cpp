@@ -1,755 +1,1523 @@
 #include <lib.hpp>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <sstream>
-#include <iomanip>
-#include <cstdlib>
-#include <cmath>
 #include <algorithm>
-#include <map>
-#include <functional>
+#include <cmath>
 #include <limits>
+#include <queue>
+#include <sstream>
 
+namespace autochess {
 
-// ChessType 方法实现
-ChessType* ChessType::find_target() {
-    std::vector<ChessType*>& enemies = game->get_opponent(owner)->chess;
-    ChessType* closest = nullptr;
-    int min_dist = 100;
+namespace {
 
-    for (ChessType* enemy : enemies) {
-        if (enemy->units() <= 0) continue;
+constexpr int kRoleTank = 1 << 0;
+constexpr int kRoleMelee = 1 << 1;
+constexpr int kRoleRanged = 1 << 2;
+constexpr int kRoleAir = 1 << 3;
+constexpr int kRoleSupport = 1 << 4;
+constexpr int kRoleControl = 1 << 5;
+constexpr int kRoleSummoner = 1 << 6;
+constexpr int kRoleAssassin = 1 << 7;
+constexpr int kRoleAoe = 1 << 8;
 
-        // --- 攻击者与目标的类型匹配逻辑 ---
-
-        // 规则1：如果攻击者是地面单位，而目标是空中单位
-        if (this->terrain_type == "land" && enemy->terrain_type == "air") {
-            // 只有特定地面单位可以对空，否则跳过此目标
-            if (this->name.find("Witch") == std::string::npos &&
-                this->name.find("Archer") == std::string::npos &&
-                this->name.find("DefenseTower") == std::string::npos) {
-                continue;
-            }
-        }
-        
-        // 规则2：如果攻击者是气球兵，它不能攻击空中目标
-        if (this->name.find("Balloon") != std::string::npos && enemy->terrain_type == "air") {
-            continue;
-        }
-
-        int dist = abs(position - enemy->position);
-        if (dist <= atk_distance && dist < min_dist) {
-            min_dist = dist;
-            closest = enemy;
-        }
-    }
-    return closest;
+int playerIndex(PlayerId player) {
+    return player == PlayerId::One ? 0 : 1;
 }
 
-
-void ChessType::die() {// 棋子死亡处理
-    auto& cell = game->board.board[position];
-    cell.erase(std::remove(cell.begin(), cell.end(), this), cell.end());
-    std::string color = (owner == game->players[0]) ? BLUE : RED;
-    std::cout  << color << name << RESET << " at position " << position << " has died.\n";
+bool isInternalUnit(UnitType type) {
+    return type == UnitType::DefenseTower || type == UnitType::SkeletonByWitch ||
+           type == UnitType::Treant;
 }
 
-void ChessType::move() {// 棋子行动逻辑
-    if (current_time() - last_move_time >= 0.6 / speed) {// 棋子移动逻辑中的检查环节
-
-        ChessType* target = find_target();
-        int dir = (owner == game->players[0]) ? 1 : -1;
-        int cur = position;
-        int next = cur;
-
-        // 地面单位在当前位置遇到敌方气球或防御塔则停下（防擦肩）
-        if (terrain_type == "land") {
-            for (ChessType* piece : game->board.board[cur]) {
-                if (piece->owner != owner &&
-                    (piece->terrain_type == "air" || piece->name == "DefenseTower")) {
-                    last_move_time = current_time();
-                    return;
-                }
-            }
-        }
-        
-        //气球AI修正
-        if (terrain_type == "air") { // 空中单位移动逻辑
-            if (target) { // 如果有目标
-                int target_pos = target->position;
-                if (position == target_pos) { // 如果已经在目标头顶
-                    last_move_time = current_time();
-                    // 停止移动，以便进行攻击
-                    // 直接返回，不改变位置
-                    return; 
-                }
-
-                // 计算到目标的距离和方向，确保可以飞向目标，而不是单向前进
-                int distance = target_pos - position;
-                int move_dir = (distance > 0) ? 1 : -1;
-
-                // 移动步数不能超过自身速度，也不能越过目标
-                int move_amount = std::min(speed, std::abs(distance));
-                next = position + move_dir * move_amount;
-
-            } else { // 如果没有目标，则继续朝对方基地前进
-                for (int i = 0; i < speed; ++i) {
-                    int trial = next + dir;
-                    if (trial < 0 || trial > 20) break;
-                    next = trial;
-                }
-            }
-        } else {// 地面单位逻辑
-            if (target && abs(cur - target->position) <= atk_distance) {
-                last_move_time = current_time();
-                return;
-            }
-
-            for (int i = 0; i < speed; ++i) {
-                int trial = next + dir;
-                if (trial < 0 || trial > 20) break;
-
-                bool enemy_blocking = false;
-                for (ChessType* piece : game->board.board[trial]) {
-                    // 敌方防御塔阻挡
-                    if (piece->name == "DefenseTower" && piece->owner != owner) {
-                        enemy_blocking = true;
-                        break;
-                    }
-                    if (piece->owner != owner) {
-                        // 阻挡地面单位前进的敌方气球兵
-                        if (piece->terrain_type == "air") {
-                            enemy_blocking = true;
-                            break;
-                        }
-
-                        // 敌人在攻击范围内，停止移动
-                        if (abs(trial - cur) <= atk_distance) {
-                            last_move_time = current_time();
-                            return;
-                        }
-
-                        // 其他远处阻挡路径的敌人也阻挡移动
-                        enemy_blocking = true;
-                        break;
-                    }
-                }
-                if (enemy_blocking) break;
-
-                next = trial;
-            }
-        }
-
-
-        if (next != cur) {
-            auto& cell = game->board.board[cur];
-            cell.erase(std::remove(cell.begin(), cell.end(), this), cell.end());
-            position = next;
-            game->board.board[position].push_back(this);
-        }
-
-        last_move_time = current_time();
-    }
+bool isRoundTransientUnit(UnitType type) {
+    return type == UnitType::SkeletonByWitch || type == UnitType::Treant;
 }
 
-
-
-void ChessType::attack() {// 棋子攻击逻辑
-    if (current_time() - last_attack_time >= 0.6) {
-        for (int i = 0; i < units(); ++i) {
-            ChessType* target = find_target();
-            if (target) {
-                // 颜色显示：自己颜色蓝，敌人红
-                std::string my_color = (owner->name == "Player1") ? BLUE : RED;
-                std::string target_color = (target->owner->name == "Player1") ? BLUE : RED;
-
-                std::cout << my_color << name << RESET << " at " << position
-                          << " attacks "
-                          << target_color << target->name << RESET << " at "
-                          << target->position << " for "
-                          << atk << " damage" << RESET << "\n";
-
-                target->receive_damage(atk, this);
-            }
-        }
-        last_attack_time = current_time();
-    }
+int sign(int value) {
+    if (value > 0) return 1;
+    if (value < 0) return -1;
+    return 0;
 }
 
-void ChessType::receive_damage(int dmg, ChessType* attacker) {// 棋子受击判定
-    if (unit_hp.empty()) return;
-
-    int idx = rand() % unit_hp.size();
-    unit_hp[idx] -= dmg;
-
-    std::string self_color = (owner->name == "Player1") ? BLUE : RED;
-
-    std::cout << self_color << name << RESET << "'s unit " << idx
-              << " takes " << YELLOW << dmg << RESET
-              << " damage, " << YELLOW << "HP now: " << unit_hp[idx] << RESET << "\n";
-
-    if (unit_hp[idx] <= 0) {
-        unit_hp.erase(unit_hp.begin() + idx);
-    }
-
-    if (unit_hp.empty()) {
-        die();
-    }
+template <typename T>
+void eraseValue(std::vector<T>& values, const T& value) {
+    values.erase(std::remove(values.begin(), values.end(), value), values.end());
 }
 
-// Player 方法实现
-void Player::get_money(){// 金币逻辑，增加了一个优劣势的判定，劣势方每两个回合多得一个金币
-    if (current_time() - last_money_time >= 1) {
-        bool is_disadvantaged = false;
-        if (game) {
-            if (this == game->players[0]) {
-                is_disadvantaged = game->player2_is_advantaged;
-            } else {
-                is_disadvantaged = game->player1_is_advantaged;
-            }
-        }
-        if (game->round%2 == 0)
-            money += is_disadvantaged ? 4 : 3;
-        else
-            money += 3;
-        last_money_time = current_time();
-    }
+int totalHp(const Unit& unit) {
+    int total = 0;
+    for (int hp : unit.hp) total += hp;
+    return total;
 }
 
-// Game 方法实现
-void Game::display_board() {// GLI界面显示
-    std::cout << "\n======= Round " << round << " =======\n\n";
-    std::cout << "Chessboard (P=Player1, E=Player2 or AI):\n";
-    std::cout << BLUE << "Blue" << RESET << " = Player1    "
-              << RED << "Red" << RESET << " = Player2 / AI\n";
-
-    // 显示空中单位（Sky）
-    std::cout << "\n[Sky]:\n";
-    for (int layer = 1 ;layer >= 0; --layer) {
-         for (int i = 0; i < 21; ++i) {
-            if (i == 10) std::cout << " | ";
-
-            // 统计每个名字+玩家组合的空中单位总数
-            std::map<std::pair<std::string, Player*>, int> sky_count;
-            for (ChessType* unit : board.board[i]) {
-                if (unit->terrain_type == "air" && unit->units() > 0 && unit->name.find("DefenseTower") == std::string::npos) {
-                    std::pair<std::string, Player*> key = {unit->name, unit->owner};
-                    sky_count[key] += unit->units();
-                }
-            }
-
-            std::string cell_display = "";
-
-            std::vector<std::string> display_units;
-            for (const auto& pair : sky_count) {
-                const auto& key = pair.first;
-                int total_units = pair.second;
-
-                std::string name_to_show = key.first;
-                char initial = name_to_show[0];
-                if (name_to_show.find("BabyDragon") != std::string::npos) initial = 'D';
-                if (name_to_show.find("Minions") != std::string::npos) initial = 'M'; // 为亡灵也添加缩写
-                
-
-                Player* owner = key.second;
-                std::ostringstream oss;
-                oss << initial << "(" << total_units << ")";
-                std::string padded = oss.str();
-                while (padded.length() < 6) padded += " ";
-                std::string color = (owner == players[0]) ? BLUE : RED;
-                display_units.push_back(color + padded + RESET);
-            }
-
-            // 根据当前 layer 从 vector 中取出要显示的内容
-            if (layer < display_units.size()) {
-                cell_display = display_units[layer];
-            }
-
-            std::cout << std::setw(6) << std::left << cell_display;
-        }
-
-        std::cout << "\n";
-    }
-   
-
-    // 防御塔位置和图案
-    const std::vector<int> tower_positions = {2, 18};
-    const std::string tower_graphic[3] = {"  #  ", " ### ", "#####"};
-
-    // 打印地面单位 + 防御塔图形
-    for (int layer = 3; layer >= 0; --layer) {
-        for (int i = 0; i < 21; ++i) {
-            if (i == 10) std::cout << " | ";
-
-            std::string cell_display = "      ";
-            bool is_tower_here = std::find(tower_positions.begin(), tower_positions.end(), i) != tower_positions.end();
-
-            bool tower_alive = false;
-            int owner_idx = -1;
-            for (ChessType* unit : board.board[i]) {
-                if (unit->name.find("DefenseTower") != std::string::npos && unit->units() > 0) {
-                    tower_alive = true;
-                    owner_idx = (unit->owner == players[0]) ? 0 : 1;
-                    break;
-                }
-            }
-
-            std::string tower_color = (owner_idx == 0) ? BLUE : RED;
-
-            if (is_tower_here && tower_alive && layer <= 2) {
-                std::string raw = tower_graphic[2 - layer];
-                int pad_left = (6 - raw.size()) / 2;
-                std::string padded = std::string(pad_left, ' ') + raw + std::string(6 - pad_left - raw.size(), ' ');
-                cell_display = tower_color + padded + RESET;
-            } else {
-                std::vector<ChessType*>& cell = board.board[i];
-                std::map<std::pair<std::string, Player*>, int> count_map;
-
-                for (ChessType* unit : cell) {
-                    if (unit->units() > 0 && unit->terrain_type == "land" && unit->name.find("DefenseTower") == std::string::npos) {
-                        std::pair<std::string, Player*> key = {unit->name, unit->owner};
-                        count_map[key] += unit->units();
-                    }
-                }
-
-                std::vector<std::string> display_units;
-                for (auto& [key, total_units] : count_map) {
-                    std::string name = key.first;
-                    Player* owner = key.second;
-                    char initial = name[0];
-                    if (name.find("P_E_K_K_A") != std::string::npos) initial = 'P';
-                    if (name.find("Prince") != std::string::npos) initial = 'R'; // 将王子的缩写强制设置为 'R'
-                    std::ostringstream oss;
-                    oss << initial << "(" << total_units << ")";
-                    std::string padded = oss.str() + std::string(6 - oss.str().length(), ' ');
-                    std::string color = (owner == players[0]) ? BLUE : RED;
-                    display_units.push_back(color + padded + RESET);
-                }
-
-                if (layer < display_units.size()) {
-                    cell_display = display_units[layer];
-                }
-            }
-
-            std::cout << std::setw(6) << std::left << cell_display;
-        }
-        std::cout << '\n';
-    }
-
-    // 分隔线
-    std::cout << std::string(132, '=') << '\n';
-
-    // 显示格子编号
-    for (int i = 0; i < 21; ++i) {
-        if (i == 10) std::cout << " |  ";
-        std::cout << std::setw(6) << std::left << i;
-    }
-    std::cout << '\n';
-
-    // 防御塔状态栏
-    std::cout << "\nDefense Tower Status:  ";
-    for (int p = 0; p < 2; ++p) {
-        std::string color = (p == 0) ? BLUE : RED;
-        std::cout << color << players[p]->name << RESET << ": ";
-        bool tower_found_alive = false;
-        for (int i : tower_positions) {
-            for (ChessType* u : board.board[i]) {
-                if (u->name.find("DefenseTower") != std::string::npos && u->units() > 0 && u->owner == players[p]) {
-                    std::cout << u->unit_hp[0] << " HP  ";
-                    tower_found_alive = true;
-                    break;
-                }
-            }
-            if(tower_found_alive) break;
-        }
-        if (!tower_found_alive) {
-            std::cout << YELLOW << "Destroyed  " << RESET;
-        }
-    }
-    std::cout << std::endl;
+std::vector<UnitSpec> makeSpecs() {
+    return {
+        {UnitType::Skeleton, "Skeleton", "Sk", 1, 3, 15, 10, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 12, kRoleMelee, AbilityKind::None},
+        {UnitType::SkeletonByWitch, "Skeleton by Witch", "Ws", 0, 2, 16, 8, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 8, kRoleMelee, AbilityKind::None},
+        {UnitType::Knight, "Knight", "Kn", 3, 1, 120, 18, 1, 2.0, 0.8,
+         UnitLayer::Land, true, false, 25, kRoleTank | kRoleMelee, AbilityKind::None},
+        {UnitType::Archer, "Archer", "Ar", 3, 2, 40, 15, 3, 3.0, 0.8,
+         UnitLayer::Land, true, true, 32, kRoleRanged, AbilityKind::None},
+        {UnitType::Pekka, "P_E_K_K_A", "Pk", 6, 1, 320, 100, 1, 1.0, 0.8,
+         UnitLayer::Land, true, false, 60, kRoleTank | kRoleMelee, AbilityKind::PekkaHeavySwing},
+        {UnitType::Witch, "Witch", "Wi", 4, 1, 80, 20, 2, 2.0, 0.8,
+         UnitLayer::Land, true, true, 42, kRoleRanged | kRoleSummoner, AbilityKind::WitchSummon,
+         1.0, 0, 1, 0.0},
+        {UnitType::Balloon, "Balloon", "Ba", 4, 1, 150, 30, 1, 2.0, 0.9,
+         UnitLayer::Air, true, false, 45, kRoleAir | kRoleAoe, AbilityKind::BalloonBomb},
+        {UnitType::Minions, "Minions", "Mn", 3, 3, 20, 15, 3, 3.0, 0.8,
+         UnitLayer::Air, true, true, 34, kRoleAir | kRoleRanged, AbilityKind::None},
+        {UnitType::Goblin, "Goblin", "Go", 2, 3, 30, 12, 1, 4.0, 0.7,
+         UnitLayer::Land, true, false, 22, kRoleMelee, AbilityKind::None},
+        {UnitType::Prince, "Prince", "Pr", 5, 1, 200, 35, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 48, kRoleMelee, AbilityKind::PrinceCharge},
+        {UnitType::BabyDragon, "Baby Dragon", "Dr", 4, 1, 150, 15, 3, 3.0, 0.9,
+         UnitLayer::Air, true, true, 46, kRoleAir | kRoleAoe, AbilityKind::DragonBreath},
+        {UnitType::DefenseTower, "Defense Tower", "Tw", 0, 1, 800, 30, 3, 0.0, 0.8,
+         UnitLayer::Land, true, true, 80, kRoleRanged, AbilityKind::None},
+        {UnitType::ShieldGuard, "ShieldGuard", "Sh", 4, 1, 180, 12, 1, 1.0, 0.9,
+         UnitLayer::Land, true, false, 55, kRoleTank, AbilityKind::ShieldGuard,
+         4.0, 40, 2, 0.0},
+        {UnitType::Cleric, "Cleric", "Cl", 4, 1, 75, 8, 3, 2.0, 0.9,
+         UnitLayer::Land, true, true, 44, kRoleSupport | kRoleRanged, AbilityKind::ClericHeal,
+         1.2, 25, 3, 0.0},
+        {UnitType::FrostMage, "FrostMage", "Fr", 5, 1, 70, 14, 3, 2.0, 0.9,
+         UnitLayer::Land, true, true, 50, kRoleControl | kRoleRanged | kRoleAoe,
+         AbilityKind::FrostNova, 0.0, 40, 1, 2.0},
+        {UnitType::Bomber, "Bomber", "Bo", 3, 1, 60, 25, 2, 2.0, 1.0,
+         UnitLayer::Land, true, false, 38, kRoleAoe | kRoleRanged, AbilityKind::BomberSplash},
+        {UnitType::ShadowAssassin, "ShadowAssassin", "Sa", 4, 1, 90, 30, 1, 4.0, 0.7,
+         UnitLayer::Land, true, false, 52, kRoleAssassin | kRoleMelee, AbilityKind::AssassinLeap},
+        {UnitType::Druid, "Druid", "Du", 4, 1, 85, 12, 2, 2.0, 0.9,
+         UnitLayer::Land, true, false, 36, kRoleSummoner | kRoleSupport, AbilityKind::DruidSummon,
+         5.0, 0, 1, 0.0},
+        {UnitType::Treant, "Treant", "Tr", 0, 1, 60, 8, 1, 1.0, 0.9,
+         UnitLayer::Land, true, false, 10, kRoleMelee | kRoleTank, AbilityKind::None},
+        {UnitType::Lancer, "Lancer", "La", 3, 1, 100, 22, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 34, kRoleMelee, AbilityKind::LancerPierce},
+        {UnitType::StormSpirit, "StormSpirit", "St", 5, 2, 55, 18, 3, 4.0, 0.8,
+         UnitLayer::Air, true, true, 54, kRoleAir | kRoleRanged | kRoleAoe,
+         AbilityKind::StormChain}
+    };
 }
 
-
-void Game::spawn_phase() {
-    for (auto* player : players) {
-        player->get_money();
-        std::cout << player->name << " (money: " << player->money << ")\n";
-        if (player->is_ai) {
-            // AI行动逻辑
-            if (player->money < 4 && (rand() % 10) < 5) {
-                std::cout << "AI decides to save money this turn.\n";
-                continue;
-            }
-
-            // 更新后的克制关系表
-            std::map<std::string, std::string> counter = {
-                {"Skeleton", "BabyDragon"}, {"Archer", "Prince"}, {"Knight", "P_E_K_K_A"},
-                {"P_E_K_K_A", "Skeleton"}, {"P_E_K_K_A", "Minions"}, {"P_E_K_K_A", "Goblin"},
-                {"Witch", "Prince"}, {"Balloon", "BabyDragon"}, {"Balloon", "Minions"}, {"Balloon", "Archer"},
-                {"Minions", "BabyDragon"}, {"Goblin", "Witch"}, {"Goblin", "BabyDragon"},
-                {"Prince", "Skeleton"}, {"BabyDragon", "Archer"}
-            };
-
-            auto* opponent = get_opponent(player);
-            std::vector<std::string> enemy_buys = opponent->recent_buys;
-
-            struct ScoredChoice { std::function<ChessType*()> factory; double score; std::string name; };
-            std::vector<ScoredChoice> options;
-
-            for (auto& f : chess_pool) {
-                ChessType* u = f();
-                if (u->get_cost() > player->money) { delete u; continue; }
-
-                double bonus = 0;
-                for (auto& e : enemy_buys) {
-                    if (counter[e] == u->name) bonus += 25;
-                }
-
-                double score = u->atk * u->units() / (double)u->get_cost() + u->get_atk_distance() * 7 + bonus + ((rand() % 10) - 5);
-
-                // 根据AI策略调整分数
-                switch(player->strategy) {
-                    case Player::AIStrategy::Aggressive:
-                        score += u->atk * 1.5 + u->get_speed() * 1.0;
-                        if (u->terrain_type == "air") score += 15;
-                        break;
-                    case Player::AIStrategy::Swarm:
-                        if (u->units() > 1) score += u->units() * 15;
-                        if (u->get_cost() <= 3) score += 20;
-                        break;
-                    case Player::AIStrategy::Defensive:
-                        score += u->get_atk_distance() * 10;
-                        if (u->name == "Witch" || u->name == "Archer") score += 25;
-                        break;
-                    case Player::AIStrategy::Balanced:
-                        // No changes for balanced
-                        break;
-                }
-
-                options.push_back({f, score, u->name});
-                delete u;
-            }
-
-            if (options.empty()) {
-                std::cout << "AI has no affordable chess pieces to buy.\n";
-            } else {
-                std::sort(options.begin(), options.end(), [](const ScoredChoice& a, const ScoredChoice& b) { return a.score > b.score; });
-
-                while (true) {
-                    bool bought_any = false;
-                    for (auto& opt : options) {
-                        ChessType* unit = opt.factory();
-                        if (unit->get_cost() <= player->money) {
-                            unit->owner = player;
-                            unit->game = this;
-                            unit->position = (player == players[0]) ? 0 : 20;
-                            board.board[unit->position].push_back(unit);
-                            player->money -= unit->get_cost();
-                            player->add_chess(unit);
-                            std::cout << "AI buys " << unit->name << " (cost: " << unit->get_cost() << ", remaining gold: " << player->money << ")\n";
-                            bought_any = true;
-                            // Re-sort options based on remaining money
-                            goto next_buy_cycle;
-                        }
-                        delete unit;
-                    }
-                    next_buy_cycle:
-                    if (!bought_any) break;
-                }
-            }
-
-            // AI升级逻辑
-            if (upgrades_enabled && round % 2 == 0 && player->money > 3) {
-                std::vector<ChessType*> upgradable_units;
-                for(auto* unit : player->chess) {
-                    if (!unit->upgraded && unit->get_cost() <= player->money && unit->name.find("DefenseTower") == std::string::npos) {
-                        upgradable_units.push_back(unit);
-                    }
-                }
-
-                if (!upgradable_units.empty()) {
-                    std::sort(upgradable_units.begin(), upgradable_units.end(), [](ChessType* a, ChessType* b){ return a->get_cost() > b->get_cost(); });
-                    ChessType* to_upgrade = upgradable_units[0];
-
-                    player->money -= to_upgrade->get_cost();
-                    to_upgrade->atk += 10;
-                    for (int& hp : to_upgrade->unit_hp) hp += to_upgrade->unit_hp[0] + 10;
-                    to_upgrade->name += "+";
-                    to_upgrade->upgraded = true;
-
-                    std::cout << "AI upgrades " << to_upgrade->name << " (cost: " << to_upgrade->get_cost() << ", remaining gold: " << player->money << ")\n";
-                }
-            }
-        }
-        
-        else {  // 普通玩家
-            char response;
-            std::cout << "Do you want to buy a chess piece (y/n): ";
-            std::cin >> response;
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-            if (response == 'y') {
-                // 显示商店
-                std::cout << "Available pieces:\n";
-                for (int i = 0; i < chess_pool.size(); ++i) {
-                    ChessType* u = chess_pool[i]();
-                    std::cout << i + 1 << ". " << u->name << " (" << u->get_cost() << " gold)"
-                            << " \t[" << u->units() << " units, HPs: ";
-                    for (int h : u->unit_hp) std::cout << h << " ";
-                    std::cout << ", " << u->atk << " atk, " << u->get_atk_distance()
-                            << " atk_distance, " << u->get_speed() << " speed, "
-                            << u->terrain_type<< "]\n";
-                    delete u;
-                }
-
-                bool valid = false;
-                while (!valid) {
-                    std::cout << "Enter the numbers of the chess pieces you want to buy (space-separated): ";
-                    std::string line;
-                    std::getline(std::cin, line);
-
-                    std::istringstream iss(line);
-                    std::vector<int> choices;
-                    int choice;
-                    bool input_error = false;
-                    int total_cost = 0;
-
-                    // 先计算总价格
-                    while (iss >> choice) {
-                        if (choice < 1 || choice > chess_pool.size()) {
-                            std::cout << "Invalid choice: " << choice << "\n";
-                            input_error = true;
-                            break;
-                        }
-                        ChessType* u = chess_pool[choice - 1]();
-                        total_cost += u->get_cost();
-                        delete u;
-                        choices.push_back(choice);
-                    }
-
-                    if (input_error) continue;
-
-                    if (total_cost > player->money) {
-                        std::cout << "Not enough gold! Total cost: " << total_cost << ", you have: " << player->money << "\n";
-                        continue;
-                    }
-
-                    // 合法输入，开始购买
-                    for (int idx : choices) {
-                        ChessType* u = chess_pool[idx - 1]();
-                        u->owner = player;
-                        u->game = this;
-                        u->position = (player == players[0]) ? 0 : 20;
-                        board.board[u->position].push_back(u);
-                        player->money -= u->get_cost();
-                        player->add_chess(u);
-                        std::cout << "Bought " << u->name << " for " << u->get_cost() << " gold. Remaining: " << player->money << "\n";
-                    }
-
-                    valid = true; // 成功退出循环
-                }
-            }
-
-            // 升级逻辑，只有偶数回合才能升级，并且每个棋子只能升级一次
-           if (upgrades_enabled && round % 2 == 0) {
-                while (true) {
-                    char upgrade_response;
-                    std::cout << "Do you want to upgrade a chess piece? (y/n): ";
-                    std::cin >> upgrade_response;
-                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                    if (upgrade_response != 'y') break;
-
-                    std::vector<ChessType*> upgradable;
-                    for (ChessType* unit : player->chess) {
-                        if (!unit->unit_hp.empty() && !unit->upgraded && unit->name.find("DefenseTower") == std::string::npos) {
-                            upgradable.push_back(unit);
-                        }
-                    }
-
-                    if (upgradable.empty()) {
-                        std::cout << "No units available for upgrade.\n";
-                        break;
-                    } 
-                    
-                    std::cout << "Select a piece to upgrade:\n";
-                    for (int i = 0; i < upgradable.size(); ++i) {
-                        ChessType* unit = upgradable[i];
-                        std::cout << i + 1 << ". " << unit->name << " at " << unit->position
-                                  << " (Upgrade cost: " << unit->get_cost() << ")\n";
-                    }
-                    
-                    std::cout << "Enter your choice: ";
-                    int choice;
-                    std::cin >> choice;
-                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-                    if (choice < 1 || choice > upgradable.size()) {
-                        std::cout << "Invalid choice.\n";
-                    } else {
-                        ChessType* unit = upgradable[choice - 1];
-                        if (player->money < unit->get_cost()) {
-                            std::cout << "Not enough gold! You need " << unit->get_cost() << ".\n";
-                            break;
-                        } else {
-                            player->money -= unit->get_cost();
-                            unit->atk += 10;
-                            for (int& hp : unit->unit_hp) hp = unit->unit_hp[0] + 10;
-                            unit->name += "+";
-                            unit->upgraded = true;
-                            std::cout << unit->name << " has been upgraded! ATK +10, Max HP +10, Restored to full health.\n";
-                        }
-                    }
-                    if (player->money <= 0) {
-                        std::cout << "No more gold for upgrades.\n";
-                        break;
-                    }
-                }
-            }
-        }
-    }
+std::string eventUnitName(const Unit& unit) {
+    return unit.spec.name + "#" + std::to_string(unit.id);
 }
 
-void Game::update_advantage_status() {
-    int p1_max_pos = -1;
-    int p2_min_pos = 100;
+} // namespace
 
-    for (auto* c : players[0]->chess) {
-        if (c->units()  > 0) p1_max_pos = std::max(p1_max_pos, c->position);
-    }
-    for (auto* c : players[1]->chess) {
-        if (c->units()  > 0) p2_min_pos = std::min(p2_min_pos, c->position);
-    }
+bool operator==(Coord lhs, Coord rhs) {
+    return lhs.x == rhs.x && lhs.y == rhs.y;
+}
 
-    // 判断是否越过中线（中线位置为10）
-    if (p1_max_pos > 10) {
-        player1_frontline_counter++;
+bool operator!=(Coord lhs, Coord rhs) {
+    return !(lhs == rhs);
+}
+
+int manhattan(Coord lhs, Coord rhs) {
+    return std::abs(lhs.x - rhs.x) + std::abs(lhs.y - rhs.y);
+}
+
+Board::Board() : cells(width * height) {}
+
+bool Board::inBounds(Coord coord) const {
+    return coord.x >= 0 && coord.x < width && coord.y >= 0 && coord.y < height;
+}
+
+Cell& Board::at(Coord coord) {
+    return cells[coord.y * width + coord.x];
+}
+
+const Cell& Board::at(Coord coord) const {
+    return cells[coord.y * width + coord.x];
+}
+
+UnitId Board::occupant(Coord coord, UnitLayer layer) const {
+    if (!inBounds(coord)) return kInvalidUnitId;
+    const Cell& cell = at(coord);
+    return layer == UnitLayer::Land ? cell.land : cell.air;
+}
+
+void Board::setOccupant(Coord coord, UnitLayer layer, UnitId id) {
+    if (!inBounds(coord)) return;
+    Cell& cell = at(coord);
+    if (layer == UnitLayer::Land) {
+        cell.land = id;
     } else {
-        player1_frontline_counter = 0;
+        cell.air = id;
+    }
+}
+
+GameEngine::GameEngine(unsigned seed) : specs_(makeSpecs()), rng_(seed) {}
+
+void GameEngine::startNewGame(GameMode mode) {
+    mode_ = mode;
+    phase_ = Phase::Preparation;
+    winner_.reset();
+    round_ = 1;
+    time_ = 0.0;
+    combatTime_ = 0.0;
+    nextUnitId_ = 0;
+    units_.clear();
+    events_.clear();
+    resetBoard();
+
+    players_[0] = PlayerState{PlayerId::One, "Player1", false, 10, false, {}, {}, {}};
+    players_[1] = PlayerState{PlayerId::Two, mode == GameMode::SinglePlayerVsAi ? "AI" : "Player2",
+                              mode == GameMode::SinglePlayerVsAi, 7, false, {}, {}, {}};
+
+    const std::array<Coord, 4> towerCoords = {Coord{1, 2}, Coord{1, 4}, Coord{9, 2}, Coord{9, 4}};
+    for (int i = 0; i < 4; ++i) {
+        PlayerId owner = i < 2 ? PlayerId::One : PlayerId::Two;
+        UnitId tower = createUnit(owner, UnitType::DefenseTower);
+        placeUnit(tower, towerCoords[i]);
+        unit(tower).deployed = true;
+        unit(tower).homeCoord = towerCoords[i];
+        player(owner).deployed.push_back(tower);
     }
 
-    if (p2_min_pos < 10) {
-        player2_frontline_counter++;
+    pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, round_, "Round 1 started"});
+}
+
+bool GameEngine::buyUnit(PlayerId playerId, UnitType type) {
+    if (phase_ != Phase::Preparation) return false;
+    const UnitSpec* spec = specFor(type);
+    if (!spec || spec->cost <= 0 || isInternalUnit(type)) return false;
+
+    PlayerState& p = player(playerId);
+    if (p.money < spec->cost || p.bench.size() >= 10) return false;
+
+    UnitId id = createUnit(playerId, type);
+    p.money -= spec->cost;
+    p.bench.push_back(id);
+    addRecentBuy(p, type);
+
+    pushEvent({EventType::Bought, playerId, id, kInvalidUnitId, {}, {}, spec->cost,
+               p.name + " bought " + spec->name});
+    return true;
+}
+
+bool GameEngine::deployUnit(PlayerId playerId, UnitId unitId, Coord coord) {
+    if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    if (!u.alive || u.owner != playerId) return false;
+    if (u.deployed) return moveDeployedUnit(playerId, unitId, coord);
+    if (!canDeploy(playerId, coord, u.spec.layer)) return false;
+
+    PlayerState& p = player(playerId);
+    auto it = std::find(p.bench.begin(), p.bench.end(), unitId);
+    if (it == p.bench.end()) return false;
+
+    placeUnit(unitId, coord);
+    u.deployed = true;
+    u.lastCoord = coord;
+    u.homeCoord = coord;
+    p.bench.erase(it);
+    p.deployed.push_back(unitId);
+
+    pushEvent({EventType::Deployed, playerId, unitId, kInvalidUnitId, {}, coord, 0,
+               p.name + " deployed " + u.spec.name});
+    return true;
+}
+
+bool GameEngine::moveDeployedUnit(PlayerId playerId, UnitId unitId, Coord coord) {
+    if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    if (!u.alive || !u.deployed || u.owner != playerId) return false;
+    if (u.coord == coord) return true;
+    if (!canDeploy(playerId, coord, u.spec.layer)) return false;
+
+    Coord from = u.coord;
+    removeFromBoard(unitId);
+    placeUnit(unitId, coord);
+    u.lastCoord = coord;
+    u.homeCoord = coord;
+
+    pushEvent({EventType::Deployed, playerId, unitId, kInvalidUnitId, from, coord, 0,
+               u.spec.name + " moved in deployment"});
+    return true;
+}
+
+bool GameEngine::returnToBench(PlayerId playerId, UnitId unitId) {
+    if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    PlayerState& p = player(playerId);
+    if (!u.alive || !u.deployed || u.owner != playerId || u.spec.type == UnitType::DefenseTower) return false;
+    if (p.bench.size() >= 10) return false;
+
+    Coord from = u.coord;
+    removeFromBoard(unitId);
+    u.deployed = false;
+    u.homeCoord = {};
+    eraseValue(p.deployed, unitId);
+    p.bench.push_back(unitId);
+
+    pushEvent({EventType::Deployed, playerId, unitId, kInvalidUnitId, from, {}, 0,
+               u.spec.name + " returned to bench"});
+    return true;
+}
+
+bool GameEngine::upgradeUnit(PlayerId playerId, UnitId unitId) {
+    if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    PlayerState& p = player(playerId);
+    if (!u.alive || u.owner != playerId || u.upgraded || isInternalUnit(u.spec.type)) return false;
+    if (p.money < u.spec.cost) return false;
+
+    p.money -= u.spec.cost;
+    u.upgraded = true;
+    u.spec.attack += 10;
+    u.spec.maxHp += 10;
+    u.spec.name += "+";
+    for (int& hp : u.hp) hp = u.spec.maxHp;
+
+    pushEvent({EventType::Upgraded, playerId, unitId, kInvalidUnitId, {}, {}, u.spec.cost,
+               p.name + " upgraded " + u.spec.name});
+    return true;
+}
+
+void GameEngine::setReady(PlayerId playerId, bool ready) {
+    if (phase_ != Phase::Preparation) return;
+    player(playerId).ready = ready;
+    if (ready && player(opponent(playerId)).isAi) {
+        aiPrepare(opponent(playerId));
+    }
+    startCombatIfReady();
+}
+
+void GameEngine::tick(double dt) {
+    if (phase_ == Phase::Finished) return;
+    if (dt <= 0.0) return;
+
+    time_ += dt;
+    if (phase_ == Phase::Preparation) {
+        startCombatIfReady();
+        return;
+    }
+
+    tickCombat(dt);
+}
+
+GameSnapshot GameEngine::snapshot() const {
+    GameSnapshot snapshot;
+    snapshot.width = board_.width;
+    snapshot.height = board_.height;
+    snapshot.round = round_;
+    snapshot.time = time_;
+    snapshot.combatTime = combatTime_;
+    snapshot.phase = phase_;
+    snapshot.winner = winner_;
+
+    for (int i = 0; i < 2; ++i) {
+        const PlayerState& p = players_[i];
+        snapshot.players[i] = PlayerView{p.id, p.name, p.isAi, p.money, p.ready, p.bench, p.deployed};
+    }
+
+    for (const Unit& u : units_) {
+        if (!u.alive && !u.deployed) continue;
+        UnitView view;
+        view.id = u.id;
+        view.type = u.spec.type;
+        view.name = u.spec.name;
+        view.shortName = u.spec.shortName;
+        view.owner = u.owner;
+        view.coord = u.coord;
+        view.layer = u.spec.layer;
+        view.deployed = u.deployed;
+        view.alive = u.alive;
+        view.upgraded = u.upgraded;
+        view.units = static_cast<int>(u.hp.size());
+        view.maxUnits = u.spec.unitCount;
+        view.totalHp = totalHp(u);
+        view.maxTotalHp = u.spec.maxHp * u.spec.unitCount;
+        view.shield = u.shield;
+        view.attack = u.spec.attack;
+        view.range = u.spec.range;
+        view.cost = u.spec.cost;
+        view.slowed = hasStatus(u, StatusKind::Slow);
+        view.taunting = hasStatus(u, StatusKind::Taunt) || u.spec.ability == AbilityKind::ShieldGuard;
+        snapshot.units.push_back(view);
+    }
+
+    return snapshot;
+}
+
+std::vector<Event> GameEngine::consumeEvents() {
+    std::vector<Event> copy = events_;
+    events_.clear();
+    return copy;
+}
+
+const std::vector<UnitSpec>& GameEngine::shop() const {
+    return specs_;
+}
+
+const UnitSpec* GameEngine::specFor(UnitType type) const {
+    auto it = std::find_if(specs_.begin(), specs_.end(), [type](const UnitSpec& spec) {
+        return spec.type == type;
+    });
+    return it == specs_.end() ? nullptr : &*it;
+}
+
+bool GameEngine::canDeploy(PlayerId playerId, Coord coord, UnitLayer layer) const {
+    if (!isDeploymentCell(playerId, coord)) return false;
+    return board_.occupant(coord, layer) == kInvalidUnitId;
+}
+
+bool GameEngine::isDeploymentCell(PlayerId playerId, Coord coord) const {
+    if (!board_.inBounds(coord)) return false;
+    if (playerId == PlayerId::One) return coord.x >= 0 && coord.x <= 2;
+    return coord.x >= 8 && coord.x <= 10;
+}
+
+Coord GameEngine::baseCoord(PlayerId playerId) const {
+    return playerId == PlayerId::One ? Coord{0, 3} : Coord{10, 3};
+}
+
+PlayerState& GameEngine::player(PlayerId id) {
+    return players_[playerIndex(id)];
+}
+
+const PlayerState& GameEngine::player(PlayerId id) const {
+    return players_[playerIndex(id)];
+}
+
+PlayerId GameEngine::opponent(PlayerId id) const {
+    return id == PlayerId::One ? PlayerId::Two : PlayerId::One;
+}
+
+Unit& GameEngine::unit(UnitId id) {
+    return units_[id];
+}
+
+const Unit& GameEngine::unit(UnitId id) const {
+    return units_[id];
+}
+
+void GameEngine::resetBoard() {
+    board_ = Board();
+}
+
+UnitId GameEngine::createUnit(PlayerId owner, UnitType type) {
+    const UnitSpec* spec = specFor(type);
+    Unit unit;
+    unit.id = nextUnitId_++;
+    unit.spec = spec ? *spec : UnitSpec{};
+    unit.owner = owner;
+    unit.hp.assign(unit.spec.unitCount, unit.spec.maxHp);
+    unit.lastCoord = unit.coord;
+    unit.homeCoord = unit.coord;
+    unit.attackTimer = 0.0;
+    unit.abilityTimer = 0.0;
+
+    if (type == UnitType::Treant) {
+        unit.lifespan = 8.0;
+        unit.statuses.push_back({StatusKind::Summoned, 8.0, 0, kInvalidUnitId});
+    } else if (type == UnitType::SkeletonByWitch) {
+        unit.statuses.push_back({StatusKind::Summoned, 999.0, 0, kInvalidUnitId});
+    }
+    if (unit.spec.ability == AbilityKind::ShieldGuard) {
+        unit.statuses.push_back({StatusKind::Taunt, 9999.0, 80, unit.id});
+    }
+
+    units_.push_back(unit);
+    return unit.id;
+}
+
+bool GameEngine::placeUnit(UnitId id, Coord coord) {
+    Unit& u = unit(id);
+    if (!board_.inBounds(coord)) return false;
+    if (board_.occupant(coord, u.spec.layer) != kInvalidUnitId) return false;
+    u.coord = coord;
+    board_.setOccupant(coord, u.spec.layer, id);
+    return true;
+}
+
+void GameEngine::removeFromBoard(UnitId id) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& u = unit(id);
+    if (board_.inBounds(u.coord) && board_.occupant(u.coord, u.spec.layer) == id) {
+        board_.setOccupant(u.coord, u.spec.layer, kInvalidUnitId);
+    }
+}
+
+void GameEngine::pushEvent(Event event) {
+    events_.push_back(std::move(event));
+}
+
+void GameEngine::addRecentBuy(PlayerState& p, UnitType type) {
+    p.recentBuys.push_back(type);
+    if (p.recentBuys.size() > 5) p.recentBuys.erase(p.recentBuys.begin());
+}
+
+void GameEngine::startCombatIfReady() {
+    if (phase_ != Phase::Preparation) return;
+    if (players_[0].ready && players_[1].ready) startCombat();
+}
+
+void GameEngine::startCombat() {
+    phase_ = Phase::Combat;
+    combatTime_ = 0.0;
+    for (Unit& u : units_) {
+        if (!u.alive || !u.deployed) continue;
+        u.target = kInvalidUnitId;
+        u.retargetTimer = 0.0;
+        u.moveProgress = 0.0;
+        u.lastCoord = u.coord;
+        if (!isRoundTransientUnit(u.spec.type)) u.homeCoord = u.coord;
+        if (u.spec.ability == AbilityKind::AssassinLeap) {
+            performAssassinLeap(u.id);
+        }
+    }
+    pushEvent({EventType::CombatStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, round_, "Combat started"});
+}
+
+void GameEngine::finishCombat(PlayerId winner) {
+    winner_ = winner;
+    phase_ = Phase::Finished;
+    pushEvent({EventType::Victory, winner, kInvalidUnitId, kInvalidUnitId, {}, {}, round_,
+               toString(winner) + " wins"});
+}
+
+void GameEngine::startNextRound() {
+    resetCombatantsForPreparation();
+    phase_ = Phase::Preparation;
+    ++round_;
+    combatTime_ = 0.0;
+    for (PlayerState& p : players_) {
+        p.ready = false;
+        p.money += 5;
+    }
+    pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, round_, "Round " + std::to_string(round_) + " started - board cleared"});
+}
+
+void GameEngine::resetCombatantsForPreparation() {
+    resetBoard();
+
+    for (PlayerState& p : players_) {
+        p.bench.clear();
+        p.deployed.clear();
+        p.recentBuys.clear();
+    }
+
+    for (Unit& u : units_) {
+        u.shield = 0;
+        u.target = kInvalidUnitId;
+        u.retargetTimer = 0.0;
+        u.moveProgress = 0.0;
+        u.attackTimer = 0.0;
+        u.abilityTimer = 0.0;
+        u.lifespan = -1.0;
+        u.firstStrikeReady = false;
+        u.specialCounter = 0;
+        u.stuckTicks = 0;
+        u.statuses.clear();
+
+        if (u.spec.type == UnitType::DefenseTower) {
+            u.alive = true;
+            u.hp.assign(u.spec.unitCount, u.spec.maxHp);
+            Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+            u.deployed = true;
+            u.coord = home;
+            u.lastCoord = home;
+            placeUnit(u.id, home);
+            player(u.owner).deployed.push_back(u.id);
+        } else {
+            u.alive = false;
+            u.deployed = false;
+            u.hp.clear();
+            u.coord = {};
+            u.lastCoord = {};
+            u.homeCoord = {};
+        }
+    }
+}
+
+void GameEngine::aiPrepare(PlayerId playerId) {
+    aiBuy(playerId);
+    aiDeploy(playerId);
+    player(playerId).ready = true;
+}
+
+void GameEngine::aiBuy(PlayerId playerId) {
+    PlayerState& p = player(playerId);
+    for (int purchase = 0; purchase < 8 && p.bench.size() < 10; ++purchase) {
+        const UnitSpec* best = nullptr;
+        double bestScore = -std::numeric_limits<double>::infinity();
+        for (const UnitSpec& spec : specs_) {
+            if (spec.cost <= 0 || isInternalUnit(spec.type) || spec.cost > p.money) continue;
+            double score = aiPurchaseScore(playerId, spec);
+            if (score > bestScore) {
+                bestScore = score;
+                best = &spec;
+            }
+        }
+        if (!best) break;
+        if (!buyUnit(playerId, best->type)) break;
+    }
+}
+
+void GameEngine::aiDeploy(PlayerId playerId) {
+    PlayerState& p = player(playerId);
+    std::vector<UnitId> pending = p.bench;
+    std::sort(pending.begin(), pending.end(), [this](UnitId lhs, UnitId rhs) {
+        return unit(lhs).spec.threat > unit(rhs).spec.threat;
+    });
+
+    for (UnitId id : pending) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        int bestScore = std::numeric_limits<int>::min();
+        Coord bestCoord{-1, -1};
+        for (int y = 0; y < board_.height; ++y) {
+            for (int x = 0; x < board_.width; ++x) {
+                Coord coord{x, y};
+                if (!canDeploy(playerId, coord, u.spec.layer)) continue;
+                int score = aiDeploymentScore(playerId, u, coord);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCoord = coord;
+                }
+            }
+        }
+        if (bestCoord.x >= 0) deployUnit(playerId, id, bestCoord);
+    }
+}
+
+double GameEngine::aiPurchaseScore(PlayerId playerId, const UnitSpec& spec) const {
+    const PlayerState& foe = player(opponent(playerId));
+    double score = spec.threat + spec.attack * 0.8 + spec.range * 4.0 + spec.speed * 2.0;
+
+    int enemyAir = 0;
+    int enemyHealers = 0;
+    int enemyDense = 0;
+    for (UnitId id : foe.deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        if (!u.alive) continue;
+        if (u.spec.layer == UnitLayer::Air) ++enemyAir;
+        if (u.spec.ability == AbilityKind::ClericHeal) ++enemyHealers;
+        if (u.coord.x >= 3 && u.coord.x <= 7) ++enemyDense;
+    }
+
+    if (enemyAir > 0 && spec.canAttackAir) score += 25 + enemyAir * 8;
+    if (enemyHealers > 0 && (spec.roleMask & kRoleAssassin)) score += 35;
+    if (enemyDense >= 3 && (spec.roleMask & kRoleAoe)) score += 30;
+    if (spec.roleMask & kRoleTank) score += 8;
+    if (spec.roleMask & kRoleSupport) score += 5;
+
+    for (UnitType recent : foe.recentBuys) {
+        const UnitSpec* recentSpec = specFor(recent);
+        if (!recentSpec) continue;
+        if (recentSpec->layer == UnitLayer::Air && spec.canAttackAir) score += 12;
+        if ((recentSpec->roleMask & kRoleTank) && (spec.roleMask & kRoleAoe)) score += 6;
+        if ((recentSpec->roleMask & kRoleSupport) && (spec.roleMask & kRoleAssassin)) score += 12;
+    }
+
+    std::uniform_int_distribution<int> jitter(-4, 4);
+    return score + jitter(rng_);
+}
+
+int GameEngine::aiDeploymentScore(PlayerId playerId, const Unit& unit, Coord coord) const {
+    int forward = playerId == PlayerId::One ? coord.x : (board_.width - 1 - coord.x);
+    int centerPenalty = std::abs(coord.y - board_.height / 2) * 3;
+    int score = -centerPenalty;
+
+    if (unit.spec.roleMask & kRoleTank) score += forward * 15;
+    if (unit.spec.roleMask & kRoleMelee) score += forward * 9;
+    if (unit.spec.roleMask & kRoleRanged) score += (3 - forward) * 10;
+    if (unit.spec.roleMask & kRoleSupport) score += (2 - forward) * 12;
+    if (unit.spec.roleMask & kRoleAssassin) score += std::abs(coord.y - 3) * 8 + forward * 3;
+    if (unit.spec.layer == UnitLayer::Air) score += 5 - centerPenalty;
+
+    return score;
+}
+
+void GameEngine::tickStatuses(Unit& u, double dt) {
+    for (StatusEffect& status : u.statuses) status.remaining -= dt;
+    u.statuses.erase(std::remove_if(u.statuses.begin(), u.statuses.end(), [](const StatusEffect& status) {
+        return status.remaining <= 0.0;
+    }), u.statuses.end());
+    if (u.lifespan > 0.0) u.lifespan -= dt;
+}
+
+void GameEngine::tickAbilities(UnitId id, double dt) {
+    Unit& u = unit(id);
+    if (!u.alive || !u.deployed) return;
+    if (u.spec.abilityCooldown <= 0.0) return;
+
+    u.abilityTimer += dt;
+    if (u.abilityTimer < u.spec.abilityCooldown) return;
+
+    switch (u.spec.ability) {
+        case AbilityKind::ShieldGuard:
+            addShield(id, u.spec.abilityValue, id);
+            u.abilityTimer = 0.0;
+            break;
+        case AbilityKind::ClericHeal: {
+            UnitId target = selectHealTarget(u);
+            if (target != kInvalidUnitId) {
+                applyHeal(target, u.spec.abilityValue, id);
+                u.abilityTimer = 0.0;
+            }
+            break;
+        }
+        case AbilityKind::WitchSummon:
+        case AbilityKind::DruidSummon: {
+            PlayerId owner = u.owner;
+            Coord origin = u.coord;
+            std::string summonerName = u.spec.name;
+            AbilityKind ability = u.spec.ability;
+            std::optional<Coord> spot = findSummonCell(owner, origin, UnitLayer::Land);
+            if (spot) {
+                UnitType summonType = ability == AbilityKind::WitchSummon
+                                          ? UnitType::SkeletonByWitch
+                                          : UnitType::Treant;
+                UnitId summon = createUnit(owner, summonType);
+                Unit& summoned = unit(summon);
+                summoned.deployed = true;
+                summoned.lifespan = summonType == UnitType::Treant ? 8.0 : -1.0;
+                placeUnit(summon, *spot);
+                summoned.homeCoord = *spot;
+                player(owner).deployed.push_back(summon);
+                pushEvent({EventType::Deployed, owner, summon, id, origin, *spot, 0,
+                           summonerName + " summoned " + summoned.spec.name});
+            }
+            if (id >= 0 && id < static_cast<int>(units_.size())) unit(id).abilityTimer = 0.0;
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+void GameEngine::tickCombat(double dt) {
+    combatTime_ += dt;
+
+    std::vector<UnitId> ids;
+    for (const PlayerState& p : players_) {
+        for (UnitId id : p.deployed) {
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive) ids.push_back(id);
+        }
+    }
+
+    for (UnitId id : ids) {
+        if (!unit(id).alive) continue;
+        double lifespanBefore = unit(id).lifespan;
+        tickStatuses(unit(id), dt);
+        if (lifespanBefore > 0.0 && unit(id).lifespan <= 0.0) killUnit(id, kInvalidUnitId);
+    }
+
+    for (UnitId id : ids) {
+        if (!unit(id).alive) continue;
+        tickAbilities(id, dt);
+    }
+
+    for (UnitId id : ids) {
+        if (!unit(id).alive) continue;
+        Unit& u = unit(id);
+        u.attackTimer += dt;
+        u.retargetTimer -= dt;
+        bool force = u.target == kInvalidUnitId ||
+                     u.target >= static_cast<int>(units_.size()) ||
+                     !unit(u.target).alive;
+        refreshTarget(u, force);
+
+        if (u.target != kInvalidUnitId && u.attackTimer >= effectiveAttackCooldown(u) &&
+            inAttackRange(u, unit(u.target))) {
+            attack(id, u.target);
+            if (id < static_cast<int>(units_.size()) && unit(id).alive) unit(id).attackTimer = 0.0;
+        }
+    }
+
+    moveUnits(dt);
+    clearDeadUnits();
+    resolveVictory();
+
+    if (phase_ == Phase::Combat && combatTime_ >= 45.0) {
+        startNextRound();
+    }
+}
+
+void GameEngine::refreshTarget(Unit& u, bool force) {
+    if (!force && u.retargetTimer > 0.0) return;
+    u.target = selectTarget(u);
+    u.retargetTimer = 0.2;
+}
+
+UnitId GameEngine::selectTarget(const Unit& u) const {
+    if (!u.alive || !u.deployed) return kInvalidUnitId;
+    if (u.spec.ability == AbilityKind::ClericHeal) {
+        if (selectGlobalHealTarget(u) != kInvalidUnitId) return kInvalidUnitId;
+        if (selectFollowAlly(u) != kInvalidUnitId) {
+            UnitId closeEnemy = kInvalidUnitId;
+            int bestDist = std::numeric_limits<int>::max();
+            for (UnitId candidateId : player(opponent(u.owner)).deployed) {
+                if (candidateId < 0 || candidateId >= static_cast<int>(units_.size())) continue;
+                const Unit& candidate = unit(candidateId);
+                if (!candidate.alive || !candidate.deployed || !inAttackRange(u, candidate)) continue;
+                int dist = manhattan(u.coord, candidate.coord);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    closeEnemy = candidateId;
+                }
+            }
+            return closeEnemy;
+        }
+    }
+
+    UnitId best = kInvalidUnitId;
+    double bestScore = -std::numeric_limits<double>::infinity();
+    PlayerId foe = opponent(u.owner);
+
+    for (UnitId candidateId : player(foe).deployed) {
+        if (candidateId < 0 || candidateId >= static_cast<int>(units_.size())) continue;
+        const Unit& candidate = unit(candidateId);
+        if (!candidate.alive || !candidate.deployed || !canAttack(u, candidate)) continue;
+
+        int dist = manhattan(u.coord, candidate.coord);
+        double score = candidate.spec.threat - dist * 8.0;
+        if (candidate.hp.size() < static_cast<size_t>(candidate.spec.unitCount)) score += 10.0;
+        if (totalHp(candidate) < candidate.spec.maxHp * candidate.spec.unitCount / 2) score += 8.0;
+        if (hasStatus(candidate, StatusKind::Taunt) || candidate.spec.ability == AbilityKind::ShieldGuard) {
+            score += dist <= 3 ? 80.0 : 25.0;
+        }
+        if (u.spec.roleMask & kRoleAssassin) {
+            if (candidate.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) score += 60.0;
+            int backline = candidate.owner == PlayerId::One
+                               ? (board_.width - 1 - candidate.coord.x)
+                               : candidate.coord.x;
+            score += backline * 4.0;
+        }
+        if (u.spec.roleMask & kRoleAoe) {
+            score += clusterScoreAround(u, candidate.coord);
+        }
+        if (u.spec.roleMask & kRoleRanged) {
+            if (dist <= u.spec.range) score += 20.0;
+        }
+        if (u.spec.range <= 1 || (u.spec.roleMask & kRoleMelee)) {
+            score += 60.0 - dist * 6.0;
+        }
+        if (candidate.spec.type == UnitType::DefenseTower && dist > u.spec.range) {
+            score -= 35.0;
+        }
+        if (u.spec.layer == UnitLayer::Land && !inAttackRange(u, candidate)) {
+            if (!findPathToAttackCell(u, candidate.coord, u.spec.range).found) score -= 1000.0;
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            best = candidateId;
+        }
+    }
+
+    return best;
+}
+
+UnitId GameEngine::selectHealTarget(const Unit& healer) const {
+    UnitId best = kInvalidUnitId;
+    double bestRatio = 1.01;
+    for (UnitId id : player(healer.owner).deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& ally = unit(id);
+        if (!ally.alive || !ally.deployed || ally.spec.type == UnitType::DefenseTower) continue;
+        if (manhattan(healer.coord, ally.coord) > healer.spec.abilityRange) continue;
+
+        int maxHp = ally.spec.maxHp * ally.spec.unitCount;
+        if (maxHp <= 0) continue;
+        double ratio = static_cast<double>(totalHp(ally)) / maxHp;
+        if (ratio < bestRatio && ratio < 1.0) {
+            bestRatio = ratio;
+            best = id;
+        }
+    }
+    return best;
+}
+
+UnitId GameEngine::selectGlobalHealTarget(const Unit& healer) const {
+    UnitId best = kInvalidUnitId;
+    double bestScore = 0.0;
+    for (UnitId id : player(healer.owner).deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& ally = unit(id);
+        if (!ally.alive || !ally.deployed || ally.spec.type == UnitType::DefenseTower) continue;
+
+        int maxHp = ally.spec.maxHp * ally.spec.unitCount;
+        if (maxHp <= 0) continue;
+        int missing = maxHp - totalHp(ally);
+        if (missing <= 0) continue;
+
+        double missingRatio = static_cast<double>(missing) / maxHp;
+        double score = missingRatio * 100.0 + missing * 0.2 - manhattan(healer.coord, ally.coord) * 0.35;
+        if (ally.id == healer.id) score -= 15.0;
+        if (score > bestScore) {
+            bestScore = score;
+            best = id;
+        }
+    }
+    return best;
+}
+
+UnitId GameEngine::selectFollowAlly(const Unit& u) const {
+    UnitId best = kInvalidUnitId;
+    double bestScore = -std::numeric_limits<double>::infinity();
+    for (UnitId id : player(u.owner).deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size()) || id == u.id) continue;
+        const Unit& ally = unit(id);
+        if (!ally.alive || !ally.deployed || ally.spec.type == UnitType::DefenseTower) continue;
+        double score = ally.spec.threat + totalHp(ally) * 0.12 - manhattan(u.coord, ally.coord) * 2.0;
+        if (ally.spec.roleMask & kRoleTank) score += 18.0;
+        if (ally.spec.roleMask & kRoleMelee) score += 8.0;
+        if (score > bestScore) {
+            bestScore = score;
+            best = id;
+        }
+    }
+    return best;
+}
+
+double GameEngine::clusterScoreAround(const Unit& attacker, Coord center) const {
+    int radius = attacker.spec.ability == AbilityKind::StormChain ? 2 : 1;
+    int count = 0;
+    int threat = 0;
+    for (UnitId id : player(opponent(attacker.owner)).deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& enemy = unit(id);
+        if (!enemy.alive || !enemy.deployed || !canAttack(attacker, enemy)) continue;
+        if (attacker.spec.ability == AbilityKind::BomberSplash && enemy.spec.layer != UnitLayer::Land) continue;
+        if (manhattan(center, enemy.coord) > radius) continue;
+        ++count;
+        threat += enemy.spec.threat;
+    }
+    if (count <= 1) return 0.0;
+    return (count - 1) * 32.0 + threat * 0.15;
+}
+
+bool GameEngine::canAttack(const Unit& attacker, const Unit& target) const {
+    if (!attacker.alive || !target.alive || attacker.owner == target.owner) return false;
+    if (target.spec.layer == UnitLayer::Land && !attacker.spec.canAttackLand) return false;
+    if (target.spec.layer == UnitLayer::Air && !attacker.spec.canAttackAir) return false;
+    return true;
+}
+
+bool GameEngine::inAttackRange(const Unit& attacker, const Unit& target) const {
+    return canAttack(attacker, target) && manhattan(attacker.coord, target.coord) <= attacker.spec.range;
+}
+
+double GameEngine::effectiveSpeed(const Unit& u) const {
+    double speed = u.spec.speed;
+    if (hasStatus(u, StatusKind::Slow)) speed *= 0.6;
+    return speed;
+}
+
+double GameEngine::effectiveAttackCooldown(const Unit& u) const {
+    double cooldown = u.spec.attackCooldown;
+    if (hasStatus(u, StatusKind::Slow)) cooldown /= 0.6;
+    return cooldown;
+}
+
+bool GameEngine::hasStatus(const Unit& u, StatusKind kind) const {
+    return std::any_of(u.statuses.begin(), u.statuses.end(), [kind](const StatusEffect& status) {
+        return status.kind == kind && status.remaining > 0.0;
+    });
+}
+
+void GameEngine::addStatus(UnitId id, StatusEffect status) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& u = unit(id);
+    auto it = std::find_if(u.statuses.begin(), u.statuses.end(), [status](const StatusEffect& current) {
+        return current.kind == status.kind;
+    });
+    if (it == u.statuses.end()) {
+        u.statuses.push_back(status);
     } else {
-        player2_frontline_counter = 0;
+        it->remaining = std::max(it->remaining, status.remaining);
+        it->value = std::max(it->value, status.value);
+        it->source = status.source;
     }
-
-    // 设置优势方
-    player1_is_advantaged = (player1_frontline_counter >= 2);
-    player2_is_advantaged = (player2_frontline_counter >= 2);
+    pushEvent({EventType::StatusApplied, u.owner, status.source, id, {}, u.coord, status.value,
+               "Status applied to " + eventUnitName(u)});
 }
 
-void Game::update_phase() {// 更新阶段
-    // 在更新阶段，程序在调用棋子的移动和攻击方法时，可能访问了已经死亡并被删除的棋子，导致悬空指针问题所以出现程序输出四轮后异常终止
-    // 收集所有活着的棋子（避免 move/attack 调用已死亡单位）
-    std::vector<ChessType*> living_units;
-    for (auto* p : players) {
-        for (auto* c : p->chess) {
-            if (!c->unit_hp.empty()) {
-                living_units.push_back(c);
+void GameEngine::attack(UnitId attackerId, UnitId targetId) {
+    if (attackerId < 0 || targetId < 0 || attackerId >= static_cast<int>(units_.size()) ||
+        targetId >= static_cast<int>(units_.size())) {
+        return;
+    }
+    Unit& attacker = unit(attackerId);
+    if (!attacker.alive || !unit(targetId).alive) return;
+
+    pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+               unit(targetId).coord, attacker.spec.attack, eventUnitName(attacker) + " attacked"});
+
+    int damage = attacker.spec.attack * std::max(1, static_cast<int>(attacker.hp.size()));
+
+    if (attacker.spec.ability == AbilityKind::PekkaHeavySwing) {
+        ++attacker.specialCounter;
+        if (attacker.specialCounter % 2 == 1) return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::PrinceCharge && attacker.firstStrikeReady) {
+        damage *= 2;
+        attacker.firstStrikeReady = false;
+    }
+
+    if (attacker.spec.ability == AbilityKind::DragonBreath) {
+        std::vector<UnitId> targets;
+        for (UnitId id : player(opponent(attacker.owner)).deployed) {
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
+                canAttack(attacker, unit(id)) && manhattan(attacker.coord, unit(id).coord) <= attacker.spec.range) {
+                targets.push_back(id);
             }
         }
+        for (UnitId id : targets) applyDamage(id, attacker.spec.attack, attackerId);
+        return;
     }
 
-    // 按顺序逐个行动，行动前检查是否还活着
-    for (ChessType* c : living_units) {
-        if (c->unit_hp.empty()) continue;  // 避免死者再行动
-
-        c->move();
-
-        if (!c->unit_hp.empty()) {
-           c->attack();
-        }
-    }
-
-    // 清理死亡单位
-    for (auto* p : players) {
-        auto& ch = p->chess;
-        ch.erase(std::remove_if(ch.begin(), ch.end(), [](ChessType* unit) {
-            if (unit->unit_hp.empty()) {
-                auto& cell = unit->game->board.board[unit->position];
-                cell.erase(std::remove(cell.begin(), cell.end(), unit), cell.end());
-                delete unit;
-                return true;
-            }
-            return false;
-        }), ch.end());
-    }
-
-    if (debug_mode) {
-        for (auto* p : players) {
-            std::cout << "[DEBUG] " << p->name << " units:\n";
-            for (auto* c : p->chess) {
-                std::cout << "  - " << c->name << " at " << c->position << " (Units: " << c->units() << ")\n";
+    if (attacker.spec.ability == AbilityKind::BomberSplash ||
+        attacker.spec.ability == AbilityKind::FrostNova) {
+        std::vector<UnitId> targets;
+        Coord center = unit(targetId).coord;
+        for (UnitId id : player(opponent(attacker.owner)).deployed) {
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
+                canAttack(attacker, unit(id)) && manhattan(center, unit(id).coord) <= 1) {
+                if (attacker.spec.ability == AbilityKind::BomberSplash && unit(id).spec.layer != UnitLayer::Land) continue;
+                targets.push_back(id);
             }
         }
+        for (UnitId id : targets) {
+            applyDamage(id, attacker.spec.attack, attackerId);
+            if (attacker.spec.ability == AbilityKind::FrostNova && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                addStatus(id, {StatusKind::Slow, attacker.spec.abilityDuration, attacker.spec.abilityValue, attackerId});
+            }
+        }
+        return;
     }
 
+    if (attacker.spec.ability == AbilityKind::StormChain) {
+        applyDamage(targetId, attacker.spec.attack, attackerId);
+        std::vector<std::pair<int, UnitId>> nearby;
+        Coord center = unit(targetId).coord;
+        for (UnitId id : player(opponent(attacker.owner)).deployed) {
+            if (id == targetId || id < 0 || id >= static_cast<int>(units_.size())) continue;
+            if (!unit(id).alive || !canAttack(attacker, unit(id))) continue;
+            int dist = manhattan(center, unit(id).coord);
+            if (dist <= 2) nearby.push_back({dist, id});
+        }
+        std::sort(nearby.begin(), nearby.end());
+        for (int i = 0; i < static_cast<int>(nearby.size()) && i < 2; ++i) {
+            applyDamage(nearby[i].second, static_cast<int>(attacker.spec.attack * 0.6), attackerId);
+        }
+        return;
+    }
 
-    update_advantage_status();
+    if (attacker.spec.ability == AbilityKind::LancerPierce) {
+        Coord targetCoord = unit(targetId).coord;
+        applyDamage(targetId, damage, attackerId);
+        Coord behind{targetCoord.x + sign(targetCoord.x - attacker.coord.x),
+                     targetCoord.y + sign(targetCoord.y - attacker.coord.y)};
+        if (board_.inBounds(behind)) {
+            UnitId pierced = board_.occupant(behind, UnitLayer::Land);
+            if (pierced != kInvalidUnitId && unit(pierced).alive && unit(pierced).owner != attacker.owner) {
+                applyDamage(pierced, damage / 2, attackerId);
+            }
+        }
+        return;
+    }
+
+    applyDamage(targetId, damage, attackerId);
 }
 
-bool Game::check_victory() {
-    if (debug_mode) std::cout << "[DEBUG] Checking victory conditions...\n";
+void GameEngine::applyDamage(UnitId targetId, int amount, UnitId sourceId) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return;
+    Unit& target = unit(targetId);
+    if (!target.alive || target.hp.empty()) return;
 
-    for (auto* c : players[0]->chess) {
-        if (debug_mode) std::cout << "[DEBUG] P1 " << c->name << " at " << c->position << " (HP: " << c->units() << ")\n";
-        if (c->position == 20) {
-            std::cout << "Player 1 wins\n";
-            return true;
+    int absorbed = std::min(target.shield, amount);
+    if (absorbed > 0) {
+        target.shield -= absorbed;
+        amount -= absorbed;
+        pushEvent({EventType::Shielded, target.owner, sourceId, targetId, {}, target.coord, absorbed,
+                   eventUnitName(target) + " shield absorbed damage"});
+    }
+    if (amount <= 0) return;
+
+    std::uniform_int_distribution<int> pick(0, static_cast<int>(target.hp.size()) - 1);
+    int index = pick(rng_);
+    target.hp[index] -= amount;
+
+    pushEvent({EventType::DamageDealt, target.owner, sourceId, targetId, {}, target.coord, amount,
+               eventUnitName(target) + " took " + std::to_string(amount) + " damage"});
+
+    if (target.hp[index] <= 0) {
+        target.hp.erase(target.hp.begin() + index);
+    }
+    if (target.hp.empty()) killUnit(targetId, sourceId);
+}
+
+void GameEngine::applyHeal(UnitId targetId, int amount, UnitId sourceId) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return;
+    Unit& target = unit(targetId);
+    if (!target.alive || target.hp.empty()) return;
+
+    auto it = std::min_element(target.hp.begin(), target.hp.end());
+    int before = *it;
+    *it = std::min(target.spec.maxHp, *it + amount);
+    int healed = *it - before;
+    if (healed > 0) {
+        pushEvent({EventType::Healed, target.owner, sourceId, targetId, {}, target.coord, healed,
+                   eventUnitName(target) + " healed " + std::to_string(healed)});
+    }
+}
+
+void GameEngine::addShield(UnitId targetId, int amount, UnitId sourceId) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return;
+    Unit& target = unit(targetId);
+    if (!target.alive) return;
+    target.shield = std::min(120, target.shield + amount);
+    pushEvent({EventType::Shielded, target.owner, sourceId, targetId, {}, target.coord, amount,
+               eventUnitName(target) + " gained shield"});
+}
+
+void GameEngine::killUnit(UnitId id, UnitId sourceId) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& dead = unit(id);
+    if (!dead.alive) return;
+
+    Coord deathCoord = dead.coord;
+    PlayerId owner = dead.owner;
+    AbilityKind deathAbility = dead.spec.ability;
+    dead.alive = false;
+    dead.hp.clear();
+    removeFromBoard(id);
+    eraseValue(player(owner).bench, id);
+    if (isRoundTransientUnit(dead.spec.type)) {
+        dead.deployed = false;
+        eraseValue(player(owner).deployed, id);
+    }
+
+    pushEvent({EventType::UnitDied, owner, sourceId, id, deathCoord, deathCoord, 0,
+               eventUnitName(dead) + " died"});
+
+    if (deathAbility == AbilityKind::BalloonBomb) {
+        std::vector<UnitId> targets;
+        for (UnitId enemyId : player(opponent(owner)).deployed) {
+            if (enemyId < 0 || enemyId >= static_cast<int>(units_.size())) continue;
+            const Unit& enemy = unit(enemyId);
+            if (enemy.alive && enemy.spec.layer == UnitLayer::Land && manhattan(enemy.coord, deathCoord) <= 1) {
+                targets.push_back(enemyId);
+            }
+        }
+        for (UnitId targetId : targets) applyDamage(targetId, 60, id);
+    }
+}
+
+void GameEngine::clearDeadUnits() {
+    for (PlayerState& p : players_) {
+        p.bench.erase(std::remove_if(p.bench.begin(), p.bench.end(), [this](UnitId id) {
+            return id < 0 || id >= static_cast<int>(units_.size()) || !unit(id).alive;
+        }), p.bench.end());
+        p.deployed.erase(std::remove_if(p.deployed.begin(), p.deployed.end(), [this](UnitId id) {
+            return id < 0 || id >= static_cast<int>(units_.size()) ||
+                   (!unit(id).alive && isRoundTransientUnit(unit(id).spec.type));
+        }), p.deployed.end());
+    }
+}
+
+void GameEngine::resolveVictory() {
+    if (phase_ != Phase::Combat) return;
+    for (const Unit& u : units_) {
+        if (!u.alive || !u.deployed || u.spec.type == UnitType::DefenseTower) continue;
+        if (u.coord == baseCoord(opponent(u.owner))) {
+            finishCombat(u.owner);
+            return;
         }
     }
 
-    for (auto* c : players[1]->chess) {
-        if (debug_mode) std::cout << "[DEBUG] P2 " << c->name << " at " << c->position << " (HP: " << c->units()  << ")\n";
-        if (c->position == 0) {
-            std::cout << players[1]->name << " wins\n";
-            return true;
+    for (PlayerId p : {PlayerId::One, PlayerId::Two}) {
+        bool towerAlive = false;
+        for (UnitId id : player(p).deployed) {
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
+                unit(id).spec.type == UnitType::DefenseTower) {
+                towerAlive = true;
+                break;
+            }
+        }
+        if (!towerAlive) {
+            finishCombat(opponent(p));
+            return;
         }
     }
 
-    for (auto* c : players[0]->chess)
-        if (c->position == 20) {
-            //std::cout << "[DEBUG] Victory condition met: " << c->name << " of Player 1 at position 20\n";
-            std::cout << "Player 1 wins\n";
-            return true;
-        }
-    for (auto* c : players[1]->chess)
-        if (c->position == 0) {
-            //std::cout << "[DEBUG] Victory condition met: " << c->name << " of AI at position 0\n";
-            std::cout << players[1]->name << " wins\n";
-            return true;
-        }
+    if (!hasActiveCombatUnit(PlayerId::One) && !hasActiveCombatUnit(PlayerId::Two)) {
+        startNextRound();
+    }
+}
+
+bool GameEngine::hasActiveCombatUnit(PlayerId playerId) const {
+    for (UnitId id : player(playerId).deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        if (u.alive && u.deployed && u.spec.type != UnitType::DefenseTower) return true;
+    }
     return false;
 }
 
-void Game::start() {
-    srand(time(0));
-    chess_pool = { [](){ return new Skeleton(); }, [](){ return new Knight(); },
-                   [](){ return new Archer(); }, [](){ return new P_E_K_K_A(); }, 
-                   [](){ return new Witch(); }, [](){ return new Balloon(); },
-                   [](){ return new Minions(); } ,[](){ return new Goblin(); },
-                   [](){ return new Prince(); },[](){ return new BabyDragon(); }}; 
+void GameEngine::moveUnits(double dt) {
+    std::vector<UnitId> ids;
+    for (const PlayerState& p : players_) {
+        for (UnitId id : p.deployed) {
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive) ids.push_back(id);
+        }
+    }
 
-    // 初始化防御塔位置（P1: 2，P2: 18）
-    DefenseTower* tower1 = new DefenseTower(players[0]);
-    tower1->position = 2;
-    tower1->game = this;
-    players[0]->add_chess(tower1);
-    board.board[2].push_back(tower1);
+    std::sort(ids.begin(), ids.end(), [this](UnitId lhs, UnitId rhs) {
+        const Unit& a = unit(lhs);
+        const Unit& b = unit(rhs);
+        int aDepth = a.owner == PlayerId::One ? a.coord.x : (board_.width - 1 - a.coord.x);
+        int bDepth = b.owner == PlayerId::One ? b.coord.x : (board_.width - 1 - b.coord.x);
+        if (aDepth != bDepth) return aDepth > bDepth;
+        if (a.spec.speed != b.spec.speed) return a.spec.speed < b.spec.speed;
+        if (totalHp(a) != totalHp(b)) return totalHp(a) < totalHp(b);
+        return lhs < rhs;
+    });
 
-    DefenseTower* tower2 = new DefenseTower(players[1]);
-    tower2->position = 18;
-    tower2->game = this;
-    players[1]->add_chess(tower2);
-    board.board[18].push_back(tower2);
+    std::vector<Coord> reserved;
+    for (UnitId id : ids) {
+        Unit& u = unit(id);
+        if (!u.alive || !u.deployed || u.spec.speed <= 0.0 || u.spec.type == UnitType::DefenseTower) continue;
+        if (u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
+            unit(u.target).alive && inAttackRange(u, unit(u.target))) {
+            continue;
+        }
 
-    while (true) {
-        ++round;
-        display_board();
-        spawn_phase();
-        update_phase();
-        if (check_victory()) break;
+        u.moveProgress += effectiveSpeed(u) * dt;
+        if (u.moveProgress < 1.0) continue;
+        u.moveProgress -= 1.0;
+
+        std::optional<Coord> next = chooseNextStep(id, reserved);
+        if (!next || *next == u.coord) {
+            ++u.stuckTicks;
+            if (u.stuckTicks > 30) {
+                u.target = kInvalidUnitId;
+                u.retargetTimer = 0.0;
+                u.stuckTicks = 0;
+            }
+            continue;
+        }
+
+        Coord from = u.coord;
+        removeFromBoard(id);
+        if (!placeUnit(id, *next)) {
+            placeUnit(id, from);
+            ++u.stuckTicks;
+            continue;
+        }
+
+        if (u.spec.ability == AbilityKind::PrinceCharge) u.firstStrikeReady = true;
+        u.stuckTicks = from == *next ? u.stuckTicks + 1 : 0;
+        u.lastCoord = from;
+        reserved.push_back(*next);
+        pushEvent({EventType::UnitMoved, u.owner, id, kInvalidUnitId, from, *next, 0,
+                   eventUnitName(u) + " moved"});
     }
 }
+
+std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coord>& reserved) const {
+    const Unit& u = unit(id);
+    Coord target = baseCoord(opponent(u.owner));
+    bool hasUnitTarget = u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
+                         unit(u.target).alive;
+
+    if (u.spec.ability == AbilityKind::ClericHeal) {
+        if (std::optional<Coord> supportStep = chooseSupportStep(u, reserved)) return supportStep;
+        if (selectGlobalHealTarget(u) != kInvalidUnitId || selectFollowAlly(u) != kInvalidUnitId) {
+            return std::nullopt;
+        }
+    }
+
+    if (hasUnitTarget) {
+        target = unit(u.target).coord;
+        if (inAttackRange(u, unit(u.target))) return std::nullopt;
+    }
+
+    if (u.spec.layer == UnitLayer::Air) return chooseAirStep(u, target, reserved);
+
+    PathResult path = hasUnitTarget ? findPathToAttackCell(u, target, u.spec.range)
+                                    : findPathToGoal(u, target);
+    if (!path.found || path.steps.size() < 2) return std::nullopt;
+    Coord next = path.steps[1];
+    if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
+    if (!passableForLand(u, next)) return std::nullopt;
+    return next;
+}
+
+std::optional<Coord> GameEngine::chooseSupportStep(const Unit& u, const std::vector<Coord>& reserved) const {
+    if (!u.alive || !u.deployed || u.spec.ability != AbilityKind::ClericHeal) return std::nullopt;
+
+    UnitId healTarget = selectGlobalHealTarget(u);
+    if (healTarget != kInvalidUnitId) {
+        const Unit& target = unit(healTarget);
+        if (manhattan(u.coord, target.coord) <= u.spec.abilityRange) return std::nullopt;
+
+        PathResult path = findPathToAttackCell(u, target.coord, u.spec.abilityRange);
+        if (!path.found || path.steps.size() < 2) return std::nullopt;
+        Coord next = path.steps[1];
+        if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
+        if (!passableForLand(u, next)) return std::nullopt;
+        return next;
+    }
+
+    std::optional<Coord> goal = chooseFollowAllyGoal(u);
+    if (!goal || *goal == u.coord) return std::nullopt;
+
+    PathResult path = findPathToGoal(u, *goal);
+    if (!path.found || path.steps.size() < 2) return std::nullopt;
+    Coord next = path.steps[1];
+    if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
+    if (!passableForLand(u, next)) return std::nullopt;
+    return next;
+}
+
+std::optional<Coord> GameEngine::chooseFollowAllyGoal(const Unit& u) const {
+    UnitId allyId = selectFollowAlly(u);
+    if (allyId == kInvalidUnitId) return std::nullopt;
+
+    const Unit& ally = unit(allyId);
+    int behindDir = u.owner == PlayerId::One ? -1 : 1;
+    int desiredX = ally.coord.x + behindDir;
+    int followRange = std::max(1, std::min(3, u.spec.abilityRange));
+
+    Coord best = u.coord;
+    double bestScore = -std::numeric_limits<double>::infinity();
+    for (Coord candidate : cellsInRange(ally.coord, followRange)) {
+        if (candidate == ally.coord) continue;
+        if (!board_.inBounds(candidate)) continue;
+        if (candidate != u.coord && !passableForLand(u, candidate)) continue;
+
+        bool behind = u.owner == PlayerId::One ? candidate.x <= ally.coord.x : candidate.x >= ally.coord.x;
+        double score = 0.0;
+        if (behind) score += 36.0;
+        score -= std::abs(candidate.x - desiredX) * 9.0;
+        score -= std::abs(candidate.y - ally.coord.y) * 6.0;
+        score -= manhattan(u.coord, candidate) * 2.5;
+        score -= std::abs(manhattan(candidate, ally.coord) - 2) * 3.0;
+        if (candidate == u.coord) score += 12.0;
+
+        if (score > bestScore) {
+            bestScore = score;
+            best = candidate;
+        }
+    }
+
+    return best;
+}
+
+std::optional<Coord> GameEngine::chooseAirStep(const Unit& u, Coord target, const std::vector<Coord>& reserved) const {
+    std::vector<Coord> candidates = neighbors4(u.coord);
+    Coord forward = forwardCoord(u.owner, u.coord);
+    if (board_.inBounds(forward)) candidates.insert(candidates.begin(), forward);
+
+    int currentDist = manhattan(u.coord, target);
+    Coord best = u.coord;
+    int bestScore = std::numeric_limits<int>::min();
+    for (Coord candidate : candidates) {
+        if (!board_.inBounds(candidate)) continue;
+        if (board_.occupant(candidate, UnitLayer::Air) != kInvalidUnitId) continue;
+        if (std::find(reserved.begin(), reserved.end(), candidate) != reserved.end()) continue;
+        int dist = manhattan(candidate, target);
+        if (dist > currentDist) continue;
+        int forwardBias = u.owner == PlayerId::One ? candidate.x : (board_.width - 1 - candidate.x);
+        int score = (currentDist - dist) * 100 + forwardBias * 3 - std::abs(candidate.y - target.y) * 2;
+        if (score > bestScore) {
+            bestScore = score;
+            best = candidate;
+        }
+    }
+    if (best == u.coord) return std::nullopt;
+    return best;
+}
+
+GameEngine::PathResult GameEngine::findPathToAttackCell(const Unit& u, Coord target, int range) const {
+    if (manhattan(u.coord, target) <= range) return {true, {u.coord}};
+
+    std::vector<Coord> goals;
+    for (Coord coord : cellsInRange(target, range)) {
+        if (coord == target) continue;
+        if (!board_.inBounds(coord)) continue;
+        if (coord == u.coord || passableForLand(u, coord)) goals.push_back(coord);
+    }
+
+    PathResult best;
+    for (Coord goal : goals) {
+        PathResult path = findPathToGoal(u, goal);
+        if (path.found && (!best.found || path.steps.size() < best.steps.size())) best = path;
+    }
+    return best;
+}
+
+GameEngine::PathResult GameEngine::findPathToGoal(const Unit& u, Coord goal) const {
+    if (!board_.inBounds(goal)) return {};
+    if (u.coord == goal) return {true, {u.coord}};
+
+    const int n = board_.width * board_.height;
+    std::vector<int> dist(n, std::numeric_limits<int>::max());
+    std::vector<Coord> parent(n, Coord{-1, -1});
+    auto index = [this](Coord coord) { return coord.y * board_.width + coord.x; };
+
+    std::queue<Coord> q;
+    dist[index(u.coord)] = 0;
+    q.push(u.coord);
+
+    while (!q.empty()) {
+        Coord current = q.front();
+        q.pop();
+        if (current == goal) break;
+
+        for (Coord next : neighbors4(current)) {
+            if (!board_.inBounds(next)) continue;
+            if (next != goal && !passableForLand(u, next)) continue;
+            if (next == goal && !passableForLand(u, next) && next != u.coord) continue;
+            int ni = index(next);
+            if (dist[ni] != std::numeric_limits<int>::max()) continue;
+            dist[ni] = dist[index(current)] + 1;
+            parent[ni] = current;
+            q.push(next);
+        }
+    }
+
+    if (dist[index(goal)] == std::numeric_limits<int>::max()) return {};
+
+    std::vector<Coord> reversed;
+    Coord step = goal;
+    while (step != Coord{-1, -1}) {
+        reversed.push_back(step);
+        if (step == u.coord) break;
+        step = parent[index(step)];
+    }
+    std::reverse(reversed.begin(), reversed.end());
+    return {true, reversed};
+}
+
+bool GameEngine::passableForLand(const Unit& u, Coord coord) const {
+    if (!board_.inBounds(coord)) return false;
+    if (coord == u.coord) return true;
+    return board_.occupant(coord, UnitLayer::Land) == kInvalidUnitId;
+}
+
+std::vector<Coord> GameEngine::neighbors4(Coord coord) const {
+    std::vector<Coord> result = {
+        {coord.x + 1, coord.y},
+        {coord.x - 1, coord.y},
+        {coord.x, coord.y + 1},
+        {coord.x, coord.y - 1},
+    };
+    result.erase(std::remove_if(result.begin(), result.end(), [this](Coord c) {
+        return !board_.inBounds(c);
+    }), result.end());
+    return result;
+}
+
+std::vector<Coord> GameEngine::cellsInRange(Coord center, int range) const {
+    std::vector<Coord> cells;
+    for (int y = center.y - range; y <= center.y + range; ++y) {
+        for (int x = center.x - range; x <= center.x + range; ++x) {
+            Coord coord{x, y};
+            if (board_.inBounds(coord) && manhattan(center, coord) <= range) cells.push_back(coord);
+        }
+    }
+    return cells;
+}
+
+std::vector<Coord> GameEngine::adjacentCells(Coord center) const {
+    std::vector<Coord> cells = neighbors4(center);
+    cells.push_back(center);
+    return cells;
+}
+
+Coord GameEngine::forwardCoord(PlayerId playerId, Coord coord) const {
+    return playerId == PlayerId::One ? Coord{coord.x + 1, coord.y} : Coord{coord.x - 1, coord.y};
+}
+
+std::optional<Coord> GameEngine::findSummonCell(PlayerId owner, Coord origin, UnitLayer layer) const {
+    std::vector<Coord> candidates;
+    Coord forward = forwardCoord(owner, origin);
+    if (board_.inBounds(forward)) candidates.push_back(forward);
+    for (Coord coord : adjacentCells(origin)) {
+        if (coord != forward) candidates.push_back(coord);
+    }
+
+    for (Coord coord : candidates) {
+        if (board_.inBounds(coord) && board_.occupant(coord, layer) == kInvalidUnitId) return coord;
+    }
+    return std::nullopt;
+}
+
+void GameEngine::performAssassinLeap(UnitId id) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& assassin = unit(id);
+    if (!assassin.alive || assassin.spec.ability != AbilityKind::AssassinLeap) return;
+
+    UnitId target = kInvalidUnitId;
+    int bestScore = std::numeric_limits<int>::min();
+    for (UnitId enemyId : player(opponent(assassin.owner)).deployed) {
+        if (enemyId < 0 || enemyId >= static_cast<int>(units_.size())) continue;
+        const Unit& enemy = unit(enemyId);
+        if (!enemy.alive || enemy.spec.type == UnitType::DefenseTower) continue;
+        int backline = enemy.owner == PlayerId::One ? (board_.width - 1 - enemy.coord.x) : enemy.coord.x;
+        int score = enemy.spec.threat + backline * 8;
+        if (enemy.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) score += 30;
+        if (score > bestScore) {
+            bestScore = score;
+            target = enemyId;
+        }
+    }
+    if (target == kInvalidUnitId) return;
+
+    Coord best{-1, -1};
+    int bestDist = std::numeric_limits<int>::max();
+    for (Coord coord : adjacentCells(unit(target).coord)) {
+        if (!board_.inBounds(coord)) continue;
+        if (board_.occupant(coord, assassin.spec.layer) != kInvalidUnitId) continue;
+        int dist = manhattan(coord, unit(target).coord);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = coord;
+        }
+    }
+    if (best.x < 0) return;
+
+    Coord from = assassin.coord;
+    removeFromBoard(id);
+    if (placeUnit(id, best)) {
+        assassin.firstStrikeReady = true;
+        pushEvent({EventType::UnitMoved, assassin.owner, id, target, from, best, 0,
+                   eventUnitName(assassin) + " leaped to the backline"});
+    } else {
+        placeUnit(id, from);
+    }
+}
+
+std::string toString(PlayerId player) {
+    return player == PlayerId::One ? "Player1" : "Player2";
+}
+
+std::string toString(Phase phase) {
+    switch (phase) {
+        case Phase::Preparation: return "Preparation";
+        case Phase::Combat: return "Combat";
+        case Phase::Finished: return "Finished";
+    }
+    return "Unknown";
+}
+
+std::string toString(UnitLayer layer) {
+    return layer == UnitLayer::Land ? "Land" : "Air";
+}
+
+} // namespace autochess

@@ -1,0 +1,57 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "vscode-debug",
+      "displayName": "VSCode Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build/vscode-vs-debug",
+      "cacheVariables": {
+        "AUTOCHESS_BUILD_GUI": "ON",
+        "AUTOCHESS_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "vscode-core-debug",
+      "displayName": "VSCode Core Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build/vscode-vs-core-debug",
+      "cacheVariables": {
+        "AUTOCHESS_BUILD_GUI": "OFF",
+        "AUTOCHESS_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vscode-debug",
+      "configurePreset": "vscode-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vscode-core-debug",
+      "configurePreset": "vscode-core-debug",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "vscode-debug",
+      "configurePreset": "vscode-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "vscode-core-debug",
+      "configurePreset": "vscode-core-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

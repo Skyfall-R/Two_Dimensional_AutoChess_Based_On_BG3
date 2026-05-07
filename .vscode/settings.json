@@ -1,0 +1,10 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": true,
+  "cmake.generator": "Visual Studio 17 2022",
+  "cmake.platform": "Win32",
+  "cmake.buildDirectory": "${workspaceFolder}/build/vscode-vs-debug",
+  "cmake.defaultConfigurePreset": "vscode-debug",
+  "cmake.defaultBuildPreset": "vscode-debug",
+  "cmake.defaultTestPreset": "vscode-debug"
+}
