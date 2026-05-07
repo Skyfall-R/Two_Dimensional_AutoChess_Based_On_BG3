@@ -1,3 +1,6 @@
 build/
 build-*/
 .cache/
+ai_runs/
+__pycache__/
+*.pyc

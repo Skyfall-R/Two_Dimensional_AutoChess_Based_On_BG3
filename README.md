@@ -12,6 +12,8 @@ and a small test executable.
   start button, health bars, and event log.
 - `autochess_tests`: assert-based core tests for deployment, movement,
   targeting, summoning, round reset, and no-overlap behavior.
+- `autochess_env`: optional Python extension for headless AI training when
+  `AUTOCHESS_BUILD_PYTHON=ON`.
 
 ## VSCode Workflow
 
@@ -52,6 +54,27 @@ If raylib is not installed, CMake uses `FetchContent` to download raylib 5.0 on
 the first configure. The project downloads the raylib release zip instead of
 using a Git submodule.
 
+## Trainable AI
+
+The single-player AI supports three difficulty policy packages:
+
+- `assets/ai/normal.policy.json`
+- `assets/ai/hard.policy.json`
+- `assets/ai/superhard.policy.json`
+
+If a package is missing or was trained against older rules, the game logs the
+reason and falls back to the built-in heuristic AI. To rebuild policies after
+changing rules or units, run:
+
+```powershell
+python tools/train_ai.py --preset smoke --export assets/ai
+python tools/train_ai.py --preset full --export assets/ai
+```
+
+Smoke mode is a fast build/export check. Full mode uses PyTorch when available;
+on Python versions without compatible PyTorch wheels, use smoke mode or create
+a training environment with a supported Python version.
+
 ## GUI Controls
 
 - Click a shop card, or press number keys `1` through `9`, to buy a unit.
@@ -59,4 +82,6 @@ using a Git submodule.
 - Drag a deployed unit during preparation to reposition it.
 - Drag a deployed unit back to the bench to undeploy it.
 - Right-click or press `Esc` to cancel a drag.
+- Click `Normal`, `Hard`, or `Super Hard` during preparation to switch
+  the AI policy package.
 - Click `Start` to let the AI finish preparation and start combat.

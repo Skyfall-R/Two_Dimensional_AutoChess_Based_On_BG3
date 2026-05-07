@@ -15,6 +15,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AUTOCHESS_BUILD_GUI "Build the raylib 2D GUI" ON)
 option(AUTOCHESS_BUILD_TESTS "Build the core test executable" ON)
+option(AUTOCHESS_BUILD_PYTHON "Build the Python training extension" OFF)
+set(AUTOCHESS_PYTHON_INCLUDE_DIR "" CACHE PATH "Python include directory for autochess_env")
+set(AUTOCHESS_PYTHON_LIBRARY "" CACHE FILEPATH "Python import library for autochess_env")
 
 add_library(autochess_core
     lib/header/lib.hpp
@@ -35,6 +38,27 @@ if(AUTOCHESS_BUILD_TESTS)
     )
     target_link_libraries(autochess_tests PRIVATE autochess_core)
     add_test(NAME autochess_core_tests COMMAND autochess_tests)
+endif()
+
+if(AUTOCHESS_BUILD_PYTHON)
+    add_library(autochess_env MODULE
+        python/autochess_env.cpp
+    )
+    target_link_libraries(autochess_env PRIVATE autochess_core)
+    if(AUTOCHESS_PYTHON_INCLUDE_DIR AND AUTOCHESS_PYTHON_LIBRARY)
+        target_include_directories(autochess_env PRIVATE "${AUTOCHESS_PYTHON_INCLUDE_DIR}")
+        target_link_libraries(autochess_env PRIVATE "${AUTOCHESS_PYTHON_LIBRARY}")
+    else()
+        find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+        target_link_libraries(autochess_env PRIVATE Python3::Module)
+    endif()
+    target_compile_features(autochess_env PRIVATE cxx_std_17)
+    set_target_properties(autochess_env PROPERTIES
+        PREFIX ""
+    )
+    if(WIN32)
+        set_target_properties(autochess_env PROPERTIES SUFFIX ".pyd")
+    endif()
 endif()
 
 if(AUTOCHESS_BUILD_GUI)

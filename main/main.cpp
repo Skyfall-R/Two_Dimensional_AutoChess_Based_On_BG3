@@ -134,8 +134,19 @@ int main() {
     std::string modeText;
     std::cin >> modeText;
 
+    AiDifficulty difficulty = AiDifficulty::Normal;
+    if (modeText != "2") {
+        std::cout << "AI difficulty: 1. Normal  2. Hard  3. Super Hard\nInput difficulty: ";
+        std::string difficultyText;
+        std::cin >> difficultyText;
+        difficulty = aiDifficultyFromString(difficultyText);
+    }
+
     GameEngine engine(42);
-    engine.startNewGame(modeText == "2" ? GameMode::TwoPlayer : GameMode::SinglePlayerVsAi);
+    GameConfig config;
+    config.mode = modeText == "2" ? GameMode::TwoPlayer : GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = difficulty;
+    engine.startNewGame(config);
     printEvents(engine);
 
     while (engine.snapshot().phase != Phase::Finished) {

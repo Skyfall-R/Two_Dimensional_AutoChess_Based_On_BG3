@@ -20,8 +20,8 @@ constexpr float kBoardY = 128.0f;
 constexpr float kSideX = 1050.0f;
 constexpr float kShopY = 150.0f;
 constexpr float kShopCardW = 820.0f;
-constexpr float kShopCardH = 144.0f;
-constexpr float kShopGap = 14.0f;
+constexpr float kShopCardH = 124.0f;
+constexpr float kShopGap = 6.0f;
 constexpr float kShopViewportH = 560.0f;
 
 Font gFont{};
@@ -42,6 +42,10 @@ Rectangle benchRect() {
 
 Rectangle readyRect() {
     return {1650.0f, 38.0f, 220.0f, 62.0f};
+}
+
+Rectangle difficultyRect(int index) {
+    return {1048.0f + index * 144.0f, 38.0f, 136.0f, 62.0f};
 }
 
 Rectangle detailRect() {
@@ -285,6 +289,29 @@ const UnitSpec* firstVisibleShopSpec(const GameEngine& engine, float shopScroll)
     return shopSpecAtIndex(engine, index);
 }
 
+std::string difficultyLabel(AiDifficulty difficulty) {
+    return difficulty == AiDifficulty::SuperHard ? "Super Hard" : toString(difficulty);
+}
+
+void drawDifficultySelector(const GameEngine& engine, const GameSnapshot& snapshot) {
+    const std::array<AiDifficulty, 3> difficulties = {
+        AiDifficulty::Normal,
+        AiDifficulty::Hard,
+        AiDifficulty::SuperHard
+    };
+    for (int i = 0; i < static_cast<int>(difficulties.size()); ++i) {
+        Rectangle rect = difficultyRect(i);
+        bool selected = engine.aiDifficulty() == difficulties[i];
+        bool disabled = snapshot.phase != Phase::Preparation;
+        Color fill = selected ? Color{86, 120, 92, 255} : Color{48, 56, 62, 255};
+        if (disabled && !selected) fill = Color{42, 46, 50, 255};
+        DrawRectangleRounded(rect, 0.08f, 8, fill);
+        DrawRectangleRoundedLines(rect, 0.08f, 8, 1.0f,
+                                  selected ? Color{160, 220, 150, 255} : Color{73, 86, 94, 255});
+        drawTextCentered(difficultyLabel(difficulties[i]), rect, 23.0f, disabled && !selected ? GRAY : WHITE);
+    }
+}
+
 const UnitSpec* shopSpecAtMouse(const GameEngine& engine, Vector2 mouse, float shopScroll) {
     if (!CheckCollisionPointRec(mouse, shopViewportRect())) return nullptr;
     for (int i = 0; i < shopUnitCount(engine); ++i) {
@@ -426,15 +453,15 @@ void drawShop(GameEngine& engine, const GameSnapshot& snapshot, float shopScroll
         DrawRectangleRounded(r, 0.06f, 6, fill);
         DrawRectangleRoundedLines(r, 0.06f, 6, 1.0f, Color{73, 86, 94, 255});
 
-        drawText(std::to_string(card + 1), r.x + 18.0f, r.y + 19.0f, 26.0f, GOLD);
-        drawText(fitText(spec.name, 480.0f, 34.0f), r.x + 72.0f, r.y + 14.0f, 34.0f, RAYWHITE);
-        drawText(TextFormat("$%d", spec.cost), r.x + r.width - 82.0f, r.y + 17.0f, 32.0f, GOLD);
+        drawText(std::to_string(card + 1), r.x + 18.0f, r.y + 16.0f, 26.0f, GOLD);
+        drawText(fitText(spec.name, 480.0f, 34.0f), r.x + 72.0f, r.y + 11.0f, 34.0f, RAYWHITE);
+        drawText(TextFormat("$%d", spec.cost), r.x + r.width - 82.0f, r.y + 14.0f, 32.0f, GOLD);
         drawText(TextFormat("x%d  HP %d  ATK %d  R%d",
                             spec.unitCount, spec.maxHp, spec.attack, spec.range),
-                 r.x + 72.0f, r.y + 62.0f, 25.0f, LIGHTGRAY);
-        drawText(toString(spec.layer), r.x + r.width - 154.0f, r.y + 62.0f, 25.0f, LIGHTGRAY);
+                 r.x + 72.0f, r.y + 54.0f, 25.0f, LIGHTGRAY);
+        drawText(toString(spec.layer), r.x + r.width - 154.0f, r.y + 54.0f, 25.0f, LIGHTGRAY);
         drawText(fitText(abilitySummary(spec), r.width - 112.0f, 22.0f),
-                 r.x + 72.0f, r.y + 102.0f, 22.0f, Color{205, 212, 216, 255});
+                 r.x + 72.0f, r.y + 91.0f, 22.0f, Color{205, 212, 216, 255});
     }
     EndScissorMode();
 
@@ -480,7 +507,10 @@ void appendEvents(GameEngine& engine, std::vector<std::string>& log) {
 
 int main() {
     GameEngine engine(1234);
-    engine.startNewGame(GameMode::SinglePlayerVsAi);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
 
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(kScreenWidth, kScreenHeight, "AutoChess 2D");
@@ -523,7 +553,23 @@ int main() {
         if (!focusedSpec) focusedSpec = firstVisibleShopSpec(engine, shopScroll);
 
         if (snapshot.phase == Phase::Preparation && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            if (CheckCollisionPointRec(mouse, readyRect())) {
+            bool handledDifficulty = false;
+            const std::array<AiDifficulty, 3> difficulties = {
+                AiDifficulty::Normal,
+                AiDifficulty::Hard,
+                AiDifficulty::SuperHard
+            };
+            for (int i = 0; i < static_cast<int>(difficulties.size()); ++i) {
+                if (CheckCollisionPointRec(mouse, difficultyRect(i))) {
+                    engine.setAiDifficulty(difficulties[i]);
+                    handledDifficulty = true;
+                    break;
+                }
+            }
+
+            if (handledDifficulty) {
+                appendEvents(engine, log);
+            } else if (CheckCollisionPointRec(mouse, readyRect())) {
                 if (hasPlayerCombatUnit(snapshot)) {
                     engine.setReady(PlayerId::One, true);
                 } else {
@@ -577,6 +623,7 @@ int main() {
         drawText(TextFormat("Round %d  %s", snapshot.round, toString(snapshot.phase).c_str()),
                  350.0f, 52.0f, 28.0f, LIGHTGRAY);
         drawText(TextFormat("Gold: %d", snapshot.players[0].money), 680.0f, 51.0f, 30.0f, GOLD);
+        drawDifficultySelector(engine, snapshot);
         bool canStart = snapshot.phase == Phase::Preparation && hasPlayerCombatUnit(snapshot);
         DrawRectangleRounded(readyRect(), 0.12f, 8,
                              snapshot.phase == Phase::Preparation

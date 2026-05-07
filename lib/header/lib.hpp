@@ -2,6 +2,7 @@
 #define AUTOCHESS_CORE_HPP
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <random>
 #include <string>
@@ -26,6 +27,7 @@ int manhattan(Coord lhs, Coord rhs);
 
 enum class PlayerId { One = 0, Two = 1 };
 enum class GameMode { SinglePlayerVsAi, TwoPlayer };
+enum class AiDifficulty { Normal, Hard, SuperHard };
 enum class Phase { Preparation, Combat, Finished };
 enum class UnitLayer { Land, Air };
 enum class AbilityKind {
@@ -52,6 +54,7 @@ enum class EventType {
     Healed,
     Shielded,
     StatusApplied,
+    AiPolicyStatus,
     UnitDied,
     Bought,
     Deployed,
@@ -84,6 +87,21 @@ enum class UnitType {
     StormSpirit
 };
 
+enum class AiActionKind {
+    Buy,
+    Deploy,
+    MoveDeployed,
+    ReturnToBench,
+    Upgrade,
+    Ready
+};
+
+struct GameConfig {
+    GameMode mode = GameMode::SinglePlayerVsAi;
+    AiDifficulty aiDifficulty = AiDifficulty::Normal;
+    std::string aiPolicyDirectory = "assets/ai";
+};
+
 struct UnitSpec {
     UnitType type = UnitType::Skeleton;
     std::string name;
@@ -105,6 +123,35 @@ struct UnitSpec {
     int abilityValue = 0;
     int abilityRange = 0;
     double abilityDuration = 0.0;
+};
+
+struct AiAction {
+    AiActionKind kind = AiActionKind::Ready;
+    UnitType type = UnitType::Skeleton;
+    UnitId unitId = kInvalidUnitId;
+    Coord coord;
+};
+
+struct AiPolicyMetadata {
+    std::string format = "autochess_policy_v1";
+    std::string modelVersion;
+    std::string difficulty;
+    std::string rulesFingerprint;
+    int stateFeatureCount = 0;
+    int actionFeatureCount = 0;
+    double heuristicBlend = 0.0;
+    double bias = 0.0;
+    bool loaded = false;
+    bool valid = false;
+    std::string path;
+    std::string status;
+};
+
+struct AiFeatureSchema {
+    int stateFeatureCount = 0;
+    int actionFeatureCount = 0;
+    std::vector<std::string> stateFeatureGroups;
+    std::vector<std::string> actionFeatureGroups;
 };
 
 struct StatusEffect {
@@ -223,11 +270,26 @@ struct GameSnapshot {
     std::vector<UnitView> units;
 };
 
+class GameEngine;
+
+class AiPlanner {
+public:
+    virtual ~AiPlanner() = default;
+    virtual std::optional<AiAction> chooseAction(GameEngine& engine,
+                                                 PlayerId player,
+                                                 const std::vector<AiAction>& legalActions) = 0;
+    virtual std::string name() const = 0;
+};
+
+class HeuristicAiPlanner;
+class PolicyAiPlanner;
+
 class GameEngine {
 public:
     explicit GameEngine(unsigned seed = 1);
 
     void startNewGame(GameMode mode = GameMode::SinglePlayerVsAi);
+    void startNewGame(const GameConfig& config);
     bool buyUnit(PlayerId player, UnitType type);
     bool deployUnit(PlayerId player, UnitId unitId, Coord coord);
     bool moveDeployedUnit(PlayerId player, UnitId unitId, Coord coord);
@@ -243,8 +305,23 @@ public:
     bool canDeploy(PlayerId player, Coord coord, UnitLayer layer) const;
     bool isDeploymentCell(PlayerId player, Coord coord) const;
     Coord baseCoord(PlayerId player) const;
+    void setAiDifficulty(AiDifficulty difficulty);
+    AiDifficulty aiDifficulty() const;
+    void setAiPolicyDirectory(const std::string& directory);
+    const std::string& aiPolicyDirectory() const;
+    const AiPolicyMetadata& aiPolicyMetadata() const;
+    AiFeatureSchema aiFeatureSchema() const;
+    std::string rulesFingerprint() const;
+    std::vector<AiAction> legalActions(PlayerId player) const;
+    bool applyAiAction(PlayerId player, const AiAction& action);
+    std::vector<double> stateFeatures(PlayerId player) const;
+    std::vector<double> actionFeatures(PlayerId player, const AiAction& action) const;
+    void prepareAiPlayer(PlayerId player);
 
 private:
+    friend class HeuristicAiPlanner;
+    friend class PolicyAiPlanner;
+
     struct PathResult {
         bool found = false;
         std::vector<Coord> steps;
@@ -255,6 +332,9 @@ private:
     std::vector<Unit> units_;
     std::vector<UnitSpec> specs_;
     std::vector<Event> events_;
+    std::unique_ptr<AiPlanner> aiPlanner_;
+    GameConfig config_;
+    AiPolicyMetadata aiPolicyMetadata_;
     mutable std::mt19937 rng_;
     GameMode mode_ = GameMode::SinglePlayerVsAi;
     Phase phase_ = Phase::Preparation;
@@ -281,9 +361,13 @@ private:
     void finishCombat(PlayerId winner);
     void startNextRound();
     void resetCombatantsForPreparation();
+    void ensureAiPlanner();
+    void loadAiPlanner();
+    void useHeuristicAiPlanner(const std::string& status);
     void aiPrepare(PlayerId player);
-    void aiBuy(PlayerId player);
-    void aiDeploy(PlayerId player);
+    std::optional<AiAction> chooseHeuristicAction(PlayerId player,
+                                                  const std::vector<AiAction>& legalActions) const;
+    double heuristicActionScore(PlayerId player, const AiAction& action) const;
     double aiPurchaseScore(PlayerId player, const UnitSpec& spec) const;
     int aiDeploymentScore(PlayerId player, const Unit& unit, Coord coord) const;
 
@@ -329,8 +413,12 @@ private:
 };
 
 std::string toString(PlayerId player);
+std::string toString(AiDifficulty difficulty);
+std::string toString(AiActionKind kind);
 std::string toString(Phase phase);
 std::string toString(UnitLayer layer);
+std::string toString(UnitType type);
+AiDifficulty aiDifficultyFromString(const std::string& text);
 
 } // namespace autochess
 

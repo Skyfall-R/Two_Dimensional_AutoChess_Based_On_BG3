@@ -1,10 +1,15 @@
 #include <lib.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <queue>
 #include <sstream>
+#include <utility>
 
 namespace autochess {
 
@@ -19,6 +24,18 @@ constexpr int kRoleControl = 1 << 5;
 constexpr int kRoleSummoner = 1 << 6;
 constexpr int kRoleAssassin = 1 << 7;
 constexpr int kRoleAoe = 1 << 8;
+constexpr int kStartingGold = 12;
+constexpr int kBaseRoundIncome = 6;
+constexpr int kMaxRoundIncomeGrowth = 6;
+constexpr int kInterestGoldStep = 10;
+constexpr int kMaxInterestIncome = 3;
+constexpr int kBoardFeaturePlanes = 6;
+constexpr int kGlobalStateFeatureCount = 16;
+constexpr int kStateFeatureCount = kGlobalStateFeatureCount + kBoardWidth * kBoardHeight * kBoardFeaturePlanes;
+constexpr int kActionFeatureCount = 20;
+constexpr int kMaxAiActionsPerPreparation = 64;
+constexpr const char* kPolicyFormat = "autochess_policy_v1";
+constexpr const char* kPolicyModelVersion = "linear-v1";
 
 int playerIndex(PlayerId player) {
     return player == PlayerId::One ? 0 : 1;
@@ -48,6 +65,12 @@ int totalHp(const Unit& unit) {
     int total = 0;
     for (int hp : unit.hp) total += hp;
     return total;
+}
+
+int roundIncomeFor(const PlayerState& player, int round) {
+    int growth = std::min(round, kMaxRoundIncomeGrowth);
+    int interest = std::min(kMaxInterestIncome, player.money / kInterestGoldStep);
+    return kBaseRoundIncome + growth + interest;
 }
 
 std::vector<UnitSpec> makeSpecs() {
@@ -107,7 +130,197 @@ std::string eventUnitName(const Unit& unit) {
     return unit.spec.name + "#" + std::to_string(unit.id);
 }
 
+double clampFeature(double value) {
+    if (value < -1.0) return -1.0;
+    if (value > 1.0) return 1.0;
+    return value;
+}
+
+std::string lowerCopy(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return text;
+}
+
+std::string policyFileName(AiDifficulty difficulty) {
+    switch (difficulty) {
+        case AiDifficulty::Normal: return "normal.policy.json";
+        case AiDifficulty::Hard: return "hard.policy.json";
+        case AiDifficulty::SuperHard: return "superhard.policy.json";
+    }
+    return "normal.policy.json";
+}
+
+std::string joinPath(const std::string& directory, const std::string& file) {
+    if (directory.empty()) return file;
+    char back = directory.back();
+    if (back == '/' || back == '\\') return directory + file;
+    return directory + "/" + file;
+}
+
+bool readTextFile(const std::string& path, std::string& out) {
+    std::ifstream input(path);
+    if (!input) return false;
+    std::ostringstream stream;
+    stream << input.rdbuf();
+    out = stream.str();
+    return true;
+}
+
+std::optional<std::string> jsonStringValue(const std::string& json, const std::string& key) {
+    std::string marker = "\"" + key + "\"";
+    size_t keyPos = json.find(marker);
+    if (keyPos == std::string::npos) return std::nullopt;
+    size_t colon = json.find(':', keyPos + marker.size());
+    if (colon == std::string::npos) return std::nullopt;
+    size_t firstQuote = json.find('"', colon + 1);
+    if (firstQuote == std::string::npos) return std::nullopt;
+    std::string value;
+    bool escaped = false;
+    for (size_t i = firstQuote + 1; i < json.size(); ++i) {
+        char ch = json[i];
+        if (escaped) {
+            value.push_back(ch);
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') return value;
+        value.push_back(ch);
+    }
+    return std::nullopt;
+}
+
+std::optional<double> jsonNumberValue(const std::string& json, const std::string& key) {
+    std::string marker = "\"" + key + "\"";
+    size_t keyPos = json.find(marker);
+    if (keyPos == std::string::npos) return std::nullopt;
+    size_t colon = json.find(':', keyPos + marker.size());
+    if (colon == std::string::npos) return std::nullopt;
+    size_t start = json.find_first_of("-0123456789", colon + 1);
+    if (start == std::string::npos) return std::nullopt;
+    size_t end = start;
+    while (end < json.size() &&
+           (std::isdigit(static_cast<unsigned char>(json[end])) || json[end] == '-' ||
+            json[end] == '+' || json[end] == '.' || json[end] == 'e' || json[end] == 'E')) {
+        ++end;
+    }
+    try {
+        return std::stod(json.substr(start, end - start));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::vector<double> jsonNumberArray(const std::string& json, const std::string& key) {
+    std::vector<double> values;
+    std::string marker = "\"" + key + "\"";
+    size_t keyPos = json.find(marker);
+    if (keyPos == std::string::npos) return values;
+    size_t open = json.find('[', keyPos + marker.size());
+    size_t close = json.find(']', open == std::string::npos ? keyPos : open);
+    if (open == std::string::npos || close == std::string::npos || close <= open) return values;
+
+    std::string body = json.substr(open + 1, close - open - 1);
+    std::stringstream stream(body);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        try {
+            values.push_back(std::stod(token));
+        } catch (...) {
+            values.clear();
+            return values;
+        }
+    }
+    return values;
+}
+
+void hashAppend(uint64_t& hash, const std::string& text) {
+    constexpr uint64_t kFnvPrime = 1099511628211ull;
+    for (unsigned char ch : text) {
+        hash ^= ch;
+        hash *= kFnvPrime;
+    }
+}
+
+std::string hashToHex(uint64_t hash) {
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return out.str();
+}
+
 } // namespace
+
+class HeuristicAiPlanner : public AiPlanner {
+public:
+    std::optional<AiAction> chooseAction(GameEngine& engine,
+                                         PlayerId player,
+                                         const std::vector<AiAction>& legalActions) override {
+        return engine.chooseHeuristicAction(player, legalActions);
+    }
+
+    std::string name() const override {
+        return "heuristic";
+    }
+};
+
+class PolicyAiPlanner : public AiPlanner {
+public:
+    PolicyAiPlanner(AiPolicyMetadata metadata, std::vector<double> weights)
+        : metadata_(std::move(metadata)), weights_(std::move(weights)) {}
+
+    std::optional<AiAction> chooseAction(GameEngine& engine,
+                                         PlayerId player,
+                                         const std::vector<AiAction>& legalActions) override {
+        if (!metadata_.valid || legalActions.empty()) {
+            return engine.chooseHeuristicAction(player, legalActions);
+        }
+
+        std::vector<double> state = engine.stateFeatures(player);
+        if (static_cast<int>(state.size()) != metadata_.stateFeatureCount) {
+            return engine.chooseHeuristicAction(player, legalActions);
+        }
+
+        const int expectedWeights = metadata_.stateFeatureCount + metadata_.actionFeatureCount;
+        if (static_cast<int>(weights_.size()) != expectedWeights) {
+            return engine.chooseHeuristicAction(player, legalActions);
+        }
+
+        const AiAction* bestAction = nullptr;
+        double bestScore = -std::numeric_limits<double>::infinity();
+        for (const AiAction& action : legalActions) {
+            std::vector<double> actionFeatures = engine.actionFeatures(player, action);
+            if (static_cast<int>(actionFeatures.size()) != metadata_.actionFeatureCount) continue;
+
+            double score = metadata_.bias;
+            for (size_t i = 0; i < state.size(); ++i) score += state[i] * weights_[i];
+            for (size_t i = 0; i < actionFeatures.size(); ++i) {
+                score += actionFeatures[i] * weights_[state.size() + i];
+            }
+            score += metadata_.heuristicBlend * engine.heuristicActionScore(player, action);
+
+            if (!bestAction || score > bestScore) {
+                bestAction = &action;
+                bestScore = score;
+            }
+        }
+
+        if (!bestAction) return engine.chooseHeuristicAction(player, legalActions);
+        return *bestAction;
+    }
+
+    std::string name() const override {
+        return "policy";
+    }
+
+private:
+    AiPolicyMetadata metadata_;
+    std::vector<double> weights_;
+};
 
 bool operator==(Coord lhs, Coord rhs) {
     return lhs.x == rhs.x && lhs.y == rhs.y;
@@ -151,10 +364,24 @@ void Board::setOccupant(Coord coord, UnitLayer layer, UnitId id) {
     }
 }
 
-GameEngine::GameEngine(unsigned seed) : specs_(makeSpecs()), rng_(seed) {}
+GameEngine::GameEngine(unsigned seed) : specs_(makeSpecs()), rng_(seed) {
+    config_.mode = mode_;
+    aiPolicyMetadata_.format = kPolicyFormat;
+    aiPolicyMetadata_.modelVersion = kPolicyModelVersion;
+    aiPolicyMetadata_.difficulty = toString(config_.aiDifficulty);
+    aiPolicyMetadata_.stateFeatureCount = kStateFeatureCount;
+    aiPolicyMetadata_.actionFeatureCount = kActionFeatureCount;
+}
 
 void GameEngine::startNewGame(GameMode mode) {
-    mode_ = mode;
+    GameConfig config = config_;
+    config.mode = mode;
+    startNewGame(config);
+}
+
+void GameEngine::startNewGame(const GameConfig& config) {
+    config_ = config;
+    mode_ = config.mode;
     phase_ = Phase::Preparation;
     winner_.reset();
     round_ = 1;
@@ -165,9 +392,10 @@ void GameEngine::startNewGame(GameMode mode) {
     events_.clear();
     resetBoard();
 
-    players_[0] = PlayerState{PlayerId::One, "Player1", false, 10, false, {}, {}, {}};
-    players_[1] = PlayerState{PlayerId::Two, mode == GameMode::SinglePlayerVsAi ? "AI" : "Player2",
-                              mode == GameMode::SinglePlayerVsAi, 7, false, {}, {}, {}};
+    players_[0] = PlayerState{PlayerId::One, "Player1", false, kStartingGold, false, {}, {}, {}};
+    players_[1] = PlayerState{PlayerId::Two, mode_ == GameMode::SinglePlayerVsAi ? "AI" : "Player2",
+                              mode_ == GameMode::SinglePlayerVsAi, kStartingGold, false, {}, {}, {}};
+    loadAiPlanner();
 
     const std::array<Coord, 4> towerCoords = {Coord{1, 2}, Coord{1, 4}, Coord{9, 2}, Coord{9, 4}};
     for (int i = 0; i < 4; ++i) {
@@ -378,6 +606,251 @@ Coord GameEngine::baseCoord(PlayerId playerId) const {
     return playerId == PlayerId::One ? Coord{0, 3} : Coord{10, 3};
 }
 
+void GameEngine::setAiDifficulty(AiDifficulty difficulty) {
+    config_.aiDifficulty = difficulty;
+    if (phase_ == Phase::Preparation) loadAiPlanner();
+}
+
+AiDifficulty GameEngine::aiDifficulty() const {
+    return config_.aiDifficulty;
+}
+
+void GameEngine::setAiPolicyDirectory(const std::string& directory) {
+    config_.aiPolicyDirectory = directory;
+    if (phase_ == Phase::Preparation) loadAiPlanner();
+}
+
+const std::string& GameEngine::aiPolicyDirectory() const {
+    return config_.aiPolicyDirectory;
+}
+
+const AiPolicyMetadata& GameEngine::aiPolicyMetadata() const {
+    return aiPolicyMetadata_;
+}
+
+AiFeatureSchema GameEngine::aiFeatureSchema() const {
+    return AiFeatureSchema{
+        kStateFeatureCount,
+        kActionFeatureCount,
+        {
+            "global:round,time,phase,economy,bench,deployed,tower_hp,ready,combat,board_size",
+            "board:friend_land_threat,enemy_land_threat,friend_air_threat,enemy_air_threat,friend_hp,enemy_hp"
+        },
+        {
+            "kind:buy,deploy,move,return,upgrade,ready",
+            "unit:cost,count,hp,attack,range,speed,threat,layer,targets_air",
+            "coord:normalized_x,normalized_y,forward_depth,unit_flags"
+        }
+    };
+}
+
+std::string GameEngine::rulesFingerprint() const {
+    uint64_t hash = 14695981039346656037ull;
+    hashAppend(hash, "autochess-rules-v1");
+    hashAppend(hash, std::to_string(kBoardWidth));
+    hashAppend(hash, std::to_string(kBoardHeight));
+    hashAppend(hash, std::to_string(kStartingGold));
+    hashAppend(hash, std::to_string(kBaseRoundIncome));
+    hashAppend(hash, std::to_string(kMaxRoundIncomeGrowth));
+    hashAppend(hash, std::to_string(kInterestGoldStep));
+    hashAppend(hash, std::to_string(kMaxInterestIncome));
+    for (const UnitSpec& spec : specs_) {
+        hashAppend(hash, std::to_string(static_cast<int>(spec.type)));
+        hashAppend(hash, spec.name);
+        hashAppend(hash, spec.shortName);
+        hashAppend(hash, std::to_string(spec.cost));
+        hashAppend(hash, std::to_string(spec.unitCount));
+        hashAppend(hash, std::to_string(spec.maxHp));
+        hashAppend(hash, std::to_string(spec.attack));
+        hashAppend(hash, std::to_string(spec.range));
+        hashAppend(hash, std::to_string(spec.speed));
+        hashAppend(hash, std::to_string(spec.attackCooldown));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.layer)));
+        hashAppend(hash, std::to_string(spec.canAttackLand));
+        hashAppend(hash, std::to_string(spec.canAttackAir));
+        hashAppend(hash, std::to_string(spec.threat));
+        hashAppend(hash, std::to_string(spec.roleMask));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.ability)));
+        hashAppend(hash, std::to_string(spec.abilityCooldown));
+        hashAppend(hash, std::to_string(spec.abilityValue));
+        hashAppend(hash, std::to_string(spec.abilityRange));
+        hashAppend(hash, std::to_string(spec.abilityDuration));
+    }
+    return hashToHex(hash);
+}
+
+std::vector<AiAction> GameEngine::legalActions(PlayerId playerId) const {
+    std::vector<AiAction> actions;
+    if (phase_ != Phase::Preparation) return actions;
+
+    const PlayerState& p = player(playerId);
+    if (p.bench.size() < 10) {
+        for (const UnitSpec& spec : specs_) {
+            if (spec.cost <= 0 || isInternalUnit(spec.type) || spec.cost > p.money) continue;
+            actions.push_back({AiActionKind::Buy, spec.type, kInvalidUnitId, {}});
+        }
+    }
+
+    for (UnitId id : p.bench) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        if (!u.alive || u.owner != playerId || u.deployed) continue;
+        for (int y = 0; y < board_.height; ++y) {
+            for (int x = 0; x < board_.width; ++x) {
+                Coord coord{x, y};
+                if (canDeploy(playerId, coord, u.spec.layer)) {
+                    actions.push_back({AiActionKind::Deploy, u.spec.type, id, coord});
+                }
+            }
+        }
+    }
+
+    for (UnitId id : p.deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        if (!u.alive || !u.deployed || u.owner != playerId || u.spec.type == UnitType::DefenseTower) continue;
+        for (int y = 0; y < board_.height; ++y) {
+            for (int x = 0; x < board_.width; ++x) {
+                Coord coord{x, y};
+                if (coord != u.coord && canDeploy(playerId, coord, u.spec.layer)) {
+                    actions.push_back({AiActionKind::MoveDeployed, u.spec.type, id, coord});
+                }
+            }
+        }
+        if (p.bench.size() < 10) actions.push_back({AiActionKind::ReturnToBench, u.spec.type, id, {}});
+        if (!u.upgraded && u.spec.cost > 0 && p.money >= u.spec.cost) {
+            actions.push_back({AiActionKind::Upgrade, u.spec.type, id, {}});
+        }
+    }
+
+    if (hasActiveCombatUnit(playerId)) {
+        actions.push_back({AiActionKind::Ready, UnitType::Skeleton, kInvalidUnitId, {}});
+    }
+    return actions;
+}
+
+bool GameEngine::applyAiAction(PlayerId playerId, const AiAction& action) {
+    if (phase_ != Phase::Preparation) return false;
+    switch (action.kind) {
+        case AiActionKind::Buy:
+            return buyUnit(playerId, action.type);
+        case AiActionKind::Deploy:
+            return deployUnit(playerId, action.unitId, action.coord);
+        case AiActionKind::MoveDeployed:
+            return moveDeployedUnit(playerId, action.unitId, action.coord);
+        case AiActionKind::ReturnToBench:
+            return returnToBench(playerId, action.unitId);
+        case AiActionKind::Upgrade:
+            return upgradeUnit(playerId, action.unitId);
+        case AiActionKind::Ready:
+            if (!hasActiveCombatUnit(playerId)) return false;
+            setReady(playerId, true);
+            return true;
+    }
+    return false;
+}
+
+std::vector<double> GameEngine::stateFeatures(PlayerId playerId) const {
+    std::vector<double> features;
+    features.reserve(kStateFeatureCount);
+
+    PlayerId foeId = opponent(playerId);
+    const PlayerState& self = player(playerId);
+    const PlayerState& foe = player(foeId);
+    auto towerHp = [this](PlayerId owner) {
+        int total = 0;
+        int maxTotal = 0;
+        for (const Unit& u : units_) {
+            if (u.owner == owner && u.alive && u.spec.type == UnitType::DefenseTower) {
+                total += totalHp(u);
+                maxTotal += u.spec.maxHp * u.spec.unitCount;
+            }
+        }
+        return maxTotal > 0 ? static_cast<double>(total) / maxTotal : 0.0;
+    };
+
+    features.push_back(std::min(1.0, round_ / 20.0));
+    features.push_back(std::min(1.0, time_ / 300.0));
+    features.push_back(phase_ == Phase::Preparation ? 1.0 : 0.0);
+    features.push_back(std::min(1.0, self.money / 50.0));
+    features.push_back(std::min(1.0, foe.money / 50.0));
+    features.push_back(std::min(1.0, self.bench.size() / 10.0));
+    features.push_back(std::min(1.0, foe.bench.size() / 10.0));
+    features.push_back(std::min(1.0, self.deployed.size() / 20.0));
+    features.push_back(std::min(1.0, foe.deployed.size() / 20.0));
+    features.push_back(towerHp(playerId));
+    features.push_back(towerHp(foeId));
+    features.push_back(self.ready ? 1.0 : 0.0);
+    features.push_back(foe.ready ? 1.0 : 0.0);
+    features.push_back(std::min(1.0, combatTime_ / 45.0));
+    features.push_back(board_.width / 20.0);
+    features.push_back(board_.height / 20.0);
+
+    for (int y = 0; y < board_.height; ++y) {
+        for (int x = 0; x < board_.width; ++x) {
+            std::array<double, kBoardFeaturePlanes> planes{};
+            Coord coord{x, y};
+            for (UnitLayer layer : {UnitLayer::Land, UnitLayer::Air}) {
+                UnitId id = board_.occupant(coord, layer);
+                if (id == kInvalidUnitId || id >= static_cast<int>(units_.size())) continue;
+                const Unit& u = unit(id);
+                if (!u.alive) continue;
+                bool friendly = u.owner == playerId;
+                double threat = std::min(1.0, u.spec.threat / 100.0);
+                double hpRatio = u.spec.maxHp * u.spec.unitCount > 0
+                                     ? static_cast<double>(totalHp(u)) / (u.spec.maxHp * u.spec.unitCount)
+                                     : 0.0;
+                if (friendly && layer == UnitLayer::Land) planes[0] = threat;
+                if (!friendly && layer == UnitLayer::Land) planes[1] = threat;
+                if (friendly && layer == UnitLayer::Air) planes[2] = threat;
+                if (!friendly && layer == UnitLayer::Air) planes[3] = threat;
+                if (friendly) planes[4] = std::max(planes[4], hpRatio);
+                if (!friendly) planes[5] = std::max(planes[5], hpRatio);
+            }
+            for (double value : planes) features.push_back(clampFeature(value));
+        }
+    }
+
+    if (features.size() < kStateFeatureCount) features.resize(kStateFeatureCount, 0.0);
+    if (features.size() > kStateFeatureCount) features.resize(kStateFeatureCount);
+    return features;
+}
+
+std::vector<double> GameEngine::actionFeatures(PlayerId playerId, const AiAction& action) const {
+    std::vector<double> features(kActionFeatureCount, 0.0);
+    int kindIndex = static_cast<int>(action.kind);
+    if (kindIndex >= 0 && kindIndex < 6) features[kindIndex] = 1.0;
+
+    const UnitSpec* spec = specFor(action.type);
+    const Unit* actionUnit = nullptr;
+    if (action.unitId >= 0 && action.unitId < static_cast<int>(units_.size())) {
+        actionUnit = &unit(action.unitId);
+        spec = &actionUnit->spec;
+    }
+    if (spec) {
+        constexpr double kMaxUnitType = static_cast<double>(static_cast<int>(UnitType::StormSpirit));
+        features[6] = kMaxUnitType > 0.0 ? static_cast<int>(spec->type) / kMaxUnitType : 0.0;
+        features[7] = std::min(1.0, spec->cost / 10.0);
+        features[8] = std::min(1.0, spec->unitCount / 5.0);
+        features[9] = std::min(1.0, spec->maxHp / 400.0);
+        features[10] = std::min(1.0, spec->attack / 120.0);
+        features[11] = std::min(1.0, spec->range / 6.0);
+        features[12] = std::min(1.0, spec->speed / 5.0);
+        features[13] = std::min(1.0, spec->threat / 100.0);
+        features[14] = spec->layer == UnitLayer::Air ? 1.0 : 0.0;
+        features[15] = spec->canAttackAir ? 1.0 : 0.0;
+    }
+    features[16] = board_.width > 1 ? action.coord.x / static_cast<double>(board_.width - 1) : 0.0;
+    features[17] = board_.height > 1 ? action.coord.y / static_cast<double>(board_.height - 1) : 0.0;
+    features[18] = playerId == PlayerId::One ? features[16] : 1.0 - features[16];
+    features[19] = actionUnit && actionUnit->upgraded ? 1.0 : 0.0;
+    return features;
+}
+
+void GameEngine::prepareAiPlayer(PlayerId playerId) {
+    aiPrepare(playerId);
+}
+
 PlayerState& GameEngine::player(PlayerId id) {
     return players_[playerIndex(id)];
 }
@@ -489,12 +962,18 @@ void GameEngine::startNextRound() {
     phase_ = Phase::Preparation;
     ++round_;
     combatTime_ = 0.0;
+
+    std::array<int, 2> incomes{};
     for (PlayerState& p : players_) {
         p.ready = false;
-        p.money += 5;
+        int income = roundIncomeFor(p, round_);
+        p.money += income;
+        incomes[playerIndex(p.id)] = income;
     }
     pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
-               {}, {}, round_, "Round " + std::to_string(round_) + " started - board cleared"});
+               {}, {}, incomes[0],
+               "Round " + std::to_string(round_) + " started - tower damage persists, income +" +
+                   std::to_string(incomes[0]) + "/+" + std::to_string(incomes[1])});
 }
 
 void GameEngine::resetCombatantsForPreparation() {
@@ -520,12 +999,14 @@ void GameEngine::resetCombatantsForPreparation() {
         u.statuses.clear();
 
         if (u.spec.type == UnitType::DefenseTower) {
-            u.alive = true;
-            u.hp.assign(u.spec.unitCount, u.spec.maxHp);
             Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
-            u.deployed = true;
             u.coord = home;
             u.lastCoord = home;
+            if (!u.alive || u.hp.empty()) {
+                u.deployed = false;
+                continue;
+            }
+            u.deployed = true;
             placeUnit(u.id, home);
             player(u.owner).deployed.push_back(u.id);
         } else {
@@ -539,55 +1020,180 @@ void GameEngine::resetCombatantsForPreparation() {
     }
 }
 
+void GameEngine::ensureAiPlanner() {
+    if (!aiPlanner_) loadAiPlanner();
+}
+
+void GameEngine::loadAiPlanner() {
+    aiPolicyMetadata_ = AiPolicyMetadata{};
+    aiPolicyMetadata_.format = kPolicyFormat;
+    aiPolicyMetadata_.modelVersion = kPolicyModelVersion;
+    aiPolicyMetadata_.difficulty = toString(config_.aiDifficulty);
+    aiPolicyMetadata_.rulesFingerprint = rulesFingerprint();
+    aiPolicyMetadata_.stateFeatureCount = kStateFeatureCount;
+    aiPolicyMetadata_.actionFeatureCount = kActionFeatureCount;
+
+    std::string path = joinPath(config_.aiPolicyDirectory, policyFileName(config_.aiDifficulty));
+    aiPolicyMetadata_.path = path;
+
+    std::string json;
+    if (!readTextFile(path, json)) {
+        useHeuristicAiPlanner("policy file missing: " + path);
+        return;
+    }
+
+    auto format = jsonStringValue(json, "format");
+    auto modelVersion = jsonStringValue(json, "modelVersion");
+    auto difficulty = jsonStringValue(json, "difficulty");
+    auto fingerprint = jsonStringValue(json, "rulesFingerprint");
+    auto stateCount = jsonNumberValue(json, "stateFeatureCount");
+    auto actionCount = jsonNumberValue(json, "actionFeatureCount");
+    auto heuristicBlend = jsonNumberValue(json, "heuristicBlend");
+    auto bias = jsonNumberValue(json, "bias");
+    std::vector<double> weights = jsonNumberArray(json, "weights");
+
+    if (format) aiPolicyMetadata_.format = *format;
+    if (modelVersion) aiPolicyMetadata_.modelVersion = *modelVersion;
+    if (difficulty) aiPolicyMetadata_.difficulty = *difficulty;
+    if (fingerprint) aiPolicyMetadata_.rulesFingerprint = *fingerprint;
+    if (stateCount) aiPolicyMetadata_.stateFeatureCount = static_cast<int>(*stateCount);
+    if (actionCount) aiPolicyMetadata_.actionFeatureCount = static_cast<int>(*actionCount);
+    if (heuristicBlend) aiPolicyMetadata_.heuristicBlend = *heuristicBlend;
+    if (bias) aiPolicyMetadata_.bias = *bias;
+    aiPolicyMetadata_.loaded = true;
+
+    const int expectedWeights = kStateFeatureCount + kActionFeatureCount;
+    std::string expectedDifficulty = toString(config_.aiDifficulty);
+    if (aiPolicyMetadata_.format != kPolicyFormat) {
+        useHeuristicAiPlanner("policy format mismatch: " + aiPolicyMetadata_.format);
+        return;
+    }
+    if (aiPolicyMetadata_.modelVersion != kPolicyModelVersion) {
+        useHeuristicAiPlanner("policy model mismatch: " + aiPolicyMetadata_.modelVersion);
+        return;
+    }
+    if (lowerCopy(aiPolicyMetadata_.difficulty) != lowerCopy(expectedDifficulty)) {
+        useHeuristicAiPlanner("policy difficulty mismatch: " + aiPolicyMetadata_.difficulty);
+        return;
+    }
+    if (aiPolicyMetadata_.rulesFingerprint != rulesFingerprint()) {
+        useHeuristicAiPlanner("policy rules fingerprint stale: " + aiPolicyMetadata_.rulesFingerprint);
+        return;
+    }
+    if (aiPolicyMetadata_.stateFeatureCount != kStateFeatureCount ||
+        aiPolicyMetadata_.actionFeatureCount != kActionFeatureCount) {
+        useHeuristicAiPlanner("policy feature schema mismatch");
+        return;
+    }
+    if (static_cast<int>(weights.size()) != expectedWeights) {
+        useHeuristicAiPlanner("policy weight count mismatch");
+        return;
+    }
+
+    aiPolicyMetadata_.valid = true;
+    aiPolicyMetadata_.status = "loaded policy: " + path;
+    aiPlanner_ = std::make_unique<PolicyAiPlanner>(aiPolicyMetadata_, std::move(weights));
+    pushEvent({EventType::AiPolicyStatus, PlayerId::Two, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, 0, "AI policy " + toString(config_.aiDifficulty) + " loaded"});
+}
+
+void GameEngine::useHeuristicAiPlanner(const std::string& status) {
+    aiPolicyMetadata_.valid = false;
+    aiPolicyMetadata_.status = status;
+    aiPlanner_ = std::make_unique<HeuristicAiPlanner>();
+    pushEvent({EventType::AiPolicyStatus, PlayerId::Two, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, 0, "AI policy fallback: " + status});
+}
+
 void GameEngine::aiPrepare(PlayerId playerId) {
-    aiBuy(playerId);
-    aiDeploy(playerId);
-    player(playerId).ready = true;
-}
-
-void GameEngine::aiBuy(PlayerId playerId) {
-    PlayerState& p = player(playerId);
-    for (int purchase = 0; purchase < 8 && p.bench.size() < 10; ++purchase) {
-        const UnitSpec* best = nullptr;
-        double bestScore = -std::numeric_limits<double>::infinity();
-        for (const UnitSpec& spec : specs_) {
-            if (spec.cost <= 0 || isInternalUnit(spec.type) || spec.cost > p.money) continue;
-            double score = aiPurchaseScore(playerId, spec);
-            if (score > bestScore) {
-                bestScore = score;
-                best = &spec;
-            }
-        }
-        if (!best) break;
-        if (!buyUnit(playerId, best->type)) break;
+    ensureAiPlanner();
+    for (int step = 0; step < kMaxAiActionsPerPreparation && phase_ == Phase::Preparation; ++step) {
+        std::vector<AiAction> actions = legalActions(playerId);
+        if (actions.empty()) break;
+        std::optional<AiAction> action = aiPlanner_->chooseAction(*this, playerId, actions);
+        if (!action) break;
+        AiActionKind kind = action->kind;
+        if (!applyAiAction(playerId, *action)) break;
+        if (kind == AiActionKind::Ready) return;
+    }
+    if (phase_ == Phase::Preparation && hasActiveCombatUnit(playerId)) {
+        setReady(playerId, true);
     }
 }
 
-void GameEngine::aiDeploy(PlayerId playerId) {
-    PlayerState& p = player(playerId);
-    std::vector<UnitId> pending = p.bench;
-    std::sort(pending.begin(), pending.end(), [this](UnitId lhs, UnitId rhs) {
-        return unit(lhs).spec.threat > unit(rhs).spec.threat;
-    });
+std::optional<AiAction> GameEngine::chooseHeuristicAction(
+    PlayerId playerId,
+    const std::vector<AiAction>& legalActions) const {
+    if (legalActions.empty()) return std::nullopt;
 
-    for (UnitId id : pending) {
-        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
-        const Unit& u = unit(id);
-        int bestScore = std::numeric_limits<int>::min();
-        Coord bestCoord{-1, -1};
-        for (int y = 0; y < board_.height; ++y) {
-            for (int x = 0; x < board_.width; ++x) {
-                Coord coord{x, y};
-                if (!canDeploy(playerId, coord, u.spec.layer)) continue;
-                int score = aiDeploymentScore(playerId, u, coord);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestCoord = coord;
+    const AiAction* bestBuy = nullptr;
+    const AiAction* bestDeploy = nullptr;
+    const AiAction* bestUpgrade = nullptr;
+    const AiAction* ready = nullptr;
+    double bestBuyScore = -std::numeric_limits<double>::infinity();
+    double bestDeployScore = -std::numeric_limits<double>::infinity();
+    double bestUpgradeScore = -std::numeric_limits<double>::infinity();
+
+    for (const AiAction& action : legalActions) {
+        double score = heuristicActionScore(playerId, action);
+        switch (action.kind) {
+            case AiActionKind::Buy:
+                if (!bestBuy || score > bestBuyScore) {
+                    bestBuy = &action;
+                    bestBuyScore = score;
                 }
-            }
+                break;
+            case AiActionKind::Deploy:
+                if (!bestDeploy || score > bestDeployScore) {
+                    bestDeploy = &action;
+                    bestDeployScore = score;
+                }
+                break;
+            case AiActionKind::Upgrade:
+                if (!bestUpgrade || score > bestUpgradeScore) {
+                    bestUpgrade = &action;
+                    bestUpgradeScore = score;
+                }
+                break;
+            case AiActionKind::Ready:
+                ready = &action;
+                break;
+            default:
+                break;
         }
-        if (bestCoord.x >= 0) deployUnit(playerId, id, bestCoord);
     }
+
+    if (bestBuy) return *bestBuy;
+    if (bestUpgrade && player(playerId).bench.empty()) return *bestUpgrade;
+    if (bestDeploy) return *bestDeploy;
+    if (ready) return *ready;
+    if (bestUpgrade) return *bestUpgrade;
+    return legalActions.front();
+}
+
+double GameEngine::heuristicActionScore(PlayerId playerId, const AiAction& action) const {
+    switch (action.kind) {
+        case AiActionKind::Buy: {
+            const UnitSpec* spec = specFor(action.type);
+            return spec ? aiPurchaseScore(playerId, *spec) : -1000.0;
+        }
+        case AiActionKind::Deploy:
+        case AiActionKind::MoveDeployed: {
+            if (action.unitId < 0 || action.unitId >= static_cast<int>(units_.size())) return -1000.0;
+            const Unit& u = unit(action.unitId);
+            return aiDeploymentScore(playerId, u, action.coord) + u.spec.threat * 0.5;
+        }
+        case AiActionKind::Upgrade: {
+            if (action.unitId < 0 || action.unitId >= static_cast<int>(units_.size())) return -1000.0;
+            const Unit& u = unit(action.unitId);
+            return u.spec.threat + u.spec.attack * 0.4 + u.spec.maxHp * 0.05;
+        }
+        case AiActionKind::ReturnToBench:
+            return -500.0;
+        case AiActionKind::Ready:
+            return -50.0;
+    }
+    return -1000.0;
 }
 
 double GameEngine::aiPurchaseScore(PlayerId playerId, const UnitSpec& spec) const {
@@ -1507,6 +2113,27 @@ std::string toString(PlayerId player) {
     return player == PlayerId::One ? "Player1" : "Player2";
 }
 
+std::string toString(AiDifficulty difficulty) {
+    switch (difficulty) {
+        case AiDifficulty::Normal: return "Normal";
+        case AiDifficulty::Hard: return "Hard";
+        case AiDifficulty::SuperHard: return "SuperHard";
+    }
+    return "Normal";
+}
+
+std::string toString(AiActionKind kind) {
+    switch (kind) {
+        case AiActionKind::Buy: return "Buy";
+        case AiActionKind::Deploy: return "Deploy";
+        case AiActionKind::MoveDeployed: return "MoveDeployed";
+        case AiActionKind::ReturnToBench: return "ReturnToBench";
+        case AiActionKind::Upgrade: return "Upgrade";
+        case AiActionKind::Ready: return "Ready";
+    }
+    return "Ready";
+}
+
 std::string toString(Phase phase) {
     switch (phase) {
         case Phase::Preparation: return "Preparation";
@@ -1518,6 +2145,46 @@ std::string toString(Phase phase) {
 
 std::string toString(UnitLayer layer) {
     return layer == UnitLayer::Land ? "Land" : "Air";
+}
+
+std::string toString(UnitType type) {
+    switch (type) {
+        case UnitType::Skeleton: return "Skeleton";
+        case UnitType::SkeletonByWitch: return "SkeletonByWitch";
+        case UnitType::Knight: return "Knight";
+        case UnitType::Archer: return "Archer";
+        case UnitType::Pekka: return "Pekka";
+        case UnitType::Witch: return "Witch";
+        case UnitType::Balloon: return "Balloon";
+        case UnitType::Minions: return "Minions";
+        case UnitType::Goblin: return "Goblin";
+        case UnitType::Prince: return "Prince";
+        case UnitType::BabyDragon: return "BabyDragon";
+        case UnitType::DefenseTower: return "DefenseTower";
+        case UnitType::ShieldGuard: return "ShieldGuard";
+        case UnitType::Cleric: return "Cleric";
+        case UnitType::FrostMage: return "FrostMage";
+        case UnitType::Bomber: return "Bomber";
+        case UnitType::ShadowAssassin: return "ShadowAssassin";
+        case UnitType::Druid: return "Druid";
+        case UnitType::Treant: return "Treant";
+        case UnitType::Lancer: return "Lancer";
+        case UnitType::StormSpirit: return "StormSpirit";
+    }
+    return "Unknown";
+}
+
+AiDifficulty aiDifficultyFromString(const std::string& text) {
+    std::string normalized = lowerCopy(text);
+    normalized.erase(std::remove(normalized.begin(), normalized.end(), ' '), normalized.end());
+    normalized.erase(std::remove(normalized.begin(), normalized.end(), '-'), normalized.end());
+    normalized.erase(std::remove(normalized.begin(), normalized.end(), '_'), normalized.end());
+    if (normalized == "hard" || normalized == "2") return AiDifficulty::Hard;
+    if (normalized == "superhard" || normalized == "nightmare" || normalized == "3" ||
+        normalized == "4") {
+        return AiDifficulty::SuperHard;
+    }
+    return AiDifficulty::Normal;
 }
 
 } // namespace autochess

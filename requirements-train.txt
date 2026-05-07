@@ -1,0 +1,3 @@
+# The smoke trainer is stdlib-only. Full PPO uses torch when the active
+# Python version has compatible wheels.
+torch>=2.3; python_version < "3.13"

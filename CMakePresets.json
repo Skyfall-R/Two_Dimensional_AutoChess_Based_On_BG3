@@ -22,6 +22,29 @@
         "AUTOCHESS_BUILD_GUI": "OFF",
         "AUTOCHESS_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "training-x64-debug",
+      "displayName": "Training x64 Debug",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/training-x64-debug",
+      "cacheVariables": {
+        "AUTOCHESS_BUILD_GUI": "OFF",
+        "AUTOCHESS_BUILD_TESTS": "ON",
+        "AUTOCHESS_BUILD_PYTHON": "ON"
+      }
+    },
+    {
+      "name": "training-linux-release",
+      "displayName": "Training Linux Release",
+      "binaryDir": "${sourceDir}/build/training-linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "AUTOCHESS_BUILD_GUI": "OFF",
+        "AUTOCHESS_BUILD_TESTS": "ON",
+        "AUTOCHESS_BUILD_PYTHON": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -34,6 +57,15 @@
       "name": "vscode-core-debug",
       "configurePreset": "vscode-core-debug",
       "configuration": "Debug"
+    },
+    {
+      "name": "training-x64-debug",
+      "configurePreset": "training-x64-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "training-linux-release",
+      "configurePreset": "training-linux-release"
     }
   ],
   "testPresets": [
@@ -49,6 +81,21 @@
       "name": "vscode-core-debug",
       "configurePreset": "vscode-core-debug",
       "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "training-x64-debug",
+      "configurePreset": "training-x64-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "training-linux-release",
+      "configurePreset": "training-linux-release",
       "output": {
         "outputOnFailure": true
       }
