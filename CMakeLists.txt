@@ -21,7 +21,11 @@ set(AUTOCHESS_PYTHON_LIBRARY "" CACHE FILEPATH "Python import library for autoch
 
 add_library(autochess_core
     lib/header/lib.hpp
+    lib/header/campaign.hpp
+    lib/header/exploration.hpp
     lib/lib.cpp
+    lib/campaign.cpp
+    lib/exploration.cpp
 )
 target_include_directories(autochess_core PUBLIC lib/header)
 target_compile_features(autochess_core PUBLIC cxx_std_17)

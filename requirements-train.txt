@@ -1,3 +1,6 @@
-# The smoke trainer is stdlib-only. Full PPO uses torch when the active
-# Python version has compatible wheels.
-torch>=2.3; python_version < "3.13"
+# Dependencies for tools/train_ai.py (AlphaZero-style training).
+# The training pipeline always needs torch + numpy. CUDA-enabled torch is
+# strongly recommended; pip will pick the right wheel automatically when the
+# venv is bootstrapped on a machine with a supported GPU driver.
+numpy>=1.24
+torch>=2.3; python_version < "3.14"

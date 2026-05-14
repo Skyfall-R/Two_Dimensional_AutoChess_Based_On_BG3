@@ -24,36 +24,228 @@ constexpr int kRoleControl = 1 << 5;
 constexpr int kRoleSummoner = 1 << 6;
 constexpr int kRoleAssassin = 1 << 7;
 constexpr int kRoleAoe = 1 << 8;
-constexpr int kStartingGold = 12;
-constexpr int kBaseRoundIncome = 6;
+constexpr int kStartingGold = 48;
+constexpr int kBaseRoundIncome = 14;
+constexpr int kRoundIncomeGrowth = 2;
 constexpr int kMaxRoundIncomeGrowth = 6;
-constexpr int kInterestGoldStep = 10;
+constexpr int kInterestGoldStep = 24;
 constexpr int kMaxInterestIncome = 3;
+constexpr int kKillBountyDivisor = 4;
+constexpr int kMinimumKillBounty = 1;
+constexpr int kTowerHoldGold = 2;
+constexpr int kDefaultExplorationRoundLimit = 8;
+constexpr double kExplorationCombatRoundCap = 45.0;
+constexpr double kMainBattleCombatRoundCap = 45.0;
+constexpr int kRedcapAmbushRadius = 5;
+constexpr int kNeutralGuardianLeashRadius = 5;
+constexpr int kNeutralSummonGuardRadius = 4;
+constexpr int kExplorationUnitAggroRadius = 7;
+constexpr int kRogueAmbushMaxRange = 7;
+constexpr double kRetargetInterval = 0.35;
 constexpr int kBoardFeaturePlanes = 6;
 constexpr int kGlobalStateFeatureCount = 16;
 constexpr int kStateFeatureCount = kGlobalStateFeatureCount + kBoardWidth * kBoardHeight * kBoardFeaturePlanes;
 constexpr int kActionFeatureCount = 20;
 constexpr int kMaxAiActionsPerPreparation = 64;
+constexpr double kNecromancerSkeletonLifespan = 8.0;
 constexpr const char* kPolicyFormat = "autochess_policy_v1";
 constexpr const char* kPolicyModelVersion = "linear-v1";
+constexpr std::array<const char*, kBoardHeight> kExplorationMapTemplateA = {
+    "ssssssssss#sssssssssss#ssssssssss",
+    "ssssssssss#sssssssssss#ssssssssss",
+    "ssss#sssss#ssss#sss#sssss#ssss#ss",
+    "ssss##sssss#sss#sss#sssssss##ssss",
+    "ssss#ssss#sssss#sss#sssss#ssss#ss",
+    "ssss#ssss#sssss#sssss#ssssss#ssss",
+    "ssssssss###sss#sss#sss#sssss#ssss",
+    "sssss#sss#ssss#sss#ssss#sss#sssss",
+    "sss##ssss#ssss#sss#ssss#sssss#sss",
+    "ssssss#sss#sss#sss#sssss#sss#ssss",
+    "ssss#sss#ssss#sssss#ssss#ssss#sss",
+    "sssss#ssss#sss#sss#ssss#ssss#ssss",
+    "ssss#sss#ssss#ssss#ssss#ssss#ssss",
+    "sssss#sss#ssss#ssss#ssss#ssss#sss",
+    "ssss#sssss#ssss#ssss#ssss#sss#sss",
+    "sssss#sssss#ssss#ssss#sssss#sssss",
+    "ssss#sssss#ssss#ssss#sssss#sss#ss",
+    "ssssssssss#sssssssssss#ssssssssss",
+    "ssssssssss#sssssssssss#ssssssssss"
+};
+
+constexpr std::array<const char*, kBoardHeight> kExplorationMapTemplateB = {
+    "ssssss#sssssss#ssssss#sssss#sssss",
+    "ssssssssssss#sssssss#ssssssssssss",
+    "sss#sssss#sssss#ssssss#ssssss#sss",
+    "ssss#sssss#sssss#ssssss#ssss#ssss",
+    "sssssssssss#sssss#ssssss#sssss#ss",
+    "ssss#sss#sssssssss#ssssssss#sssss",
+    "sssss#sssssss#sss#sssssss#sss#sss",
+    "ssss#ssss#sssss#ssssss#ssss#sssss",
+    "ssssss#sssss#sssss#ssssss#ssss#ss",
+    "sss#ssssss#sss#sssss#sssss#ssssss",
+    "sssss#sssssssss#sssssss#ssss#ssss",
+    "ssssssss#sssssssssss#ssss#sssssss",
+    "ssss#sssssss#sss#ssssssssss#sssss",
+    "sssss#ssssssss#ssssss#ssssss#ssss",
+    "ssss#ssssssssssss#ssssss#ssss#sss",
+    "ssssss#ssssss#ssssss#sssss#ssssss",
+    "sssss#ssss#sssssss#sssssssss#ssss",
+    "ssssssssssss#sssssss#ssssssssssss",
+    "ssssss#sssssss#ssssss#sssss#sssss"
+};
+
+constexpr std::array<const char*, kBoardHeight> kMainBattleMapMask = {
+    "#################################",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBBT#######################TBBBB",
+    "=================================",
+    "BBBBT#######################TBBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "BBBB#########################BBBB",
+    "#################################"
+};
+
+constexpr std::array<std::array<const char*, kBoardHeight>, 2> kExplorationMapTemplates = {
+    kExplorationMapTemplateA,
+    kExplorationMapTemplateB
+};
+
+constexpr int kExplorationMapTemplateCount = static_cast<int>(kExplorationMapTemplates.size());
 
 int playerIndex(PlayerId player) {
     return player == PlayerId::One ? 0 : 1;
 }
 
-bool isInternalUnit(UnitType type) {
-    return type == UnitType::DefenseTower || type == UnitType::SkeletonByWitch ||
-           type == UnitType::Treant;
+bool isBlockingTerrain(TerrainKind terrain) {
+    return terrain == TerrainKind::Wall;
+}
+
+bool isExplorationMapKind(MapKind kind) {
+    return kind == MapKind::ExplorationA || kind == MapKind::ExplorationB;
+}
+
+bool isNeutralMonsterType(UnitType type) {
+    return type == UnitType::NeutralSpectator || type == UnitType::NeutralOwlbear ||
+           type == UnitType::NeutralMindFlayer || type == UnitType::NeutralSovereignSpaw ||
+           type == UnitType::NeutralKarniss || type == UnitType::NeutralRedcap ||
+           type == UnitType::NeutralWaterMyrmidon ||
+           type == UnitType::NeutralPhaseSpiderMatriarch ||
+           type == UnitType::NeutralRaphael ||
+           type == UnitType::NeutralKethericThorm ||
+           type == UnitType::NeutralMoonlightSliver ||
+           type == UnitType::NeutralGuardianOfFaith ||
+           type == UnitType::NeutralMinotaur ||
+           type == UnitType::NeutralDeathKnight ||
+           type == UnitType::NeutralAirMyrmidon ||
+           type == UnitType::NeutralTamiaHolzt;
+}
+
+bool isHumanoidUnitType(UnitType type) {
+    return type == UnitType::GithyankiWarrior || type == UnitType::Ranger ||
+           type == UnitType::Barbarian || type == UnitType::Necromancer ||
+           type == UnitType::GoblinSkirmisher || type == UnitType::Paladin ||
+           type == UnitType::Cleric || type == UnitType::Evoker ||
+           type == UnitType::RogueAssassin || type == UnitType::Druid;
+}
+
+bool isPlantLikeUnitType(UnitType type) {
+    return type == UnitType::Treant || type == UnitType::SporeServant;
+}
+
+bool isUndeadUnitType(UnitType type) {
+    return type == UnitType::Skeleton || type == UnitType::SkeletonByNecromancer ||
+           type == UnitType::NeutralDeathKnight;
+}
+
+bool isInternalUnitType(UnitType type) {
+    return type == UnitType::DefenseTower || type == UnitType::SkeletonByNecromancer ||
+           type == UnitType::Treant || type == UnitType::SporeServant || isNeutralMonsterType(type);
+}
+
+bool isHostileCombatTarget(const Unit& attacker, const Unit& target) {
+    if (!attacker.alive || !target.alive || attacker.id == target.id) return false;
+
+    const bool attackerNeutral = isNeutralMonsterType(attacker.spec.type);
+    const bool targetNeutral = isNeutralMonsterType(target.spec.type);
+    const bool attackerNeutralLike = attackerNeutral || attacker.neutralControlled;
+    const bool targetNeutralLike = targetNeutral || target.neutralControlled;
+    if (attackerNeutralLike && targetNeutralLike) return false;
+
+    if (attacker.spec.type == UnitType::DefenseTower && targetNeutralLike) return false;
+    if (attackerNeutralLike || targetNeutralLike) return true;
+    return attacker.owner != target.owner;
 }
 
 bool isRoundTransientUnit(UnitType type) {
-    return type == UnitType::SkeletonByWitch || type == UnitType::Treant;
+    return type == UnitType::SkeletonByNecromancer || type == UnitType::Treant;
 }
 
-int sign(int value) {
-    if (value > 0) return 1;
-    if (value < 0) return -1;
-    return 0;
+bool isSpellLikeAbility(AbilityKind ability) {
+    switch (ability) {
+        case AbilityKind::NecromancerSummon:
+        case AbilityKind::MephitDeathBurst:
+        case AbilityKind::DragonBreath:
+        case AbilityKind::ClericHeal:
+        case AbilityKind::FrostNova:
+        case AbilityKind::DruidSummon:
+        case AbilityKind::SpectatorWoundingRay:
+        case AbilityKind::MindBlast:
+        case AbilityKind::Counterspell:
+        case AbilityKind::AnimatingSpores:
+        case AbilityKind::DiabolicChains:
+        case AbilityKind::SelunesIre:
+        case AbilityKind::EvokerMagicMissile:
+        case AbilityKind::DominatePerson:
+        case AbilityKind::StrikeOfTheGuardian:
+        case AbilityKind::Blight:
+            return true;
+        case AbilityKind::None:
+        case AbilityKind::GithyankiAstralRaid:
+        case AbilityKind::BarbarianHeavySwing:
+        case AbilityKind::PaladinCharge:
+        case AbilityKind::GuardianShield:
+        case AbilityKind::RogueAmbush:
+        case AbilityKind::KarnissCruelSting:
+        case AbilityKind::OwlbearMultiattack:
+        case AbilityKind::HiemalStrike:
+        case AbilityKind::VenomousBite:
+        case AbilityKind::KethericSmite:
+        case AbilityKind::ExtractBrain:
+        case AbilityKind::MinotaurCharge:
+        case AbilityKind::StaggeringSmite:
+        case AbilityKind::ElectrifiedFlail:
+            return false;
+    }
+    return false;
+}
+
+std::string statusName(StatusKind kind) {
+    switch (kind) {
+        case StatusKind::Shield: return "Shield";
+        case StatusKind::Taunt: return "Taunt";
+        case StatusKind::Slow: return "Slow";
+        case StatusKind::Summoned: return "Summoned";
+        case StatusKind::FirstStrike: return "First Strike";
+        case StatusKind::Stunned: return "Stunned";
+        case StatusKind::Prone: return "Prone";
+        case StatusKind::Chilled: return "Chilled";
+        case StatusKind::Poisoned: return "Poisoned";
+        case StatusKind::Blinded: return "Blinded";
+        case StatusKind::Frightened: return "Frightened";
+        case StatusKind::Staggered: return "Staggered";
+    }
+    return "Status";
 }
 
 template <typename T>
@@ -67,63 +259,422 @@ int totalHp(const Unit& unit) {
     return total;
 }
 
-int roundIncomeFor(const PlayerState& player, int round) {
-    int growth = std::min(round, kMaxRoundIncomeGrowth);
-    int interest = std::min(kMaxInterestIncome, player.money / kInterestGoldStep);
-    return kBaseRoundIncome + growth + interest;
+int roundIncomeFor(const PlayerState& player, int round, const RunModifiers& modifiers) {
+    int growth = std::min(std::max(0, round - 1) * kRoundIncomeGrowth, kMaxRoundIncomeGrowth);
+    int interestCap = kMaxInterestIncome + std::max(0, modifiers.interestBonus);
+    int interest = std::min(interestCap, player.money / kInterestGoldStep);
+    return kBaseRoundIncome + growth + modifiers.roundIncomeBonus + interest;
+}
+
+int towerHoldIncomeFor(const PlayerState& player, const std::vector<Unit>& units) {
+    int aliveTowers = 0;
+    for (UnitId id : player.deployed) {
+        if (id < 0 || id >= static_cast<int>(units.size())) continue;
+        const Unit& unit = units[static_cast<size_t>(id)];
+        if (unit.alive && unit.deployed && unit.spec.type == UnitType::DefenseTower) ++aliveTowers;
+    }
+    return aliveTowers * kTowerHoldGold;
+}
+
+int killBountyFor(const Unit& dead) {
+    if (isNeutralMonsterType(dead.spec.type)) {
+        return std::max(kMinimumKillBounty, dead.spec.threat / 8);
+    }
+    if (dead.spec.cost <= 0 || isRoundTransientUnit(dead.spec.type) || dead.spec.type == UnitType::DefenseTower) return 0;
+    return std::max(kMinimumKillBounty, dead.spec.cost / kKillBountyDivisor);
+}
+
+int upgradeCostFor(const UnitSpec& spec) {
+    return std::max(5, (spec.cost * 4 + 4) / 5);
+}
+
+int effectiveBuyCostFor(const UnitSpec& spec, const RunModifiers& modifiers) {
+    if (spec.cost <= 0) return 0;
+    return std::max(1, spec.cost - std::max(0, modifiers.costDiscount));
+}
+
+int effectiveUpgradeCostFor(const UnitSpec& spec, const RunModifiers& modifiers) {
+    return std::max(1, upgradeCostFor(spec) - std::max(0, modifiers.upgradeDiscount));
+}
+
+int benchLimitFor(const RunModifiers& modifiers) {
+    return 10 + std::max(0, modifiers.benchBonus);
+}
+
+int familyIndexForUnitType(UnitType type) {
+    switch (type) {
+        case UnitType::Skeleton:
+        case UnitType::SkeletonByNecromancer:
+        case UnitType::GoblinSkirmisher:
+        case UnitType::ImpSwarm:
+            return static_cast<int>(NeutralFamily::Swarm);
+        case UnitType::Barbarian:
+        case UnitType::Paladin:
+        case UnitType::DefenseTower:
+        case UnitType::ShieldGuardian:
+        case UnitType::NeutralOwlbear:
+        case UnitType::NeutralSovereignSpaw:
+        case UnitType::NeutralWaterMyrmidon:
+        case UnitType::NeutralKethericThorm:
+        case UnitType::NeutralGuardianOfFaith:
+        case UnitType::NeutralMinotaur:
+        case UnitType::NeutralDeathKnight:
+            return static_cast<int>(NeutralFamily::Guardian);
+        case UnitType::Necromancer:
+        case UnitType::Cleric:
+        case UnitType::Evoker:
+        case UnitType::Druid:
+        case UnitType::Treant:
+        case UnitType::SporeServant:
+        case UnitType::NeutralSpectator:
+        case UnitType::NeutralMindFlayer:
+        case UnitType::NeutralRaphael:
+        case UnitType::NeutralMoonlightSliver:
+        case UnitType::NeutralTamiaHolzt:
+            return static_cast<int>(NeutralFamily::Caster);
+        case UnitType::GithyankiWarrior:
+        case UnitType::RogueAssassin:
+        case UnitType::NeutralKarniss:
+        case UnitType::NeutralRedcap:
+        case UnitType::NeutralPhaseSpiderMatriarch:
+            return static_cast<int>(NeutralFamily::Assassin);
+        case UnitType::Ranger:
+        case UnitType::FireMephit:
+        case UnitType::DragonWyrmling:
+        case UnitType::NeutralAirMyrmidon:
+            return static_cast<int>(NeutralFamily::Artillery);
+    }
+    return static_cast<int>(NeutralFamily::Swarm);
+}
+
+double familyCounterBonus(const UnitSpec& spec, NeutralFamily family) {
+    switch (family) {
+        case NeutralFamily::Swarm:
+            if (spec.roleMask & kRoleAoe) return 24.0;
+            if (spec.roleMask & kRoleSupport) return 10.0;
+            if (spec.range >= 3) return 8.0;
+            return spec.cost <= 6 ? 6.0 : 0.0;
+        case NeutralFamily::Guardian:
+            if (spec.roleMask & kRoleControl) return 18.0;
+            if (spec.roleMask & kRoleAoe) return 14.0;
+            if (spec.attackBonus >= 8) return 8.0;
+            return 0.0;
+        case NeutralFamily::Caster:
+            if (spec.roleMask & kRoleAssassin) return 22.0;
+            if (spec.speed >= 3.0) return 10.0;
+            if (spec.canAttackAir) return 6.0;
+            return 0.0;
+        case NeutralFamily::Assassin:
+            if (spec.roleMask & kRoleTank) return 20.0;
+            if (spec.roleMask & kRoleSupport) return 14.0;
+            if (spec.armorClass >= 17) return 8.0;
+            return 0.0;
+        case NeutralFamily::Artillery:
+            if (spec.roleMask & kRoleAssassin) return 18.0;
+            if (spec.layer == UnitLayer::Air) return 10.0;
+            if (spec.range >= 3) return 8.0;
+            return 0.0;
+    }
+    return 0.0;
 }
 
 std::vector<UnitSpec> makeSpecs() {
-    return {
-        {UnitType::Skeleton, "Skeleton", "Sk", 1, 3, 15, 10, 1, 3.0, 0.8,
-         UnitLayer::Land, true, false, 12, kRoleMelee, AbilityKind::None},
-        {UnitType::SkeletonByWitch, "Skeleton by Witch", "Ws", 0, 2, 16, 8, 1, 3.0, 0.8,
+    std::vector<UnitSpec> specs = {
+        {UnitType::Skeleton, "Skeleton Mob", "Sk", 4, 3, 15, 10, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 14, kRoleMelee, AbilityKind::None},
+        {UnitType::SkeletonByNecromancer, "Raised Skeletons", "Rs", 0, 2, 16, 8, 1, 3.0, 0.8,
          UnitLayer::Land, true, false, 8, kRoleMelee, AbilityKind::None},
-        {UnitType::Knight, "Knight", "Kn", 3, 1, 120, 18, 1, 2.0, 0.8,
-         UnitLayer::Land, true, false, 25, kRoleTank | kRoleMelee, AbilityKind::None},
-        {UnitType::Archer, "Archer", "Ar", 3, 2, 40, 15, 3, 3.0, 0.8,
-         UnitLayer::Land, true, true, 32, kRoleRanged, AbilityKind::None},
-        {UnitType::Pekka, "P_E_K_K_A", "Pk", 6, 1, 320, 100, 1, 1.0, 0.8,
-         UnitLayer::Land, true, false, 60, kRoleTank | kRoleMelee, AbilityKind::PekkaHeavySwing},
-        {UnitType::Witch, "Witch", "Wi", 4, 1, 80, 20, 2, 2.0, 0.8,
-         UnitLayer::Land, true, true, 42, kRoleRanged | kRoleSummoner, AbilityKind::WitchSummon,
+        {UnitType::GithyankiWarrior, "Githyanki Warrior", "Gi", 9, 1, 115, 24, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 38, kRoleMelee, AbilityKind::GithyankiAstralRaid,
+         0.0, 15, 2, 0.0},
+        {UnitType::Ranger, "Elven Ranger", "Er", 9, 2, 40, 16, 3, 3.0, 0.8,
+         UnitLayer::Land, true, true, 36, kRoleRanged, AbilityKind::None},
+        {UnitType::Barbarian, "Berserker", "Br", 22, 1, 300, 85, 1, 1.0, 0.8,
+         UnitLayer::Land, true, false, 62, kRoleTank | kRoleMelee, AbilityKind::BarbarianHeavySwing},
+        {UnitType::Necromancer, "Grave Necromancer", "Nc", 11, 1, 82, 19, 2, 2.0, 0.8,
+         UnitLayer::Land, true, true, 44, kRoleRanged | kRoleSummoner, AbilityKind::NecromancerSummon,
          1.0, 0, 1, 0.0},
-        {UnitType::Balloon, "Balloon", "Ba", 4, 1, 150, 30, 1, 2.0, 0.9,
-         UnitLayer::Air, true, false, 45, kRoleAir | kRoleAoe, AbilityKind::BalloonBomb},
-        {UnitType::Minions, "Minions", "Mn", 3, 3, 20, 15, 3, 3.0, 0.8,
-         UnitLayer::Air, true, true, 34, kRoleAir | kRoleRanged, AbilityKind::None},
-        {UnitType::Goblin, "Goblin", "Go", 2, 3, 30, 12, 1, 4.0, 0.7,
-         UnitLayer::Land, true, false, 22, kRoleMelee, AbilityKind::None},
-        {UnitType::Prince, "Prince", "Pr", 5, 1, 200, 35, 1, 3.0, 0.8,
-         UnitLayer::Land, true, false, 48, kRoleMelee, AbilityKind::PrinceCharge},
-        {UnitType::BabyDragon, "Baby Dragon", "Dr", 4, 1, 150, 15, 3, 3.0, 0.9,
-         UnitLayer::Air, true, true, 46, kRoleAir | kRoleAoe, AbilityKind::DragonBreath},
-        {UnitType::DefenseTower, "Defense Tower", "Tw", 0, 1, 800, 30, 3, 0.0, 0.8,
-         UnitLayer::Land, true, true, 80, kRoleRanged, AbilityKind::None},
-        {UnitType::ShieldGuard, "ShieldGuard", "Sh", 4, 1, 180, 12, 1, 1.0, 0.9,
-         UnitLayer::Land, true, false, 55, kRoleTank, AbilityKind::ShieldGuard,
+        {UnitType::FireMephit, "Fire Mephit", "Me", 12, 1, 155, 26, 2, 2.0, 0.9,
+         UnitLayer::Air, true, true, 45, kRoleAir | kRoleAoe, AbilityKind::MephitDeathBurst},
+        {UnitType::ImpSwarm, "Imp Swarm", "Im", 10, 3, 22, 15, 3, 3.0, 0.8,
+         UnitLayer::Air, true, true, 39, kRoleAir | kRoleRanged, AbilityKind::None},
+        {UnitType::GoblinSkirmisher, "Goblin Ambusher", "Gb", 6, 3, 30, 12, 1, 4.0, 0.7,
+         UnitLayer::Land, true, false, 26, kRoleMelee, AbilityKind::None},
+        {UnitType::Paladin, "Oathbound Paladin", "Pa", 15, 1, 210, 36, 1, 3.0, 0.8,
+         UnitLayer::Land, true, false, 50, kRoleMelee, AbilityKind::PaladinCharge},
+        {UnitType::DragonWyrmling, "Dragon Wyrmling", "Dw", 13, 1, 150, 24, 3, 3.0, 0.9,
+         UnitLayer::Air, true, true, 48, kRoleAir | kRoleAoe, AbilityKind::DragonBreath},
+        {UnitType::NeutralSpectator, "Spectator Raycaster", "Sp", 0, 1, 185, 34, 4, 1.6, 1.0,
+         UnitLayer::Land, true, true, 62, kRoleRanged | kRoleControl, AbilityKind::SpectatorWoundingRay,
+         0.0, 0, 4, 0.0},
+        {UnitType::NeutralOwlbear, "Owlbear Matriarch", "Ow", 0, 1, 260, 42, 1, 1.5, 0.85,
+         UnitLayer::Land, true, false, 68, kRoleTank | kRoleMelee, AbilityKind::OwlbearMultiattack},
+        {UnitType::NeutralMindFlayer, "Mind Flayer Arcanist", "Mf", 0, 1, 320, 54, 4, 1.4, 1.05,
+         UnitLayer::Land, true, true, 76, kRoleRanged | kRoleControl | kRoleAoe, AbilityKind::MindBlast,
+         0.0, 0, 4, 1.8},
+        {UnitType::NeutralSovereignSpaw, "Sovereign Spaw", "Ss", 0, 1, 320, 24, 2, 1.0, 0.95,
+         UnitLayer::Land, true, false, 82, kRoleTank | kRoleSupport | kRoleSummoner, AbilityKind::AnimatingSpores,
+         3.0, 0, 4, 12.0},
+        {UnitType::NeutralKarniss, "Kar'niss Drider", "Kn", 0, 1, 285, 48, 1, 2.0, 0.75,
+         UnitLayer::Land, true, false, 88, kRoleMelee | kRoleAssassin | kRoleTank, AbilityKind::KarnissCruelSting,
+         0.0, 22, 1, 0.0},
+        {UnitType::NeutralRedcap, "Redcap Ambusher", "Rc", 0, 3, 38, 14, 1, 3.2, 0.7,
+         UnitLayer::Land, true, false, 24, kRoleMelee | kRoleAssassin, AbilityKind::RogueAmbush,
+         0.0, 8, 1, 0.0},
+        {UnitType::NeutralWaterMyrmidon, "Water Myrmidon", "Wm", 0, 1, 300, 52, 1, 1.4, 0.82,
+         UnitLayer::Land, true, false, 86, kRoleTank | kRoleMelee | kRoleControl,
+         AbilityKind::HiemalStrike, 0.0, 18, 1, 2.8},
+        {UnitType::NeutralPhaseSpiderMatriarch, "Phase Spider Matriarch", "Ps", 0, 1, 245, 45, 1, 2.6, 0.72,
+         UnitLayer::Land, true, false, 84, kRoleAssassin | kRoleMelee | kRoleControl,
+         AbilityKind::VenomousBite, 0.0, 16, 1, 3.2},
+        {UnitType::NeutralRaphael, "Raphael", "Rp", 0, 1, 360, 38, 4, 1.2, 1.10,
+         UnitLayer::Land, true, true, 102, kRoleRanged | kRoleAoe | kRoleControl,
+         AbilityKind::DiabolicChains, 0.0, 36, 4, 1.0},
+        {UnitType::NeutralKethericThorm, "Ketheric Thorm", "Kt", 0, 1, 380, 58, 1, 1.2, 0.86,
+         UnitLayer::Land, true, false, 104, kRoleTank | kRoleMelee | kRoleControl,
+         AbilityKind::KethericSmite, 0.0, 24, 1, 2.0},
+        {UnitType::NeutralMoonlightSliver, "Moonlight Sliver", "Ms", 0, 1, 340, 46, 4, 1.4, 1.05,
+         UnitLayer::Land, true, true, 100, kRoleRanged | kRoleAoe | kRoleControl,
+         AbilityKind::SelunesIre, 0.0, 30, 4, 1.8},
+        {UnitType::NeutralGuardianOfFaith, "Guardian of Faith", "Gf", 0, 1, 92, 40, 3, 1.0, 1.10,
+         UnitLayer::Land, true, true, 88, kRoleRanged | kRoleAoe | kRoleControl,
+         AbilityKind::StrikeOfTheGuardian, 0.0, 40, 3, 0.0},
+        {UnitType::NeutralMinotaur, "Minotaur", "Mn", 0, 1, 280, 34, 4, 2.0, 0.82,
+         UnitLayer::Land, true, false, 86, kRoleTank | kRoleMelee | kRoleControl,
+         AbilityKind::MinotaurCharge, 0.0, 36, 4, 1.4},
+        {UnitType::NeutralDeathKnight, "Death Knight", "Dk", 0, 1, 190, 26, 1, 1.4, 0.86,
+         UnitLayer::Land, true, false, 78, kRoleMelee | kRoleControl,
+         AbilityKind::StaggeringSmite, 0.0, 0, 1, 2.8},
+        {UnitType::NeutralAirMyrmidon, "Air Myrmidon", "Am", 0, 1, 130, 22, 1, 2.4, 1.18,
+         UnitLayer::Air, true, true, 74, kRoleAir | kRoleMelee | kRoleControl,
+         AbilityKind::ElectrifiedFlail, 0.0, 0, 1, 1.2},
+        {UnitType::NeutralTamiaHolzt, "Tamia Holzt", "Th", 0, 1, 310, 38, 4, 1.4, 0.95,
+         UnitLayer::Land, true, true, 104, kRoleRanged | kRoleControl | kRoleAoe,
+         AbilityKind::Blight, 0.0, 0, 4, 0.0},
+        {UnitType::DefenseTower, "Guard Tower", "Tw", 0, 1, 1200, 22, 4, 0.0, 1.05,
+         UnitLayer::Land, true, true, 92, kRoleRanged, AbilityKind::None},
+        {UnitType::ShieldGuardian, "Shield Guardian", "Sg", 14, 1, 190, 13, 1, 1.0, 0.9,
+         UnitLayer::Land, true, false, 58, kRoleTank, AbilityKind::GuardianShield,
          4.0, 40, 2, 0.0},
-        {UnitType::Cleric, "Cleric", "Cl", 4, 1, 75, 8, 3, 2.0, 0.9,
-         UnitLayer::Land, true, true, 44, kRoleSupport | kRoleRanged, AbilityKind::ClericHeal,
+        {UnitType::Cleric, "Life Cleric", "Cl", 12, 1, 75, 8, 3, 2.0, 0.9,
+         UnitLayer::Land, true, true, 45, kRoleSupport | kRoleRanged, AbilityKind::ClericHeal,
          1.2, 25, 3, 0.0},
-        {UnitType::FrostMage, "FrostMage", "Fr", 5, 1, 70, 14, 3, 2.0, 0.9,
-         UnitLayer::Land, true, true, 50, kRoleControl | kRoleRanged | kRoleAoe,
-         AbilityKind::FrostNova, 0.0, 40, 1, 2.0},
-        {UnitType::Bomber, "Bomber", "Bo", 3, 1, 60, 25, 2, 2.0, 1.0,
-         UnitLayer::Land, true, false, 38, kRoleAoe | kRoleRanged, AbilityKind::BomberSplash},
-        {UnitType::ShadowAssassin, "ShadowAssassin", "Sa", 4, 1, 90, 30, 1, 4.0, 0.7,
-         UnitLayer::Land, true, false, 52, kRoleAssassin | kRoleMelee, AbilityKind::AssassinLeap},
-        {UnitType::Druid, "Druid", "Du", 4, 1, 85, 12, 2, 2.0, 0.9,
-         UnitLayer::Land, true, false, 36, kRoleSummoner | kRoleSupport, AbilityKind::DruidSummon,
+        {UnitType::Evoker, "Arcane Evoker", "Ev", 17, 1, 58, 54, 4, 2.0, 1.0,
+         UnitLayer::Land, true, true, 72, kRoleRanged | kRoleAoe,
+         AbilityKind::EvokerMagicMissile, 0.0, 0, 4, 0.0},
+        {UnitType::RogueAssassin, "Shadow Rogue", "Ro", 13, 1, 95, 30, 1, 4.0, 0.7,
+         UnitLayer::Land, true, false, 52, kRoleAssassin | kRoleMelee, AbilityKind::RogueAmbush},
+        {UnitType::Druid, "Circle Druid", "Du", 13, 1, 90, 12, 2, 2.0, 0.9,
+         UnitLayer::Land, true, false, 40, kRoleSummoner | kRoleSupport, AbilityKind::DruidSummon,
          5.0, 0, 1, 0.0},
-        {UnitType::Treant, "Treant", "Tr", 0, 1, 60, 8, 1, 1.0, 0.9,
+        {UnitType::Treant, "Awakened Treant", "Tr", 0, 1, 60, 8, 1, 1.0, 0.9,
          UnitLayer::Land, true, false, 10, kRoleMelee | kRoleTank, AbilityKind::None},
-        {UnitType::Lancer, "Lancer", "La", 3, 1, 100, 22, 1, 3.0, 0.8,
-         UnitLayer::Land, true, false, 34, kRoleMelee, AbilityKind::LancerPierce},
-        {UnitType::StormSpirit, "StormSpirit", "St", 5, 2, 55, 18, 3, 4.0, 0.8,
-         UnitLayer::Air, true, true, 54, kRoleAir | kRoleRanged | kRoleAoe,
-         AbilityKind::StormChain}
+        {UnitType::SporeServant, "Spore Servant", "Sv", 0, 1, 70, 12, 1, 1.5, 0.95,
+         UnitLayer::Land, true, false, 18, kRoleMelee | kRoleTank, AbilityKind::None}
     };
+
+    for (UnitSpec& spec : specs) {
+        switch (spec.type) {
+            case UnitType::Skeleton:
+                spec.armorClass = 13;
+                spec.attackBonus = 6;
+                spec.savingThrowBonus = 1;
+                break;
+            case UnitType::SkeletonByNecromancer:
+                spec.armorClass = 13;
+                spec.attackBonus = 5;
+                spec.savingThrowBonus = 1;
+                break;
+            case UnitType::GithyankiWarrior:
+                spec.armorClass = 17;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 4;
+                spec.spellSaveDc = 12;
+                break;
+            case UnitType::Ranger:
+                spec.armorClass = 14;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 3;
+                break;
+            case UnitType::Barbarian:
+                spec.armorClass = 14;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 5;
+                break;
+            case UnitType::Necromancer:
+                spec.armorClass = 12;
+                spec.attackBonus = 7;
+                spec.savingThrowBonus = 3;
+                spec.spellSaveDc = 14;
+                break;
+            case UnitType::FireMephit:
+                spec.armorClass = 12;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 2;
+                spec.spellSaveDc = 13;
+                break;
+            case UnitType::ImpSwarm:
+                spec.armorClass = 13;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 3;
+                break;
+            case UnitType::GoblinSkirmisher:
+                spec.armorClass = 15;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 3;
+                break;
+            case UnitType::Paladin:
+                spec.armorClass = 18;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 5;
+                spec.spellSaveDc = 13;
+                break;
+            case UnitType::DragonWyrmling:
+                spec.armorClass = 17;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 5;
+                spec.spellSaveDc = 15;
+                break;
+            case UnitType::NeutralSpectator:
+                spec.armorClass = 16;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 5;
+                spec.spellSaveDc = 14;
+                break;
+            case UnitType::NeutralOwlbear:
+                spec.armorClass = 14;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 4;
+                break;
+            case UnitType::NeutralMindFlayer:
+                spec.armorClass = 17;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 7;
+                spec.spellSaveDc = 18;
+                break;
+            case UnitType::NeutralSovereignSpaw:
+                spec.armorClass = 13;
+                spec.attackBonus = 7;
+                spec.savingThrowBonus = 5;
+                spec.spellSaveDc = 15;
+                break;
+            case UnitType::NeutralKarniss:
+                spec.armorClass = 17;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 5;
+                break;
+            case UnitType::NeutralRedcap:
+                spec.armorClass = 14;
+                spec.attackBonus = 7;
+                spec.savingThrowBonus = 3;
+                break;
+            case UnitType::NeutralWaterMyrmidon:
+                spec.armorClass = 18;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 6;
+                spec.spellSaveDc = 15;
+                break;
+            case UnitType::NeutralPhaseSpiderMatriarch:
+                spec.armorClass = 16;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 6;
+                spec.spellSaveDc = 15;
+                break;
+            case UnitType::NeutralRaphael:
+                spec.armorClass = 19;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 8;
+                spec.spellSaveDc = 17;
+                break;
+            case UnitType::NeutralKethericThorm:
+                spec.armorClass = 18;
+                spec.attackBonus = 10;
+                spec.savingThrowBonus = 7;
+                spec.spellSaveDc = 16;
+                break;
+            case UnitType::NeutralMoonlightSliver:
+                spec.armorClass = 17;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 7;
+                spec.spellSaveDc = 17;
+                break;
+            case UnitType::NeutralGuardianOfFaith:
+                spec.armorClass = 20;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 8;
+                spec.spellSaveDc = 16;
+                break;
+            case UnitType::NeutralMinotaur:
+                spec.armorClass = 14;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 6;
+                spec.spellSaveDc = 15;
+                break;
+            case UnitType::NeutralDeathKnight:
+                spec.armorClass = 18;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 6;
+                spec.spellSaveDc = 16;
+                break;
+            case UnitType::NeutralAirMyrmidon:
+                spec.armorClass = 15;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 6;
+                spec.spellSaveDc = 16;
+                break;
+            case UnitType::NeutralTamiaHolzt:
+                spec.armorClass = 16;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 6;
+                spec.spellSaveDc = 17;
+                break;
+            case UnitType::DefenseTower:
+                spec.armorClass = 16;
+                spec.attackBonus = 8;
+                break;
+            case UnitType::ShieldGuardian:
+                spec.armorClass = 19;
+                spec.attackBonus = 7;
+                spec.savingThrowBonus = 4;
+                break;
+            case UnitType::Cleric:
+                spec.armorClass = 14;
+                spec.attackBonus = 7;
+                spec.savingThrowBonus = 5;
+                spec.spellSaveDc = 13;
+                break;
+            case UnitType::Evoker:
+                spec.armorClass = 12;
+                spec.attackBonus = 8;
+                spec.savingThrowBonus = 4;
+                spec.spellSaveDc = 15;
+                break;
+            case UnitType::RogueAssassin:
+                spec.armorClass = 15;
+                spec.attackBonus = 9;
+                spec.savingThrowBonus = 4;
+                spec.abilityValue = 20;
+                break;
+            case UnitType::Druid:
+                spec.armorClass = 13;
+                spec.attackBonus = 7;
+                spec.savingThrowBonus = 4;
+                spec.spellSaveDc = 14;
+                break;
+            case UnitType::Treant:
+                spec.armorClass = 13;
+                spec.attackBonus = 6;
+                spec.savingThrowBonus = 2;
+                break;
+            case UnitType::SporeServant:
+                spec.armorClass = 12;
+                spec.attackBonus = 6;
+                spec.savingThrowBonus = 2;
+                break;
+        }
+    }
+
+    return specs;
 }
 
 std::string eventUnitName(const Unit& unit) {
@@ -145,11 +696,11 @@ std::string lowerCopy(std::string text) {
 
 std::string policyFileName(AiDifficulty difficulty) {
     switch (difficulty) {
-        case AiDifficulty::Normal: return "normal.policy.json";
+        case AiDifficulty::Normal: return "built-in";
         case AiDifficulty::Hard: return "hard.policy.json";
         case AiDifficulty::SuperHard: return "superhard.policy.json";
     }
-    return "normal.policy.json";
+    return "built-in";
 }
 
 std::string joinPath(const std::string& directory, const std::string& file) {
@@ -253,7 +804,114 @@ std::string hashToHex(uint64_t hash) {
     return out.str();
 }
 
+const std::array<const char*, kBoardHeight>& explorationMapMask(int templateIndex) {
+    int index = ((templateIndex % kExplorationMapTemplateCount) + kExplorationMapTemplateCount) %
+                kExplorationMapTemplateCount;
+    return kExplorationMapTemplates[static_cast<size_t>(index)];
+}
+
+MapKind explorationMapKindForTemplate(int templateIndex) {
+    return ((templateIndex % kExplorationMapTemplateCount) + kExplorationMapTemplateCount) %
+                   kExplorationMapTemplateCount ==
+               1
+           ? MapKind::ExplorationB
+           : MapKind::ExplorationA;
+}
+
+int templateIndexForMapKind(MapKind kind) {
+    return kind == MapKind::ExplorationB ? 1 : 0;
+}
+
+bool isBossObjectiveKind(ExplorationObjectiveKind kind) {
+    return kind == ExplorationObjectiveKind::Boss;
+}
+
+bool isCentralBossCoord(Coord coord) {
+    return coord.x >= 10 && coord.x <= 22 && coord.y >= 4 && coord.y <= 14;
+}
+
+bool isOuterObjectiveCoord(Coord coord) {
+    if (isCentralBossCoord(coord)) return false;
+    return coord.x >= 4 && coord.x <= kBoardWidth - 5 && coord.y >= 2 && coord.y <= kBoardHeight - 3;
+}
+
+void paintMapFromMask(Board& board, const std::array<const char*, kBoardHeight>& mask) {
+    for (int y = 0; y < board.height; ++y) {
+        for (int x = 0; x < board.width; ++x) {
+            char tile = mask[static_cast<size_t>(y)][x];
+            TerrainKind terrain = TerrainKind::Wall;
+            switch (tile) {
+                case 'B': terrain = TerrainKind::Base; break;
+                case '=': terrain = TerrainKind::MainRoad; break;
+                case 's': terrain = TerrainKind::SideRoad; break;
+                case 'N': terrain = TerrainKind::NeutralCamp; break;
+                case 'T': terrain = TerrainKind::TowerPad; break;
+                case 'X': terrain = TerrainKind::BossSite; break;
+                case '!': terrain = TerrainKind::Trap; break;
+                case '#':
+                default:
+                    terrain = TerrainKind::Wall;
+                    break;
+            }
+            board.setTerrain({x, y}, terrain);
+        }
+    }
+}
+
+bool isExplorationStagingCoord(PlayerId playerId, Coord coord) {
+    if (coord.x < 0 || coord.x >= kBoardWidth || coord.y < 0 || coord.y >= kBoardHeight) {
+        return false;
+    }
+    const bool leftRoom = coord.x <= 3 && coord.y >= 3 && coord.y <= kBoardHeight - 4;
+    const bool rightRoom = coord.x >= kBoardWidth - 4 && coord.y >= 3 && coord.y <= kBoardHeight - 4;
+    const bool leftTopWing = coord.y <= 1 && coord.x <= 5;
+    const bool leftBottomWing = coord.y >= kBoardHeight - 2 && coord.x <= 5;
+    const bool rightTopWing = coord.y <= 1 && coord.x >= kBoardWidth - 6;
+    const bool rightBottomWing = coord.y >= kBoardHeight - 2 && coord.x >= kBoardWidth - 6;
+    if (playerId == PlayerId::One) return leftRoom || leftTopWing || leftBottomWing;
+    return rightRoom || rightTopWing || rightBottomWing;
+}
+
+void paintExplorationMap(Board& board, int templateIndex) {
+    paintMapFromMask(board, explorationMapMask(templateIndex));
+    for (int y = 0; y < board.height; ++y) {
+        for (int x = 0; x < board.width; ++x) {
+            Coord coord{x, y};
+            if (isExplorationStagingCoord(PlayerId::One, coord) ||
+                isExplorationStagingCoord(PlayerId::Two, coord)) {
+                board.setTerrain(coord, TerrainKind::SideRoad);
+            }
+        }
+    }
+}
+
+void paintMainBattleMap(Board& board) {
+    paintMapFromMask(board, kMainBattleMapMask);
+}
+
+int normalizedExplorationRoundLimit(int rounds) {
+    const std::array<int, 5> allowed = {2, 4, 6, 8, 10};
+    int best = allowed.front();
+    int bestDist = std::abs(rounds - best);
+    for (int value : allowed) {
+        int dist = std::abs(rounds - value);
+        if (dist < bestDist || (dist == bestDist && value > best)) {
+            best = value;
+            bestDist = dist;
+        }
+    }
+    return best;
+}
+
 } // namespace
+
+bool isInternalUnit(UnitType type) {
+    return isInternalUnitType(type);
+}
+
+bool isNeutralMonster(UnitType type) {
+    return isNeutralMonsterType(type);
+}
 
 class HeuristicAiPlanner : public AiPlanner {
 public:
@@ -265,6 +923,27 @@ public:
 
     std::string name() const override {
         return "heuristic";
+    }
+
+    std::unique_ptr<AiPlanner> clone() const override {
+        return std::make_unique<HeuristicAiPlanner>(*this);
+    }
+};
+
+class ScriptedNormalAiPlanner : public AiPlanner {
+public:
+    std::optional<AiAction> chooseAction(GameEngine& engine,
+                                         PlayerId player,
+                                         const std::vector<AiAction>& legalActions) override {
+        return engine.chooseScriptedNormalAction(player, legalActions);
+    }
+
+    std::string name() const override {
+        return "scripted-normal";
+    }
+
+    std::unique_ptr<AiPlanner> clone() const override {
+        return std::make_unique<ScriptedNormalAiPlanner>(*this);
     }
 };
 
@@ -317,6 +996,10 @@ public:
         return "policy";
     }
 
+    std::unique_ptr<AiPlanner> clone() const override {
+        return std::make_unique<PolicyAiPlanner>(*this);
+    }
+
 private:
     AiPolicyMetadata metadata_;
     std::vector<double> weights_;
@@ -348,8 +1031,30 @@ const Cell& Board::at(Coord coord) const {
     return cells[coord.y * width + coord.x];
 }
 
+TerrainKind Board::terrainAt(Coord coord) const {
+    if (!inBounds(coord)) return TerrainKind::Wall;
+    return at(coord).terrain;
+}
+
+void Board::setTerrain(Coord coord, TerrainKind terrain) {
+    if (!inBounds(coord)) return;
+    at(coord).terrain = terrain;
+}
+
+bool Board::blocked(Coord coord) const {
+    return !inBounds(coord) || isBlockingTerrain(terrainAt(coord));
+}
+
 UnitId Board::occupant(Coord coord, UnitLayer layer) const {
     if (!inBounds(coord)) return kInvalidUnitId;
+    const Cell& cell = at(coord);
+    const std::vector<UnitId>& ids = layer == UnitLayer::Land ? cell.land : cell.air;
+    return ids.empty() ? kInvalidUnitId : ids.front();
+}
+
+const std::vector<UnitId>& Board::occupants(Coord coord, UnitLayer layer) const {
+    static const std::vector<UnitId> empty;
+    if (!inBounds(coord)) return empty;
     const Cell& cell = at(coord);
     return layer == UnitLayer::Land ? cell.land : cell.air;
 }
@@ -357,11 +1062,362 @@ UnitId Board::occupant(Coord coord, UnitLayer layer) const {
 void Board::setOccupant(Coord coord, UnitLayer layer, UnitId id) {
     if (!inBounds(coord)) return;
     Cell& cell = at(coord);
-    if (layer == UnitLayer::Land) {
-        cell.land = id;
-    } else {
-        cell.air = id;
+    std::vector<UnitId>& ids = layer == UnitLayer::Land ? cell.land : cell.air;
+    ids.clear();
+    if (id != kInvalidUnitId) ids.push_back(id);
+}
+
+void Board::addOccupant(Coord coord, UnitLayer layer, UnitId id) {
+    if (!inBounds(coord) || id == kInvalidUnitId) return;
+    Cell& cell = at(coord);
+    std::vector<UnitId>& ids = layer == UnitLayer::Land ? cell.land : cell.air;
+    if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
+}
+
+void Board::removeOccupant(Coord coord, UnitLayer layer, UnitId id) {
+    if (!inBounds(coord)) return;
+    Cell& cell = at(coord);
+    std::vector<UnitId>& ids = layer == UnitLayer::Land ? cell.land : cell.air;
+    eraseValue(ids, id);
+}
+
+std::string toString(DamageType type) {
+    switch (type) {
+        case DamageType::Piercing: return "Piercing";
+        case DamageType::Slashing: return "Slashing";
+        case DamageType::Bludgeoning: return "Bludgeoning";
+        case DamageType::Fire: return "Fire";
+        case DamageType::Cold: return "Cold";
+        case DamageType::Poison: return "Poison";
+        case DamageType::Necrotic: return "Necrotic";
+        case DamageType::Radiant: return "Radiant";
+        case DamageType::Psychic: return "Psychic";
+        case DamageType::Force: return "Force";
+        case DamageType::Lightning: return "Lightning";
     }
+    return "Force";
+}
+
+std::string toString(DamageAffinity affinity) {
+    switch (affinity) {
+        case DamageAffinity::Immune: return "immune";
+        case DamageAffinity::Resistant: return "resistant";
+        case DamageAffinity::Normal: return "normal";
+        case DamageAffinity::Vulnerable: return "vulnerable";
+    }
+    return "normal";
+}
+
+DamageType basicDamageTypeFor(UnitType type) {
+    switch (type) {
+        case UnitType::Skeleton:
+        case UnitType::SkeletonByNecromancer:
+        case UnitType::Ranger:
+        case UnitType::RogueAssassin:
+        case UnitType::GoblinSkirmisher:
+        case UnitType::ImpSwarm:
+        case UnitType::NeutralRedcap:
+        case UnitType::NeutralPhaseSpiderMatriarch:
+        case UnitType::NeutralMinotaur:
+            return DamageType::Piercing;
+        case UnitType::Barbarian:
+        case UnitType::GithyankiWarrior:
+        case UnitType::NeutralKarniss:
+        case UnitType::NeutralOwlbear:
+        case UnitType::NeutralDeathKnight:
+            return DamageType::Slashing;
+        case UnitType::Paladin:
+        case UnitType::ShieldGuardian:
+        case UnitType::Druid:
+        case UnitType::Treant:
+        case UnitType::SporeServant:
+        case UnitType::NeutralWaterMyrmidon:
+        case UnitType::NeutralKethericThorm:
+        case UnitType::NeutralAirMyrmidon:
+        case UnitType::DefenseTower:
+            return DamageType::Bludgeoning;
+        case UnitType::DragonWyrmling:
+        case UnitType::FireMephit:
+        case UnitType::NeutralRaphael:
+            return DamageType::Fire;
+        case UnitType::Necromancer:
+        case UnitType::NeutralSpectator:
+        case UnitType::NeutralTamiaHolzt:
+            return DamageType::Necrotic;
+        case UnitType::Cleric:
+        case UnitType::NeutralMoonlightSliver:
+        case UnitType::NeutralGuardianOfFaith:
+            return DamageType::Radiant;
+        case UnitType::Evoker:
+            return DamageType::Force;
+        case UnitType::NeutralMindFlayer:
+            return DamageType::Psychic;
+        case UnitType::NeutralSovereignSpaw:
+            return DamageType::Poison;
+    }
+    return DamageType::Force;
+}
+
+DamageRoll damageRollForValue(int averageDamage, DamageType type) {
+    int diceCount = 1;
+    int diceSides = 6;
+    if (averageDamage <= 14) {
+        diceCount = 1;
+        diceSides = 6;
+    } else if (averageDamage <= 24) {
+        diceCount = 2;
+        diceSides = 8;
+    } else if (averageDamage <= 48) {
+        diceCount = 4;
+        diceSides = 8;
+    } else if (averageDamage <= 72) {
+        diceCount = 5;
+        diceSides = 10;
+    } else {
+        diceCount = 8;
+        diceSides = 10;
+    }
+    int diceAverageFloor = (diceCount * (diceSides + 1)) / 2;
+    int flat = std::max(0, averageDamage - diceAverageFloor);
+    return DamageRoll{diceCount, diceSides, flat, type};
+}
+
+DamagePacket basicDamagePacketFor(const UnitSpec& spec) {
+    DamagePacket packet;
+    packet.rolls.push_back(damageRollForValue(std::max(1, spec.attack), basicDamageTypeFor(spec.type)));
+    packet.sourceLabel = "attack";
+    return packet;
+}
+
+DamagePacket abilityDamagePacketFor(const UnitSpec& spec, AbilityKind ability) {
+    DamagePacket packet = basicDamagePacketFor(spec);
+    packet.sourceLabel = "ability";
+    switch (ability) {
+        case AbilityKind::GithyankiAstralRaid:
+            packet.rolls.push_back(DamageRoll{0, 0, spec.abilityValue, DamageType::Psychic});
+            return packet;
+        case AbilityKind::MephitDeathBurst:
+        case AbilityKind::DragonBreath:
+        case AbilityKind::DiabolicChains:
+            return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Fire)}, 0, "fire"};
+        case AbilityKind::FrostNova:
+            return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Cold)}, 0, "cold"};
+        case AbilityKind::PaladinCharge:
+            packet.rolls.push_back(packet.rolls.front());
+            return packet;
+        case AbilityKind::RogueAmbush:
+            packet.rolls.push_back(DamageRoll{0, 0, spec.abilityValue, DamageType::Piercing});
+            return packet;
+        case AbilityKind::SpectatorWoundingRay:
+            return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Necrotic)}, 0, "necrotic"};
+        case AbilityKind::MindBlast:
+            return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Psychic)}, 0, "psychic"};
+        case AbilityKind::OwlbearMultiattack:
+            return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Slashing),
+                                  damageRollForValue(std::max(1, (spec.attack * 2) / 3), DamageType::Piercing)},
+                                0,
+                                "multiattack"};
+        case AbilityKind::HiemalStrike:
+            packet.rolls.push_back(DamageRoll{0, 0, spec.abilityValue, DamageType::Cold});
+            return packet;
+        case AbilityKind::VenomousBite:
+            packet.rolls.push_back(DamageRoll{0, 0, spec.abilityValue, DamageType::Poison});
+            return packet;
+        case AbilityKind::KethericSmite:
+            packet.rolls.push_back(DamageRoll{std::max(1, spec.abilityValue / 8), 8, 0, DamageType::Radiant});
+            return packet;
+        case AbilityKind::SelunesIre:
+            packet.rolls.push_back(DamageRoll{0, 0, spec.abilityValue, DamageType::Radiant});
+            return packet;
+        case AbilityKind::EvokerMagicMissile:
+            return DamagePacket{{DamageRoll{0, 0, std::max(1, spec.attack / 3), DamageType::Force}}, 0, "missile"};
+        case AbilityKind::ExtractBrain:
+            return DamagePacket{{DamageRoll{10, 10, 1, DamageType::Piercing}}, 0, "extract brain"};
+        case AbilityKind::StrikeOfTheGuardian:
+            return DamagePacket{{DamageRoll{0, 0, 20, DamageType::Radiant},
+                                  DamageRoll{0, 0, 20, DamageType::Radiant}},
+                                0,
+                                "strike of the guardian"};
+        case AbilityKind::MinotaurCharge:
+            return DamagePacket{{DamageRoll{4, 8, 4, DamageType::Piercing}}, 0, "minotaur charge"};
+        case AbilityKind::Blight:
+            return DamagePacket{{DamageRoll{8, 8, 0, DamageType::Necrotic}}, 0, "blight"};
+        case AbilityKind::StaggeringSmite:
+            packet.rolls.push_back(DamageRoll{4, 6, 0, DamageType::Psychic});
+            packet.sourceLabel = "staggering smite";
+            return packet;
+        case AbilityKind::ElectrifiedFlail:
+            return DamagePacket{{DamageRoll{1, 8, 7, DamageType::Bludgeoning},
+                                  DamageRoll{1, 8, 0, DamageType::Lightning},
+                                  DamageRoll{1, 10, 0, DamageType::Lightning}},
+                                0,
+                                "electrified flail"};
+        case AbilityKind::None:
+        case AbilityKind::BarbarianHeavySwing:
+        case AbilityKind::NecromancerSummon:
+        case AbilityKind::GuardianShield:
+        case AbilityKind::ClericHeal:
+        case AbilityKind::DruidSummon:
+        case AbilityKind::KarnissCruelSting:
+        case AbilityKind::Counterspell:
+        case AbilityKind::AnimatingSpores:
+        case AbilityKind::DominatePerson:
+            return packet;
+    }
+    return packet;
+}
+
+int damagePacketMin(const DamagePacket& packet) {
+    int total = std::max(0, packet.flatDamage);
+    for (const DamageRoll& roll : packet.rolls) {
+        total += std::max(0, roll.flatBonus);
+        if (roll.diceCount > 0 && roll.diceSides > 0) total += roll.diceCount;
+    }
+    return total;
+}
+
+int damagePacketMax(const DamagePacket& packet) {
+    int total = std::max(0, packet.flatDamage);
+    for (const DamageRoll& roll : packet.rolls) {
+        total += std::max(0, roll.flatBonus);
+        if (roll.diceCount > 0 && roll.diceSides > 0) total += roll.diceCount * roll.diceSides;
+    }
+    return total;
+}
+
+std::string damageFormula(const DamagePacket& packet) {
+    std::vector<std::string> parts;
+    for (const DamageRoll& roll : packet.rolls) {
+        if (roll.diceCount <= 0 && roll.flatBonus <= 0) continue;
+        std::ostringstream part;
+        if (roll.diceCount > 0 && roll.diceSides > 0) {
+            part << roll.diceCount << "d" << roll.diceSides;
+            if (roll.flatBonus > 0) part << " + " << roll.flatBonus;
+        } else {
+            part << roll.flatBonus;
+        }
+        part << " " << toString(roll.type);
+        parts.push_back(part.str());
+    }
+    if (packet.flatDamage > 0) parts.push_back(std::to_string(packet.flatDamage) + " Force");
+    if (parts.empty()) return "0 Force";
+    std::ostringstream out;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) out << " + ";
+        out << parts[i];
+    }
+    return out.str();
+}
+
+std::string damageRange(const DamagePacket& packet) {
+    return std::to_string(damagePacketMin(packet)) + "~" + std::to_string(damagePacketMax(packet));
+}
+
+std::string damageLine(const DamagePacket& packet) {
+    return "Damage: " + damageRange(packet) + "    " + damageFormula(packet);
+}
+
+DamageAffinity damageAffinity(UnitType type, DamageType damageType) {
+    auto is = [damageType](DamageType candidate) { return damageType == candidate; };
+    switch (type) {
+        case UnitType::Skeleton:
+        case UnitType::SkeletonByNecromancer:
+            if (is(DamageType::Poison)) return DamageAffinity::Immune;
+            if (is(DamageType::Bludgeoning)) return DamageAffinity::Vulnerable;
+            if (is(DamageType::Piercing) || is(DamageType::Necrotic)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::Treant:
+        case UnitType::SporeServant:
+        case UnitType::NeutralSovereignSpaw:
+            if (is(DamageType::Fire)) return DamageAffinity::Vulnerable;
+            if (is(DamageType::Piercing) || is(DamageType::Poison)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::ShieldGuardian:
+        case UnitType::DefenseTower:
+            if (is(DamageType::Piercing) || is(DamageType::Slashing) ||
+                is(DamageType::Bludgeoning) || is(DamageType::Poison)) {
+                return DamageAffinity::Resistant;
+            }
+            break;
+        case UnitType::FireMephit:
+        case UnitType::ImpSwarm:
+        case UnitType::DragonWyrmling:
+            if (is(DamageType::Fire)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::NeutralMindFlayer:
+            if (is(DamageType::Psychic)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::NeutralSpectator:
+            if (is(DamageType::Necrotic) || is(DamageType::Psychic)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::NeutralRaphael:
+            if (is(DamageType::Fire) || is(DamageType::Poison) || is(DamageType::Necrotic)) {
+                return DamageAffinity::Resistant;
+            }
+            break;
+        case UnitType::NeutralKethericThorm:
+            if (is(DamageType::Radiant)) return DamageAffinity::Vulnerable;
+            if (is(DamageType::Necrotic) || is(DamageType::Bludgeoning)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::NeutralMoonlightSliver:
+            if (is(DamageType::Necrotic)) return DamageAffinity::Vulnerable;
+            if (is(DamageType::Radiant)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::NeutralGuardianOfFaith:
+            if (is(DamageType::Poison) || is(DamageType::Necrotic)) return DamageAffinity::Resistant;
+            if (is(DamageType::Radiant)) return DamageAffinity::Resistant;
+            break;
+        case UnitType::NeutralDeathKnight:
+            if (is(DamageType::Poison)) return DamageAffinity::Immune;
+            if (is(DamageType::Necrotic)) return DamageAffinity::Resistant;
+            if (is(DamageType::Radiant)) return DamageAffinity::Vulnerable;
+            break;
+        case UnitType::NeutralAirMyrmidon:
+            if (is(DamageType::Poison)) return DamageAffinity::Immune;
+            if (is(DamageType::Piercing) || is(DamageType::Slashing) ||
+                is(DamageType::Bludgeoning) || is(DamageType::Lightning)) {
+                return DamageAffinity::Resistant;
+            }
+            break;
+        default:
+            break;
+    }
+    return DamageAffinity::Normal;
+}
+
+std::string damageAffinitySummary(UnitType type) {
+    std::vector<std::string> resists;
+    std::vector<std::string> vulnerable;
+    std::vector<std::string> immune;
+    const std::array<DamageType, 11> types = {
+        DamageType::Piercing, DamageType::Slashing, DamageType::Bludgeoning, DamageType::Fire,
+        DamageType::Cold, DamageType::Poison, DamageType::Necrotic, DamageType::Radiant,
+        DamageType::Psychic, DamageType::Force, DamageType::Lightning};
+    for (DamageType damageType : types) {
+        DamageAffinity affinity = damageAffinity(type, damageType);
+        if (affinity == DamageAffinity::Resistant) resists.push_back(toString(damageType));
+        if (affinity == DamageAffinity::Vulnerable) vulnerable.push_back(toString(damageType));
+        if (affinity == DamageAffinity::Immune) immune.push_back(toString(damageType));
+    }
+    auto join = [](const std::vector<std::string>& values) {
+        std::ostringstream out;
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << values[i];
+        }
+        return out.str();
+    };
+    std::vector<std::string> parts;
+    if (!resists.empty()) parts.push_back("Resists " + join(resists));
+    if (!vulnerable.empty()) parts.push_back("Vulnerable " + join(vulnerable));
+    if (!immune.empty()) parts.push_back("Immune " + join(immune));
+    if (parts.empty()) return "Damage affinity: normal";
+    std::ostringstream out;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) out << " | ";
+        out << parts[i];
+    }
+    return out.str();
 }
 
 GameEngine::GameEngine(unsigned seed) : specs_(makeSpecs()), rng_(seed) {
@@ -373,6 +1429,65 @@ GameEngine::GameEngine(unsigned seed) : specs_(makeSpecs()), rng_(seed) {
     aiPolicyMetadata_.actionFeatureCount = kActionFeatureCount;
 }
 
+GameEngine::GameEngine(const GameEngine& other)
+    : players_(other.players_),
+      board_(other.board_),
+      units_(other.units_),
+      exploration_(other.exploration_),
+      corpses_(other.corpses_),
+      specs_(other.specs_),
+      events_(other.events_),
+      aiPlanner_(other.aiPlanner_ ? other.aiPlanner_->clone() : nullptr),
+      config_(other.config_),
+      aiPolicyMetadata_(other.aiPolicyMetadata_),
+      rng_(other.rng_),
+      mode_(other.mode_),
+      stage_(other.stage_),
+      mapKind_(other.mapKind_),
+      explorationMapTemplate_(other.explorationMapTemplate_),
+      phase_(other.phase_),
+      winner_(other.winner_),
+      round_(other.round_),
+      time_(other.time_),
+      combatTime_(other.combatTime_),
+      explorationRound_(other.explorationRound_),
+      explorationRoundLimit_(other.explorationRoundLimit_),
+      explorationRoundLimitLocked_(other.explorationRoundLimitLocked_),
+      nextUnitId_(other.nextUnitId_),
+      runModifiers_(other.runModifiers_),
+      encounterContext_(other.encounterContext_) {}
+
+GameEngine& GameEngine::operator=(const GameEngine& other) {
+    if (this == &other) return *this;
+    players_ = other.players_;
+    board_ = other.board_;
+    units_ = other.units_;
+    exploration_ = other.exploration_;
+    corpses_ = other.corpses_;
+    specs_ = other.specs_;
+    events_ = other.events_;
+    aiPlanner_ = other.aiPlanner_ ? other.aiPlanner_->clone() : nullptr;
+    config_ = other.config_;
+    aiPolicyMetadata_ = other.aiPolicyMetadata_;
+    rng_ = other.rng_;
+    mode_ = other.mode_;
+    stage_ = other.stage_;
+    mapKind_ = other.mapKind_;
+    explorationMapTemplate_ = other.explorationMapTemplate_;
+    phase_ = other.phase_;
+    winner_ = other.winner_;
+    round_ = other.round_;
+    time_ = other.time_;
+    combatTime_ = other.combatTime_;
+    explorationRound_ = other.explorationRound_;
+    explorationRoundLimit_ = other.explorationRoundLimit_;
+    explorationRoundLimitLocked_ = other.explorationRoundLimitLocked_;
+    nextUnitId_ = other.nextUnitId_;
+    runModifiers_ = other.runModifiers_;
+    encounterContext_ = other.encounterContext_;
+    return *this;
+}
+
 void GameEngine::startNewGame(GameMode mode) {
     GameConfig config = config_;
     config.mode = mode;
@@ -380,35 +1495,40 @@ void GameEngine::startNewGame(GameMode mode) {
 }
 
 void GameEngine::startNewGame(const GameConfig& config) {
+    int configuredExplorationLimit = normalizedExplorationRoundLimit(explorationRoundLimit_);
     config_ = config;
     mode_ = config.mode;
+    stage_ = GameStage::Exploration;
+    std::uniform_int_distribution<int> pickExplorationTemplate(0, kExplorationMapTemplateCount - 1);
+    explorationMapTemplate_ = pickExplorationTemplate(rng_);
+    mapKind_ = explorationMapKindForTemplate(explorationMapTemplate_);
     phase_ = Phase::Preparation;
     winner_.reset();
     round_ = 1;
     time_ = 0.0;
     combatTime_ = 0.0;
+    explorationRound_ = 0;
+    explorationRoundLimit_ = configuredExplorationLimit;
+    explorationRoundLimitLocked_ = false;
     nextUnitId_ = 0;
     units_.clear();
+    exploration_.clear();
+    corpses_.clear();
     events_.clear();
-    resetBoard();
+    runModifiers_ = {};
+    encounterContext_ = {};
+    resetBoard(mapKind_);
 
     players_[0] = PlayerState{PlayerId::One, "Player1", false, kStartingGold, false, {}, {}, {}};
     players_[1] = PlayerState{PlayerId::Two, mode_ == GameMode::SinglePlayerVsAi ? "AI" : "Player2",
                               mode_ == GameMode::SinglePlayerVsAi, kStartingGold, false, {}, {}, {}};
     loadAiPlanner();
 
-    const std::array<Coord, 4> towerCoords = {Coord{1, 2}, Coord{1, 4}, Coord{9, 2}, Coord{9, 4}};
-    for (int i = 0; i < 4; ++i) {
-        PlayerId owner = i < 2 ? PlayerId::One : PlayerId::Two;
-        UnitId tower = createUnit(owner, UnitType::DefenseTower);
-        placeUnit(tower, towerCoords[i]);
-        unit(tower).deployed = true;
-        unit(tower).homeCoord = towerCoords[i];
-        player(owner).deployed.push_back(tower);
-    }
+    initializeNeutralObjectives();
+    initializeHiddenExplorationEvents();
 
     pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
-               {}, {}, round_, "Round 1 started"});
+               {}, {}, round_, "Stage 1 exploration started"});
 }
 
 bool GameEngine::buyUnit(PlayerId playerId, UnitType type) {
@@ -417,14 +1537,16 @@ bool GameEngine::buyUnit(PlayerId playerId, UnitType type) {
     if (!spec || spec->cost <= 0 || isInternalUnit(type)) return false;
 
     PlayerState& p = player(playerId);
-    if (p.money < spec->cost || p.bench.size() >= 10) return false;
+    int cost = effectiveBuyCost(playerId, *spec);
+    if (p.money < cost || rosterCount(playerId) >= benchLimit(playerId)) return false;
 
     UnitId id = createUnit(playerId, type);
-    p.money -= spec->cost;
+    p.money -= cost;
+    unit(id).purchaseValue = cost;
     p.bench.push_back(id);
     addRecentBuy(p, type);
 
-    pushEvent({EventType::Bought, playerId, id, kInvalidUnitId, {}, {}, spec->cost,
+    pushEvent({EventType::Bought, playerId, id, kInvalidUnitId, {}, {}, cost,
                p.name + " bought " + spec->name});
     return true;
 }
@@ -432,7 +1554,7 @@ bool GameEngine::buyUnit(PlayerId playerId, UnitType type) {
 bool GameEngine::deployUnit(PlayerId playerId, UnitId unitId, Coord coord) {
     if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
     Unit& u = unit(unitId);
-    if (!u.alive || u.owner != playerId) return false;
+        if (!u.alive || u.owner != playerId || u.neutralControlled) return false;
     if (u.deployed) return moveDeployedUnit(playerId, unitId, coord);
     if (!canDeploy(playerId, coord, u.spec.layer)) return false;
 
@@ -455,7 +1577,10 @@ bool GameEngine::deployUnit(PlayerId playerId, UnitId unitId, Coord coord) {
 bool GameEngine::moveDeployedUnit(PlayerId playerId, UnitId unitId, Coord coord) {
     if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
     Unit& u = unit(unitId);
-    if (!u.alive || !u.deployed || u.owner != playerId) return false;
+    if (!u.alive || !u.deployed || u.owner != playerId || u.neutralControlled ||
+        isInternalUnit(u.spec.type)) {
+        return false;
+    }
     if (u.coord == coord) return true;
     if (!canDeploy(playerId, coord, u.spec.layer)) return false;
 
@@ -474,13 +1599,16 @@ bool GameEngine::returnToBench(PlayerId playerId, UnitId unitId) {
     if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
     Unit& u = unit(unitId);
     PlayerState& p = player(playerId);
-    if (!u.alive || !u.deployed || u.owner != playerId || u.spec.type == UnitType::DefenseTower) return false;
-    if (p.bench.size() >= 10) return false;
+    if (!u.alive || !u.deployed || u.owner != playerId || u.neutralControlled ||
+        isInternalUnit(u.spec.type)) {
+        return false;
+    }
+    if (static_cast<int>(p.bench.size()) >= benchLimit(playerId)) return false;
 
     Coord from = u.coord;
     removeFromBoard(unitId);
     u.deployed = false;
-    u.homeCoord = {};
+    u.homeCoord = {-1, -1};
     eraseValue(p.deployed, unitId);
     p.bench.push_back(unitId);
 
@@ -490,22 +1618,34 @@ bool GameEngine::returnToBench(PlayerId playerId, UnitId unitId) {
 }
 
 bool GameEngine::upgradeUnit(PlayerId playerId, UnitId unitId) {
+    (void)playerId;
+    (void)unitId;
+    return false;
+#if 0
     if (phase_ != Phase::Preparation || unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
     Unit& u = unit(unitId);
     PlayerState& p = player(playerId);
     if (!u.alive || u.owner != playerId || u.upgraded || isInternalUnit(u.spec.type)) return false;
-    if (p.money < u.spec.cost) return false;
+    int upgradeCost = effectiveUpgradeCost(playerId, u.spec);
+    if (p.money < upgradeCost) return false;
 
-    p.money -= u.spec.cost;
+    p.money -= upgradeCost;
     u.upgraded = true;
-    u.spec.attack += 10;
-    u.spec.maxHp += 10;
+    int attackBonus = std::max(4, (u.spec.attack + 2) / 3);
+    int hpBonus = std::max(10, u.spec.maxHp / 4);
+    u.spec.attack += attackBonus;
+    u.spec.maxHp += hpBonus;
+    u.spec.attackBonus += 1;
+    u.spec.armorClass += 1;
+    u.spec.savingThrowBonus += 1;
+    u.spec.spellSaveDc += 1;
     u.spec.name += "+";
     for (int& hp : u.hp) hp = u.spec.maxHp;
 
-    pushEvent({EventType::Upgraded, playerId, unitId, kInvalidUnitId, {}, {}, u.spec.cost,
+    pushEvent({EventType::Upgraded, playerId, unitId, kInvalidUnitId, {}, {}, upgradeCost,
                p.name + " upgraded " + u.spec.name});
     return true;
+#endif
 }
 
 void GameEngine::setReady(PlayerId playerId, bool ready) {
@@ -523,6 +1663,10 @@ void GameEngine::tick(double dt) {
 
     time_ += dt;
     if (phase_ == Phase::Preparation) {
+        if (shouldTransitionFromExploration()) {
+            transitionToMainBattle();
+            return;
+        }
         startCombatIfReady();
         return;
     }
@@ -537,12 +1681,34 @@ GameSnapshot GameEngine::snapshot() const {
     snapshot.round = round_;
     snapshot.time = time_;
     snapshot.combatTime = combatTime_;
+    snapshot.stage = stage_;
+    snapshot.mapKind = mapKind_;
+    snapshot.explorationRound = explorationRound_;
+    snapshot.explorationRoundLimit = explorationRoundLimit_;
+    snapshot.explorationRoundsRemaining = std::max(0, explorationRoundLimit_ - explorationRound_);
+    snapshot.explorationRoundLimitLocked = explorationRoundLimitLocked_;
+    ExplorationStats explorationStats = exploration_.stats();
+    snapshot.explorationObjectivesCleared = explorationStats.objectivesCleared;
+    snapshot.explorationObjectivesTotal = explorationStats.objectivesTotal;
+    snapshot.bossesCleared = explorationStats.bossesCleared;
+    snapshot.eventsTriggered = explorationStats.eventsTriggered;
+    snapshot.trapsTriggered = explorationStats.trapsTriggered;
+    snapshot.hiddenEventsClaimed = explorationStats.hiddenEventsClaimed;
+    snapshot.randomGoldEventsClaimed = explorationStats.randomGoldEventsClaimed;
+    snapshot.randomGoldEventsTotal = 0;
     snapshot.phase = phase_;
     snapshot.winner = winner_;
 
     for (int i = 0; i < 2; ++i) {
         const PlayerState& p = players_[i];
         snapshot.players[i] = PlayerView{p.id, p.name, p.isAi, p.money, p.ready, p.bench, p.deployed};
+    }
+
+    snapshot.terrain.reserve(board_.cells.size());
+    for (int y = 0; y < board_.height; ++y) {
+        for (int x = 0; x < board_.width; ++x) {
+            snapshot.terrain.push_back(board_.terrainAt({x, y}));
+        }
     }
 
     for (const Unit& u : units_) {
@@ -555,19 +1721,31 @@ GameSnapshot GameEngine::snapshot() const {
         view.owner = u.owner;
         view.coord = u.coord;
         view.layer = u.spec.layer;
+        view.ability = u.spec.ability;
         view.deployed = u.deployed;
         view.alive = u.alive;
         view.upgraded = u.upgraded;
+        view.neutralControlled = u.neutralControlled;
+        view.neutralActivated = isNeutralMonsterType(u.spec.type) &&
+                                u.neutralBehavior == NeutralBehavior::PassiveGuardian &&
+                                u.neutralProvoked;
+        view.neutralReturningHome = u.neutralReturningHome;
+        view.targetId = u.target;
         view.units = static_cast<int>(u.hp.size());
         view.maxUnits = u.spec.unitCount;
+        view.hp = u.hp;
         view.totalHp = totalHp(u);
         view.maxTotalHp = u.spec.maxHp * u.spec.unitCount;
         view.shield = u.shield;
         view.attack = u.spec.attack;
         view.range = u.spec.range;
-        view.cost = u.spec.cost;
-        view.slowed = hasStatus(u, StatusKind::Slow);
-        view.taunting = hasStatus(u, StatusKind::Taunt) || u.spec.ability == AbilityKind::ShieldGuard;
+        view.cost = effectiveBuyCost(u.owner, u.spec);
+        view.armorClass = effectiveArmorClass(u);
+        view.attackBonus = effectiveAttackBonus(u);
+        view.savingThrowBonus = u.spec.savingThrowBonus;
+        view.spellSaveDc = u.spec.spellSaveDc;
+        view.slowed = hasStatus(u, StatusKind::Slow) || hasStatus(u, StatusKind::Chilled);
+        view.taunting = hasStatus(u, StatusKind::Taunt) || u.spec.ability == AbilityKind::GuardianShield;
         snapshot.units.push_back(view);
     }
 
@@ -591,19 +1769,165 @@ const UnitSpec* GameEngine::specFor(UnitType type) const {
     return it == specs_.end() ? nullptr : &*it;
 }
 
+int GameEngine::effectiveBuyCost(PlayerId playerId, const UnitSpec& spec) const {
+    return effectiveBuyCostFor(spec, runModifiers_[playerIndex(playerId)]);
+}
+
+int GameEngine::effectiveUpgradeCost(PlayerId playerId, const UnitSpec& spec) const {
+    return effectiveUpgradeCostFor(spec, runModifiers_[playerIndex(playerId)]);
+}
+
+int GameEngine::benchLimit(PlayerId playerId) const {
+    return benchLimitFor(runModifiers_[playerIndex(playerId)]);
+}
+
+int GameEngine::rosterCount(PlayerId playerId) const {
+    std::vector<UnitId> ids = player(playerId).bench;
+    ids.insert(ids.end(), player(playerId).deployed.begin(), player(playerId).deployed.end());
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+
+    int count = 0;
+    for (UnitId id : ids) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        if (!u.alive || isInternalUnitType(u.spec.type) || u.spec.cost <= 0) continue;
+        ++count;
+    }
+    return count;
+}
+
+int GameEngine::baseSummonLimitFor(const Unit& caster) const {
+    switch (caster.spec.ability) {
+        case AbilityKind::NecromancerSummon:
+            return 2;
+        case AbilityKind::DruidSummon:
+            return 1;
+        case AbilityKind::AnimatingSpores:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+int GameEngine::activeSummonCountFor(UnitId casterId) const {
+    if (casterId < 0 || casterId >= static_cast<int>(units_.size())) return 0;
+    int count = 0;
+    for (const Unit& summon : units_) {
+        if (!summon.alive || !summon.deployed) continue;
+        if (summon.spec.type != UnitType::SkeletonByNecromancer &&
+            summon.spec.type != UnitType::Treant &&
+            summon.spec.type != UnitType::SporeServant) {
+            continue;
+        }
+        bool createdByCaster = false;
+        for (const StatusEffect& status : summon.statuses) {
+            if (status.kind == StatusKind::Summoned && status.source == casterId &&
+                status.remaining > 0.0) {
+                createdByCaster = true;
+                break;
+            }
+        }
+        if (createdByCaster) ++count;
+    }
+    return count;
+}
+
+int GameEngine::summonLimitFor(const Unit& caster) const {
+    int base = baseSummonLimitFor(caster);
+    if (base <= 0) return 0;
+    if (isInternalUnitType(caster.spec.type)) return base;
+    return base + std::max(0, runModifiers_[playerIndex(caster.owner)].summonLimitBonus);
+}
+
+bool GameEngine::canSummonMore(UnitId casterId) const {
+    if (casterId < 0 || casterId >= static_cast<int>(units_.size())) return false;
+    const Unit& caster = unit(casterId);
+    int limit = summonLimitFor(caster);
+    return limit > 0 && activeSummonCountFor(casterId) < limit;
+}
+
+void GameEngine::setExplorationRoundLimit(int rounds) {
+    if (stage_ != GameStage::Exploration || phase_ != Phase::Preparation ||
+        explorationRound_ > 0 || explorationRoundLimitLocked_) {
+        return;
+    }
+    explorationRoundLimit_ = normalizedExplorationRoundLimit(rounds);
+}
+
+void GameEngine::lockExplorationRoundLimit() {
+    if (stage_ != GameStage::Exploration || phase_ != Phase::Preparation || explorationRound_ > 0) return;
+    explorationRoundLimitLocked_ = true;
+}
+
+int GameEngine::explorationRoundLimit() const {
+    return explorationRoundLimit_;
+}
+
+GameStage GameEngine::stage() const {
+    return stage_;
+}
+
+void GameEngine::setRunModifiers(PlayerId playerId, const RunModifiers& modifiers) {
+    runModifiers_[playerIndex(playerId)] = modifiers;
+}
+
+const RunModifiers& GameEngine::runModifiers(PlayerId playerId) const {
+    return runModifiers_[playerIndex(playerId)];
+}
+
+void GameEngine::setEncounterContext(const EncounterContext& context) {
+    encounterContext_ = context;
+}
+
+const EncounterContext& GameEngine::encounterContext() const {
+    return encounterContext_;
+}
+
+void GameEngine::grantGold(PlayerId playerId, int amount) {
+    if (amount == 0) return;
+    PlayerState& p = player(playerId);
+    p.money += amount;
+    pushEvent({EventType::GoldGained, playerId, kInvalidUnitId, kInvalidUnitId, {}, {}, amount,
+               p.name + " gained " + std::to_string(amount) + " gold"});
+}
+
 bool GameEngine::canDeploy(PlayerId playerId, Coord coord, UnitLayer layer) const {
     if (!isDeploymentCell(playerId, coord)) return false;
-    return board_.occupant(coord, layer) == kInvalidUnitId;
+    if (board_.blocked(coord)) return false;
+    if (layer == UnitLayer::Land) {
+        for (UnitId id : board_.occupants(coord, UnitLayer::Land)) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& u = unit(id);
+            if (u.alive && u.deployed) return false;
+        }
+    }
+    for (UnitLayer occupiedLayer : {UnitLayer::Land, UnitLayer::Air}) {
+        for (UnitId id : board_.occupants(coord, occupiedLayer)) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& u = unit(id);
+            if (u.alive && u.spec.type == UnitType::DefenseTower) return false;
+        }
+    }
+    return true;
 }
 
 bool GameEngine::isDeploymentCell(PlayerId playerId, Coord coord) const {
     if (!board_.inBounds(coord)) return false;
-    if (playerId == PlayerId::One) return coord.x >= 0 && coord.x <= 2;
-    return coord.x >= 8 && coord.x <= 10;
+    if (stage_ == GameStage::Exploration) {
+        return isExplorationStagingCell(playerId, coord);
+    }
+    if (playerId == PlayerId::One) return coord.x >= 0 && coord.x <= 3;
+    return coord.x >= kBoardWidth - 4 && coord.x < kBoardWidth;
+}
+
+bool GameEngine::isExplorationStagingCell(PlayerId playerId, Coord coord) const {
+    if (!board_.inBounds(coord) || board_.blocked(coord)) return false;
+    return isExplorationStagingCoord(playerId, coord);
 }
 
 Coord GameEngine::baseCoord(PlayerId playerId) const {
-    return playerId == PlayerId::One ? Coord{0, 3} : Coord{10, 3};
+    return playerId == PlayerId::One ? Coord{0, kBoardHeight / 2} : Coord{kBoardWidth - 1, kBoardHeight / 2};
 }
 
 void GameEngine::setAiDifficulty(AiDifficulty difficulty) {
@@ -637,7 +1961,7 @@ AiFeatureSchema GameEngine::aiFeatureSchema() const {
             "board:friend_land_threat,enemy_land_threat,friend_air_threat,enemy_air_threat,friend_hp,enemy_hp"
         },
         {
-            "kind:buy,deploy,move,return,upgrade,ready",
+            "kind:buy,deploy,move,return,upgrade-disabled,ready",
             "unit:cost,count,hp,attack,range,speed,threat,layer,targets_air",
             "coord:normalized_x,normalized_y,forward_depth,unit_flags"
         }
@@ -646,11 +1970,13 @@ AiFeatureSchema GameEngine::aiFeatureSchema() const {
 
 std::string GameEngine::rulesFingerprint() const {
     uint64_t hash = 14695981039346656037ull;
-    hashAppend(hash, "autochess-rules-v1");
+    hashAppend(hash, "autochess-rules-v4-stage1-roster-relics");
     hashAppend(hash, std::to_string(kBoardWidth));
     hashAppend(hash, std::to_string(kBoardHeight));
+    hashAppend(hash, "battle-map-isolated-wilds-stage-split-v1");
     hashAppend(hash, std::to_string(kStartingGold));
     hashAppend(hash, std::to_string(kBaseRoundIncome));
+    hashAppend(hash, std::to_string(kRoundIncomeGrowth));
     hashAppend(hash, std::to_string(kMaxRoundIncomeGrowth));
     hashAppend(hash, std::to_string(kInterestGoldStep));
     hashAppend(hash, std::to_string(kMaxInterestIncome));
@@ -675,8 +2001,82 @@ std::string GameEngine::rulesFingerprint() const {
         hashAppend(hash, std::to_string(spec.abilityValue));
         hashAppend(hash, std::to_string(spec.abilityRange));
         hashAppend(hash, std::to_string(spec.abilityDuration));
+        hashAppend(hash, std::to_string(spec.armorClass));
+        hashAppend(hash, std::to_string(spec.attackBonus));
+        hashAppend(hash, std::to_string(spec.savingThrowBonus));
+        hashAppend(hash, std::to_string(spec.spellSaveDc));
     }
     return hashToHex(hash);
+}
+
+bool GameEngine::debugTriggerTrap(PlayerId triggeringPlayer, Coord coord) {
+    return triggerTrapAt(triggeringPlayer, coord);
+}
+
+bool GameEngine::debugTriggerRandomGold(PlayerId triggeringPlayer, Coord coord) {
+    return triggerRandomGoldEventAt(triggeringPlayer, coord, kInvalidUnitId);
+}
+
+bool GameEngine::debugTriggerHiddenEvent(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId) {
+    return triggerHiddenEventAt(triggeringPlayer, coord, triggerUnitId);
+}
+
+bool GameEngine::debugApplyDamage(UnitId targetId, int amount, DamageType type) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return false;
+    if (!unit(targetId).alive || unit(targetId).hp.empty()) return false;
+    applyDamage(targetId, amount, type, kInvalidUnitId);
+    return true;
+}
+
+bool GameEngine::debugApplyDamageFrom(UnitId sourceId, UnitId targetId, int amount, DamageType type) {
+    if (sourceId < 0 || sourceId >= static_cast<int>(units_.size())) return false;
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return false;
+    if (!unit(sourceId).alive || !unit(sourceId).deployed) return false;
+    if (!unit(targetId).alive || unit(targetId).hp.empty()) return false;
+    applyDamage(targetId, amount, type, sourceId);
+    return true;
+}
+
+UnitId GameEngine::debugCreateUnit(PlayerId owner, UnitType type, Coord coord) {
+    UnitId id = createUnit(owner, type);
+    Unit& u = unit(id);
+    if (!board_.inBounds(coord) || !placeUnit(id, coord)) {
+        u.alive = false;
+        u.deployed = false;
+        u.hp.clear();
+        u.coord = {-1, -1};
+        u.homeCoord = u.coord;
+        return kInvalidUnitId;
+    }
+
+    u.deployed = true;
+    u.homeCoord = coord;
+    u.lastCoord = coord;
+    if (isNeutralMonsterType(u.spec.type)) {
+        u.neutralBehavior = u.spec.type == UnitType::NeutralRedcap
+                                ? NeutralBehavior::HostileAmbusher
+                                : NeutralBehavior::PassiveGuardian;
+        u.neutralProvoked = u.neutralBehavior == NeutralBehavior::HostileAmbusher;
+        u.neutralReturningHome = false;
+    }
+    player(owner).deployed.push_back(id);
+    return id;
+}
+
+bool GameEngine::debugKnockback(UnitId targetId, Coord source, int distance, UnitId sourceId) {
+    return knockbackUnit(targetId, source, distance, sourceId);
+}
+
+bool GameEngine::debugRadialKnockback(Coord center, int radius, int distance, UnitId sourceId) {
+    return resolveRadialKnockback(center, radius, distance, sourceId).moved;
+}
+
+std::vector<Coord> GameEngine::debugRandomGoldCoords() const {
+    return exploration_.randomGoldCoords();
+}
+
+std::vector<Coord> GameEngine::debugHiddenHealingCoords() const {
+    return exploration_.hiddenHealingCoords();
 }
 
 std::vector<AiAction> GameEngine::legalActions(PlayerId playerId) const {
@@ -684,9 +2084,10 @@ std::vector<AiAction> GameEngine::legalActions(PlayerId playerId) const {
     if (phase_ != Phase::Preparation) return actions;
 
     const PlayerState& p = player(playerId);
-    if (p.bench.size() < 10) {
+    if (rosterCount(playerId) < benchLimit(playerId)) {
         for (const UnitSpec& spec : specs_) {
-            if (spec.cost <= 0 || isInternalUnit(spec.type) || spec.cost > p.money) continue;
+            int cost = effectiveBuyCost(playerId, spec);
+            if (spec.cost <= 0 || isInternalUnit(spec.type) || cost > p.money) continue;
             actions.push_back({AiActionKind::Buy, spec.type, kInvalidUnitId, {}});
         }
     }
@@ -708,7 +2109,7 @@ std::vector<AiAction> GameEngine::legalActions(PlayerId playerId) const {
     for (UnitId id : p.deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& u = unit(id);
-        if (!u.alive || !u.deployed || u.owner != playerId || u.spec.type == UnitType::DefenseTower) continue;
+        if (!u.alive || !u.deployed || u.owner != playerId || isInternalUnit(u.spec.type)) continue;
         for (int y = 0; y < board_.height; ++y) {
             for (int x = 0; x < board_.width; ++x) {
                 Coord coord{x, y};
@@ -717,9 +2118,8 @@ std::vector<AiAction> GameEngine::legalActions(PlayerId playerId) const {
                 }
             }
         }
-        if (p.bench.size() < 10) actions.push_back({AiActionKind::ReturnToBench, u.spec.type, id, {}});
-        if (!u.upgraded && u.spec.cost > 0 && p.money >= u.spec.cost) {
-            actions.push_back({AiActionKind::Upgrade, u.spec.type, id, {}});
+        if (static_cast<int>(p.bench.size()) < benchLimit(playerId)) {
+            actions.push_back({AiActionKind::ReturnToBench, u.spec.type, id, {}});
         }
     }
 
@@ -772,8 +2172,8 @@ std::vector<double> GameEngine::stateFeatures(PlayerId playerId) const {
     features.push_back(std::min(1.0, round_ / 20.0));
     features.push_back(std::min(1.0, time_ / 300.0));
     features.push_back(phase_ == Phase::Preparation ? 1.0 : 0.0);
-    features.push_back(std::min(1.0, self.money / 50.0));
-    features.push_back(std::min(1.0, foe.money / 50.0));
+    features.push_back(std::min(1.0, self.money / 120.0));
+    features.push_back(std::min(1.0, foe.money / 120.0));
     features.push_back(std::min(1.0, self.bench.size() / 10.0));
     features.push_back(std::min(1.0, foe.bench.size() / 10.0));
     features.push_back(std::min(1.0, self.deployed.size() / 20.0));
@@ -791,21 +2191,22 @@ std::vector<double> GameEngine::stateFeatures(PlayerId playerId) const {
             std::array<double, kBoardFeaturePlanes> planes{};
             Coord coord{x, y};
             for (UnitLayer layer : {UnitLayer::Land, UnitLayer::Air}) {
-                UnitId id = board_.occupant(coord, layer);
-                if (id == kInvalidUnitId || id >= static_cast<int>(units_.size())) continue;
-                const Unit& u = unit(id);
-                if (!u.alive) continue;
-                bool friendly = u.owner == playerId;
-                double threat = std::min(1.0, u.spec.threat / 100.0);
-                double hpRatio = u.spec.maxHp * u.spec.unitCount > 0
-                                     ? static_cast<double>(totalHp(u)) / (u.spec.maxHp * u.spec.unitCount)
-                                     : 0.0;
-                if (friendly && layer == UnitLayer::Land) planes[0] = threat;
-                if (!friendly && layer == UnitLayer::Land) planes[1] = threat;
-                if (friendly && layer == UnitLayer::Air) planes[2] = threat;
-                if (!friendly && layer == UnitLayer::Air) planes[3] = threat;
-                if (friendly) planes[4] = std::max(planes[4], hpRatio);
-                if (!friendly) planes[5] = std::max(planes[5], hpRatio);
+                for (UnitId id : board_.occupants(coord, layer)) {
+                    if (id == kInvalidUnitId || id >= static_cast<int>(units_.size())) continue;
+                    const Unit& u = unit(id);
+                    if (!u.alive) continue;
+                    bool friendly = u.owner == playerId;
+                    double threat = std::min(1.0, u.spec.threat / 100.0);
+                    double hpRatio = u.spec.maxHp * u.spec.unitCount > 0
+                                         ? static_cast<double>(totalHp(u)) / (u.spec.maxHp * u.spec.unitCount)
+                                         : 0.0;
+                    if (friendly && layer == UnitLayer::Land) planes[0] = std::max(planes[0], threat);
+                    if (!friendly && layer == UnitLayer::Land) planes[1] = std::max(planes[1], threat);
+                    if (friendly && layer == UnitLayer::Air) planes[2] = std::max(planes[2], threat);
+                    if (!friendly && layer == UnitLayer::Air) planes[3] = std::max(planes[3], threat);
+                    if (friendly) planes[4] = std::max(planes[4], hpRatio);
+                    if (!friendly) planes[5] = std::max(planes[5], hpRatio);
+                }
             }
             for (double value : planes) features.push_back(clampFeature(value));
         }
@@ -828,9 +2229,9 @@ std::vector<double> GameEngine::actionFeatures(PlayerId playerId, const AiAction
         spec = &actionUnit->spec;
     }
     if (spec) {
-        constexpr double kMaxUnitType = static_cast<double>(static_cast<int>(UnitType::StormSpirit));
+        constexpr double kMaxUnitType = static_cast<double>(static_cast<int>(UnitType::SporeServant));
         features[6] = kMaxUnitType > 0.0 ? static_cast<int>(spec->type) / kMaxUnitType : 0.0;
-        features[7] = std::min(1.0, spec->cost / 10.0);
+        features[7] = std::min(1.0, spec->cost / 24.0);
         features[8] = std::min(1.0, spec->unitCount / 5.0);
         features[9] = std::min(1.0, spec->maxHp / 400.0);
         features[10] = std::min(1.0, spec->attack / 120.0);
@@ -871,8 +2272,460 @@ const Unit& GameEngine::unit(UnitId id) const {
     return units_[id];
 }
 
-void GameEngine::resetBoard() {
+void GameEngine::resetBoard(MapKind kind) {
+    mapKind_ = kind;
     board_ = Board();
+    if (isExplorationMapKind(kind)) {
+        explorationMapTemplate_ = templateIndexForMapKind(kind);
+        paintExplorationMap(board_, explorationMapTemplate_);
+    } else {
+        paintMainBattleMap(board_);
+    }
+    applyExplorationObjectiveTerrain();
+}
+
+void GameEngine::spawnDefenseTowers() {
+    const std::array<Coord, 4> towerCoords = {
+        Coord{4, 8},
+        Coord{4, 10},
+        Coord{kBoardWidth - 5, 8},
+        Coord{kBoardWidth - 5, 10}
+    };
+    for (int i = 0; i < 4; ++i) {
+        PlayerId owner = i < 2 ? PlayerId::One : PlayerId::Two;
+        UnitId tower = createUnit(owner, UnitType::DefenseTower);
+        placeUnit(tower, towerCoords[i]);
+        unit(tower).deployed = true;
+        unit(tower).homeCoord = towerCoords[i];
+        unit(tower).neutralBehavior = NeutralBehavior::PassiveGuardian;
+        player(owner).deployed.push_back(tower);
+    }
+}
+
+void GameEngine::randomizeExplorationObjectives() {
+    if (stage_ != GameStage::Exploration) return;
+
+    std::vector<Coord> placed;
+    std::uniform_int_distribution<int> offset(-1, 1);
+    auto legalFor = [&](const ExplorationObjectiveState& objective, Coord candidate, size_t selfIndex) {
+        if (!board_.inBounds(candidate) || board_.blocked(candidate)) return false;
+        if (isExplorationStagingCell(PlayerId::One, candidate) ||
+            isExplorationStagingCell(PlayerId::Two, candidate)) {
+            return false;
+        }
+        TerrainKind terrain = board_.terrainAt(candidate);
+        if (terrain == TerrainKind::Base || terrain == TerrainKind::TowerPad) return false;
+        if (isBossObjectiveKind(objective.kind)) {
+            if (!isCentralBossCoord(candidate)) return false;
+        } else if (!isOuterObjectiveCoord(candidate) && objective.kind != ExplorationObjectiveKind::Trap) {
+            return false;
+        }
+        for (Coord coord : placed) {
+            if (manhattan(coord, candidate) < 3) return false;
+        }
+        for (size_t otherIndex = 0; otherIndex < exploration_.objectives().size(); ++otherIndex) {
+            if (otherIndex == selfIndex) continue;
+            const ExplorationObjectiveState* other = exploration_.objective(otherIndex);
+            if (!other || other->coord != candidate) continue;
+            return false;
+        }
+        return true;
+    };
+
+    for (size_t index = 0; index < exploration_.objectives().size(); ++index) {
+        ExplorationObjectiveState* objective = exploration_.objective(index);
+        if (!objective) continue;
+
+        Coord anchor = objective->coord;
+        std::vector<Coord> candidates;
+        candidates.reserve(25);
+        for (int dy = -2; dy <= 2; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                Coord candidate{anchor.x + dx, anchor.y + dy};
+                if (manhattan(anchor, candidate) > 2) continue;
+                candidates.push_back(candidate);
+            }
+        }
+        std::shuffle(candidates.begin(), candidates.end(), rng_);
+        std::stable_sort(candidates.begin(), candidates.end(), [anchor](Coord a, Coord b) {
+            return manhattan(a, anchor) < manhattan(b, anchor);
+        });
+
+        Coord chosen{-1, -1};
+        for (Coord candidate : candidates) {
+            if (!legalFor(*objective, candidate, index)) continue;
+            chosen = candidate;
+            break;
+        }
+        if (chosen.x < 0) {
+            int bestScore = std::numeric_limits<int>::max();
+            for (int y = 0; y < board_.height; ++y) {
+                for (int x = 0; x < board_.width; ++x) {
+                    Coord candidate{x, y};
+                    if (!legalFor(*objective, candidate, index)) continue;
+                    int score = manhattan(anchor, candidate) * 10 + std::abs(anchor.y - candidate.y);
+                    if (score < bestScore) {
+                        bestScore = score;
+                        chosen = candidate;
+                    }
+                }
+            }
+        }
+        if (chosen.x < 0) chosen = anchor;
+        objective->coord = chosen;
+        objective->owner = chosen.x < kBoardWidth / 2 ? PlayerId::Two : PlayerId::One;
+        placed.push_back(chosen);
+    }
+    exploration_.rebuildObjectiveIndexes();
+}
+
+void GameEngine::initializeNeutralObjectives() {
+    exploration_.resetObjectives(explorationMapTemplate_);
+    randomizeExplorationObjectives();
+
+    for (size_t index = 0; index < exploration_.objectives().size(); ++index) {
+        ExplorationObjectiveState* objective = exploration_.objective(index);
+        if (!objective || !isCombatExplorationObjective(objective->kind)) continue;
+        if (!board_.inBounds(objective->coord) || board_.blocked(objective->coord) ||
+            isExplorationStagingCell(PlayerId::One, objective->coord) ||
+            isExplorationStagingCell(PlayerId::Two, objective->coord)) {
+            Coord fallback{-1, -1};
+            int bestScore = std::numeric_limits<int>::max();
+            for (int y = 0; y < board_.height; ++y) {
+                for (int x = 0; x < board_.width; ++x) {
+                    Coord candidate{x, y};
+                    if (!board_.inBounds(candidate) || board_.blocked(candidate)) continue;
+                    if (isExplorationStagingCell(PlayerId::One, candidate) ||
+                        isExplorationStagingCell(PlayerId::Two, candidate)) {
+                        continue;
+                    }
+                    TerrainKind terrain = board_.terrainAt(candidate);
+                    if (terrain == TerrainKind::NeutralCamp || terrain == TerrainKind::BossSite ||
+                        terrain == TerrainKind::Trap || terrain == TerrainKind::Base ||
+                        terrain == TerrainKind::TowerPad) {
+                        continue;
+                    }
+                    bool occupiedObjective = false;
+                    for (size_t otherIndex = 0; otherIndex < exploration_.objectives().size(); ++otherIndex) {
+                        if (otherIndex == index) continue;
+                        const ExplorationObjectiveState* other = exploration_.objective(otherIndex);
+                        if (!other || other->cleared) continue;
+                        if (other->coord == candidate || manhattan(other->coord, candidate) < 2) {
+                            occupiedObjective = true;
+                            break;
+                        }
+                    }
+                    if (occupiedObjective) continue;
+                    int sideBias = objective->owner == PlayerId::Two
+                                       ? std::abs(candidate.x - std::max(5, objective->coord.x))
+                                       : std::abs(candidate.x - std::min(kBoardWidth - 6, objective->coord.x));
+                    int score = manhattan(candidate, objective->coord) * 10 + sideBias + std::abs(candidate.y - objective->coord.y);
+                    if (score < bestScore) {
+                        bestScore = score;
+                        fallback = candidate;
+                    }
+                }
+            }
+            if (fallback.x >= 0) {
+                objective->coord = fallback;
+            }
+        }
+        if (isExplorationStagingCell(PlayerId::One, objective->coord) ||
+            isExplorationStagingCell(PlayerId::Two, objective->coord)) {
+            continue;
+        }
+
+        UnitId campUnit = createUnit(objective->owner, objective->type);
+        Unit& neutral = unit(campUnit);
+        if (objective->kind == ExplorationObjectiveKind::Elite) {
+            neutral.spec.name = "Elite " + neutral.spec.name;
+            neutral.spec.maxHp = static_cast<int>(std::lround(neutral.spec.maxHp * 1.18));
+            neutral.spec.attack = static_cast<int>(std::lround(neutral.spec.attack * 1.12));
+            neutral.spec.threat += 16;
+            neutral.hp.assign(neutral.spec.unitCount, neutral.spec.maxHp);
+        } else if (objective->kind == ExplorationObjectiveKind::Boss) {
+            neutral.spec.name = "Boss " + neutral.spec.name;
+            neutral.spec.maxHp = static_cast<int>(std::lround(neutral.spec.maxHp * 2.60));
+            neutral.spec.attack = static_cast<int>(std::lround(neutral.spec.attack * 1.32));
+            neutral.spec.armorClass += 2;
+            neutral.spec.attackBonus += 2;
+            neutral.spec.savingThrowBonus += 2;
+            neutral.spec.spellSaveDc += 2;
+            neutral.spec.threat += 70;
+            neutral.hp.assign(neutral.spec.unitCount, neutral.spec.maxHp);
+        }
+        if (!placeUnit(campUnit, objective->coord)) {
+            neutral.alive = false;
+            neutral.deployed = false;
+            neutral.hp.clear();
+            neutral.coord = {-1, -1};
+            neutral.lastCoord = neutral.coord;
+            neutral.homeCoord = neutral.coord;
+            continue;
+        }
+        neutral.deployed = true;
+        neutral.homeCoord = objective->coord;
+        neutral.neutralBehavior = NeutralBehavior::PassiveGuardian;
+        exploration_.setObjectiveUnit(index, campUnit);
+        player(objective->owner).deployed.push_back(campUnit);
+    }
+
+    applyExplorationObjectiveTerrain();
+}
+
+void GameEngine::initializeHiddenExplorationEvents() {
+    exploration_.resetHiddenEvents({}, rng_);
+    if (stage_ != GameStage::Exploration) return;
+
+    std::vector<Coord> candidates;
+    for (int y = 0; y < board_.height; ++y) {
+        for (int x = 0; x < board_.width; ++x) {
+            Coord coord{x, y};
+            if (!board_.inBounds(coord) || board_.blocked(coord)) continue;
+            if (isDeploymentCell(PlayerId::One, coord) || isDeploymentCell(PlayerId::Two, coord)) continue;
+            TerrainKind terrain = board_.terrainAt(coord);
+            if (terrain != TerrainKind::SideRoad && terrain != TerrainKind::Open) continue;
+            bool objectiveCell = false;
+            for (const ExplorationObjectiveState& objective : exploration_.objectives()) {
+                if (objective.coord == coord) {
+                    objectiveCell = true;
+                    break;
+                }
+            }
+            if (objectiveCell) continue;
+            bool occupied = false;
+            for (UnitLayer layer : {UnitLayer::Land, UnitLayer::Air}) {
+                if (!board_.occupants(coord, layer).empty()) {
+                    occupied = true;
+                    break;
+                }
+            }
+            if (occupied) continue;
+            candidates.push_back(coord);
+        }
+    }
+
+    exploration_.resetHiddenEvents(std::move(candidates), rng_);
+}
+
+void GameEngine::applyExplorationObjectiveTerrain() {
+    if (stage_ != GameStage::Exploration) return;
+    for (const ExplorationObjectiveState& objective : exploration_.objectives()) {
+        if (!board_.inBounds(objective.coord)) continue;
+        if (objective.cleared) {
+            board_.setTerrain(objective.coord,
+                              objective.kind == ExplorationObjectiveKind::Boss
+                                  ? TerrainKind::ClearedBoss
+                                  : TerrainKind::ClearedObjective);
+            continue;
+        }
+        switch (objective.kind) {
+            case ExplorationObjectiveKind::Camp:
+            case ExplorationObjectiveKind::Elite:
+                board_.setTerrain(objective.coord, TerrainKind::NeutralCamp);
+                break;
+            case ExplorationObjectiveKind::Boss:
+                board_.setTerrain(objective.coord, TerrainKind::BossSite);
+                break;
+            case ExplorationObjectiveKind::Trap:
+                if (objective.triggered) {
+                    board_.setTerrain(objective.coord, TerrainKind::Trap);
+                }
+                break;
+        }
+    }
+}
+
+bool GameEngine::triggerTrapAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId) {
+    std::optional<size_t> objectiveIndex = exploration_.findTriggerableTrap(coord);
+    if (!objectiveIndex) return false;
+
+    exploration_.markTriggered(*objectiveIndex);
+    board_.setTerrain(coord, TerrainKind::Trap);
+    int spawned = spawnRedcapAmbush(triggeringPlayer, coord, triggerUnitId);
+    pushEvent({EventType::StatusApplied, triggeringPlayer, kInvalidUnitId, kInvalidUnitId,
+               coord, coord, spawned,
+               "Redcap ambush triggered"});
+    if (spawned <= 0) clearExplorationObjective(*objectiveIndex, triggeringPlayer, triggerUnitId);
+    return true;
+}
+
+bool GameEngine::triggerRandomGoldEventAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId) {
+    if (stage_ != GameStage::Exploration) return false;
+    if (triggerUnitId != kInvalidUnitId) {
+        if (triggerUnitId < 0 || triggerUnitId >= static_cast<int>(units_.size())) return false;
+        const Unit& trigger = unit(triggerUnitId);
+        if (!canTriggerHiddenEvent(trigger)) return false;
+    }
+    std::optional<RandomGoldEventState> event =
+        exploration_.claimRandomGold(triggeringPlayer, coord, triggerUnitId);
+    if (!event) return false;
+
+    player(triggeringPlayer).money += event->amount;
+    pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+               coord, coord, event->amount,
+               "Hidden cache found: +" + std::to_string(event->amount) + " gp"});
+    return true;
+}
+
+bool GameEngine::canTriggerHiddenEvent(const Unit& trigger) const {
+    if (!trigger.alive || !trigger.deployed) return false;
+    if (trigger.neutralControlled) return false;
+    if (isInternalUnitType(trigger.spec.type)) return false;
+    if (isNeutralMonsterType(trigger.spec.type) || trigger.spec.type == UnitType::DefenseTower) return false;
+    return true;
+}
+
+bool GameEngine::triggerHiddenEventAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId) {
+    if (stage_ != GameStage::Exploration) return false;
+    if (triggerUnitId != kInvalidUnitId) {
+        if (triggerUnitId < 0 || triggerUnitId >= static_cast<int>(units_.size())) return false;
+        const Unit& trigger = unit(triggerUnitId);
+        if (trigger.owner != triggeringPlayer || !canTriggerHiddenEvent(trigger)) return false;
+    }
+
+    std::optional<HiddenExplorationEventState> event =
+        exploration_.claimHiddenEvent(triggeringPlayer, coord, triggerUnitId);
+    if (!event) return false;
+
+    if (event->kind == HiddenExplorationEventKind::GoldCache) {
+        player(triggeringPlayer).money += event->amount;
+        pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                   coord, coord, event->amount,
+                   "Hidden cache found: +" + std::to_string(event->amount) + " gp"});
+        return true;
+    }
+
+    int healedTotal = 0;
+    std::vector<UnitId> allies = player(triggeringPlayer).deployed;
+    for (UnitId id : allies) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        Unit& ally = unit(id);
+        if (!canTriggerHiddenEvent(ally) || ally.owner != triggeringPlayer || ally.hp.empty()) continue;
+        for (int& hp : ally.hp) {
+            int before = hp;
+            hp = std::min(ally.spec.maxHp, hp + event->amount);
+            healedTotal += hp - before;
+        }
+    }
+    pushEvent({EventType::Healed, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+               coord, coord, healedTotal,
+               "Hidden healing spring restored the party"});
+    return true;
+}
+
+int GameEngine::spawnRedcapAmbush(PlayerId triggeringPlayer, Coord origin, UnitId triggerUnitId) {
+    PlayerId redcapOwner = opponent(triggeringPlayer);
+    std::vector<Coord> candidates = adjacentCells(origin);
+    for (Coord coord : cellsInRange(origin, 2)) {
+        if (std::find(candidates.begin(), candidates.end(), coord) == candidates.end()) {
+            candidates.push_back(coord);
+        }
+    }
+
+    auto landable = [&](Coord coord) {
+        if (!board_.inBounds(coord) || board_.blocked(coord)) return false;
+        if (coord == baseCoord(PlayerId::One) || coord == baseCoord(PlayerId::Two)) return false;
+        for (UnitId id : board_.occupants(coord, UnitLayer::Land)) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& occupant = unit(id);
+            if (occupant.alive && occupant.deployed) return false;
+        }
+        return true;
+    };
+
+    int spawned = 0;
+    for (Coord coord : candidates) {
+        if (spawned >= 3) break;
+        if (!landable(coord)) continue;
+        UnitId id = createUnit(redcapOwner, UnitType::NeutralRedcap);
+        if (!placeUnit(id, coord)) {
+            unit(id).alive = false;
+            continue;
+        }
+        unit(id).deployed = true;
+        unit(id).homeCoord = origin;
+        unit(id).lastCoord = coord;
+        unit(id).neutralBehavior = NeutralBehavior::HostileAmbusher;
+        unit(id).neutralProvoked = true;
+        unit(id).neutralReturningHome = false;
+        unit(id).provokedBy = triggerUnitId;
+        unit(id).target = triggerUnitId;
+        unit(id).retargetTimer = 0.0;
+        player(redcapOwner).deployed.push_back(id);
+        if (std::optional<size_t> trapIndex = exploration_.findTrapForSpawn(origin)) {
+            exploration_.recordTrapSpawn(*trapIndex, id);
+        }
+        ++spawned;
+    }
+    return spawned;
+}
+
+void GameEngine::clearExplorationObjective(size_t index, PlayerId clearer, UnitId actorId) {
+    ExplorationObjectiveState* objective = exploration_.objective(index);
+    if (!objective || objective->cleared) return;
+
+    exploration_.markCleared(index);
+    applyExplorationObjectiveTerrain();
+
+    PlayerState& clearerState = player(clearer);
+    int bonusGold = (objective->kind == ExplorationObjectiveKind::Elite ||
+                     objective->kind == ExplorationObjectiveKind::Boss)
+                        ? std::max(0, runModifiers_[playerIndex(clearer)].bonusGoldOnClear)
+                        : 0;
+    int totalRewardGold = objective->rewardGold + bonusGold;
+    if (totalRewardGold > 0) {
+        clearerState.money += totalRewardGold;
+    }
+
+    std::string label;
+    switch (objective->kind) {
+        case ExplorationObjectiveKind::Camp: label = "Camp cleared"; break;
+        case ExplorationObjectiveKind::Elite: label = "Elite cleared"; break;
+        case ExplorationObjectiveKind::Boss: label = "Boss defeated"; break;
+        case ExplorationObjectiveKind::Trap: label = "Trap cleared"; break;
+    }
+
+    std::string text = label + ": +" + std::to_string(totalRewardGold) + " gp";
+    pushEvent({EventType::GoldGained,
+               clearer,
+               actorId,
+               objective->unitId,
+               objective->coord,
+               objective->coord,
+               totalRewardGold,
+               std::move(text)});
+}
+
+void GameEngine::updateExplorationObjectiveForDeath(UnitId deadId, UnitId sourceId) {
+    if (stage_ != GameStage::Exploration) return;
+    PlayerId clearer = PlayerId::One;
+    if (sourceId >= 0 && sourceId < static_cast<int>(units_.size()) &&
+        !isNeutralLikeCombatant(unit(sourceId))) {
+        clearer = unit(sourceId).owner;
+    }
+
+    std::optional<size_t> objectiveIndex = exploration_.findObjectiveForUnit(deadId);
+    if (!objectiveIndex) return;
+
+    const ExplorationObjectiveState* objective = exploration_.objective(*objectiveIndex);
+    if (!objective || objective->cleared) return;
+    if (isCombatExplorationObjective(objective->kind) && objective->unitId == deadId) {
+        clearExplorationObjective(*objectiveIndex, clearer, sourceId);
+        return;
+    }
+    if (objective->kind == ExplorationObjectiveKind::Trap) {
+        bool anyAlive = false;
+        for (UnitId id : objective->spawnedUnitIds) {
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                anyAlive = true;
+                break;
+            }
+        }
+        if (!anyAlive && objective->triggered) {
+            clearExplorationObjective(*objectiveIndex, clearer, sourceId);
+        }
+    }
 }
 
 UnitId GameEngine::createUnit(PlayerId owner, UnitType type) {
@@ -881,7 +2734,39 @@ UnitId GameEngine::createUnit(PlayerId owner, UnitType type) {
     unit.id = nextUnitId_++;
     unit.spec = spec ? *spec : UnitSpec{};
     unit.owner = owner;
+    const RunModifiers& modifiers =
+        (isInternalUnitType(type) || isNeutralMonsterType(type))
+            ? RunModifiers{}
+            : runModifiers_[playerIndex(owner)];
+    int familyBias = modifiers.familyBias[static_cast<size_t>(familyIndexForUnitType(type))];
+    if (familyBias != 0) {
+        switch (familyIndexForUnitType(type)) {
+            case static_cast<int>(NeutralFamily::Swarm):
+                unit.spec.maxHp += familyBias * 3;
+                unit.spec.attack += familyBias;
+                break;
+            case static_cast<int>(NeutralFamily::Guardian):
+                unit.spec.maxHp += familyBias * 8;
+                unit.spec.armorClass += familyBias;
+                unit.spec.attackBonus += familyBias / 2;
+                break;
+            case static_cast<int>(NeutralFamily::Caster):
+                unit.spec.attackCooldown = std::max(0.25, unit.spec.attackCooldown - familyBias * 0.05);
+                unit.spec.spellSaveDc += familyBias;
+                unit.spec.range += familyBias > 1 ? 1 : 0;
+                break;
+            case static_cast<int>(NeutralFamily::Assassin):
+                unit.spec.attackBonus += familyBias;
+                unit.spec.speed += 0.15 * familyBias;
+                break;
+            case static_cast<int>(NeutralFamily::Artillery):
+                unit.spec.range += familyBias;
+                unit.spec.attack += familyBias * 2;
+                break;
+        }
+    }
     unit.hp.assign(unit.spec.unitCount, unit.spec.maxHp);
+    unit.coord = {-1, -1};
     unit.lastCoord = unit.coord;
     unit.homeCoord = unit.coord;
     unit.attackTimer = 0.0;
@@ -890,10 +2775,14 @@ UnitId GameEngine::createUnit(PlayerId owner, UnitType type) {
     if (type == UnitType::Treant) {
         unit.lifespan = 8.0;
         unit.statuses.push_back({StatusKind::Summoned, 8.0, 0, kInvalidUnitId});
-    } else if (type == UnitType::SkeletonByWitch) {
-        unit.statuses.push_back({StatusKind::Summoned, 999.0, 0, kInvalidUnitId});
+    } else if (type == UnitType::SporeServant) {
+        unit.lifespan = 12.0;
+        unit.statuses.push_back({StatusKind::Summoned, 12.0, 0, kInvalidUnitId});
+    } else if (type == UnitType::SkeletonByNecromancer) {
+        unit.lifespan = kNecromancerSkeletonLifespan;
+        unit.statuses.push_back({StatusKind::Summoned, kNecromancerSkeletonLifespan, 0, kInvalidUnitId});
     }
-    if (unit.spec.ability == AbilityKind::ShieldGuard) {
+    if (unit.spec.ability == AbilityKind::GuardianShield) {
         unit.statuses.push_back({StatusKind::Taunt, 9999.0, 80, unit.id});
     }
 
@@ -904,18 +2793,23 @@ UnitId GameEngine::createUnit(PlayerId owner, UnitType type) {
 bool GameEngine::placeUnit(UnitId id, Coord coord) {
     Unit& u = unit(id);
     if (!board_.inBounds(coord)) return false;
-    if (board_.occupant(coord, u.spec.layer) != kInvalidUnitId) return false;
+    if (u.spec.layer == UnitLayer::Land && board_.blocked(coord)) return false;
+    if (u.spec.layer == UnitLayer::Land) {
+        for (UnitId other : board_.occupants(coord, UnitLayer::Land)) {
+            if (other < 0 || other >= static_cast<int>(units_.size()) || other == id) continue;
+            const Unit& occupant = unit(other);
+            if (occupant.alive && occupant.deployed) return false;
+        }
+    }
     u.coord = coord;
-    board_.setOccupant(coord, u.spec.layer, id);
+    board_.addOccupant(coord, u.spec.layer, id);
     return true;
 }
 
 void GameEngine::removeFromBoard(UnitId id) {
     if (id < 0 || id >= static_cast<int>(units_.size())) return;
     Unit& u = unit(id);
-    if (board_.inBounds(u.coord) && board_.occupant(u.coord, u.spec.layer) == id) {
-        board_.setOccupant(u.coord, u.spec.layer, kInvalidUnitId);
-    }
+    board_.removeOccupant(u.coord, u.spec.layer, id);
 }
 
 void GameEngine::pushEvent(Event event) {
@@ -941,8 +2835,16 @@ void GameEngine::startCombat() {
         u.retargetTimer = 0.0;
         u.moveProgress = 0.0;
         u.lastCoord = u.coord;
-        if (!isRoundTransientUnit(u.spec.type)) u.homeCoord = u.coord;
-        if (u.spec.ability == AbilityKind::AssassinLeap) {
+        if (!isNeutralMonsterType(u.spec.type) && !isNeutralSpawServant(u)) {
+            u.neutralReturningHome = false;
+        }
+        if (!isRoundTransientUnit(u.spec.type) && !isNeutralLikeCombatant(u)) u.homeCoord = u.coord;
+        if (u.neutralBehavior == NeutralBehavior::HostileAmbusher) u.neutralProvoked = true;
+        if (u.spec.ability == AbilityKind::PaladinCharge) u.firstStrikeReady = true;
+        if (u.spec.ability == AbilityKind::GithyankiAstralRaid) {
+            performGithyankiAstralRaid(u.id);
+        }
+        if (u.spec.ability == AbilityKind::RogueAmbush) {
             performAssassinLeap(u.id);
         }
     }
@@ -958,26 +2860,188 @@ void GameEngine::finishCombat(PlayerId winner) {
 }
 
 void GameEngine::startNextRound() {
+    startNextRound("");
+}
+
+void GameEngine::startNextRound(const std::string& reason) {
+    if (!reason.empty()) {
+        pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+                   {}, {}, round_, "Round ended: " + reason});
+    }
     resetCombatantsForPreparation();
     phase_ = Phase::Preparation;
+    if (stage_ == GameStage::Exploration) ++explorationRound_;
     ++round_;
     combatTime_ = 0.0;
 
     std::array<int, 2> incomes{};
     for (PlayerState& p : players_) {
         p.ready = false;
-        int income = roundIncomeFor(p, round_);
+        int income = roundIncomeFor(p, round_, runModifiers_[playerIndex(p.id)]) +
+                     (stage_ == GameStage::MainBattle ? towerHoldIncomeFor(p, units_) : 0);
         p.money += income;
         incomes[playerIndex(p.id)] = income;
     }
+    std::string roundText = stage_ == GameStage::Exploration
+                                ? "Exploration round " + std::to_string(explorationRound_) + "/" +
+                                      std::to_string(explorationRoundLimit_) +
+                                      " complete - income +" + std::to_string(incomes[0]) +
+                                      "/+" + std::to_string(incomes[1])
+                                : "Round " + std::to_string(round_) +
+                                      " started - tower damage persists, income +" +
+                                      std::to_string(incomes[0]) + "/+" + std::to_string(incomes[1]);
     pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
-               {}, {}, incomes[0],
-               "Round " + std::to_string(round_) + " started - tower damage persists, income +" +
-                   std::to_string(incomes[0]) + "/+" + std::to_string(incomes[1])});
+               {}, {}, incomes[0], roundText});
+
+    if (shouldTransitionFromExploration()) {
+        std::string completion = explorationCompletionReason();
+        if (!completion.empty()) {
+            pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+                       {}, {}, explorationRound_, completion});
+        }
+        transitionToMainBattle();
+    }
+}
+
+bool GameEngine::shouldTransitionFromExploration() const {
+    if (stage_ != GameStage::Exploration) return false;
+    if (explorationRound_ >= explorationRoundLimit_) return true;
+    ExplorationStats explorationStats = exploration_.stats();
+    return explorationStats.objectivesTotal > 0 &&
+           explorationStats.objectivesCleared >= explorationStats.objectivesTotal;
+}
+
+std::string GameEngine::explorationCompletionReason() const {
+    if (stage_ != GameStage::Exploration) return "";
+    ExplorationStats explorationStats = exploration_.stats();
+    if (explorationStats.objectivesTotal > 0 &&
+        explorationStats.objectivesCleared >= explorationStats.objectivesTotal) {
+        return "Exploration complete: objectives cleared";
+    }
+    if (explorationRound_ >= explorationRoundLimit_) {
+        return "Exploration complete: round limit reached";
+    }
+    return "";
+}
+
+void GameEngine::transitionToMainBattle() {
+    if (stage_ == GameStage::MainBattle) return;
+
+    resolveExplorationEndEconomy();
+    stage_ = GameStage::MainBattle;
+    mapKind_ = MapKind::MainBattle;
+    phase_ = Phase::Preparation;
+    combatTime_ = 0.0;
+    exploration_.clear();
+    corpses_.clear();
+    resetBoard(MapKind::MainBattle);
+
+    for (Unit& u : units_) {
+        if (!isInternalUnitType(u.spec.type)) continue;
+        u.alive = false;
+        u.deployed = false;
+        u.hp.clear();
+        u.coord = {-1, -1};
+        u.lastCoord = u.coord;
+        u.homeCoord = u.coord;
+        u.target = kInvalidUnitId;
+        u.neutralProvoked = false;
+        u.provokedBy = kInvalidUnitId;
+        u.statuses.clear();
+    }
+
+    for (PlayerState& p : players_) {
+        p.ready = false;
+        p.bench.clear();
+        p.deployed.clear();
+        p.recentBuys.clear();
+    }
+    spawnDefenseTowers();
+
+    pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, round_, "Stage 2 main battle begins - recruit for the tower assault"});
+}
+
+void GameEngine::resolveExplorationEndEconomy() {
+    std::array<int, 2> refunds{};
+    for (PlayerState& p : players_) {
+        std::vector<UnitId> ids = p.bench;
+        ids.insert(ids.end(), p.deployed.begin(), p.deployed.end());
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+
+        for (UnitId id : ids) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            Unit& u = unit(id);
+            if (isInternalUnit(u.spec.type)) continue;
+            if (!u.alive || u.hp.empty()) {
+                u.deployed = false;
+                continue;
+            }
+
+            int refund = explorationRefundFor(u);
+            refunds[playerIndex(p.id)] += refund;
+            p.money += refund;
+            Coord from = u.coord;
+            removeFromBoard(id);
+            u.alive = false;
+            u.deployed = false;
+            u.hp.clear();
+            u.coord = {-1, -1};
+            u.lastCoord = u.coord;
+            u.homeCoord = u.coord;
+            pushEvent({EventType::GoldGained, p.id, id, kInvalidUnitId, from, {}, refund,
+                       u.spec.name + " returned from exploration for " +
+                           std::to_string(refund) + " gp"});
+        }
+    }
+
+    if (refunds[0] > 0 || refunds[1] > 0) {
+        pushEvent({EventType::GoldGained, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+                   {}, {}, refunds[0],
+                   "Exploration salvage paid +" + std::to_string(refunds[0]) +
+                       "/+" + std::to_string(refunds[1]) + " gp"});
+    }
+}
+
+int GameEngine::explorationRefundFor(const Unit& u) const {
+    if (!u.alive || u.hp.empty() || isInternalUnit(u.spec.type)) return 0;
+    int baseValue = u.purchaseValue > 0 ? u.purchaseValue : std::max(1, u.spec.cost);
+    int maxTotal = std::max(1, u.spec.maxHp * u.spec.unitCount);
+    double hpRatio = std::clamp(static_cast<double>(totalHp(u)) / static_cast<double>(maxTotal), 0.0, 1.0);
+    double upgradeMultiplier = u.upgraded ? 1.65 : 1.0;
+    int cap = static_cast<int>(std::ceil(baseValue * upgradeMultiplier));
+    int refund = static_cast<int>(std::lround(baseValue * upgradeMultiplier * (0.35 + 0.65 * hpRatio)));
+    return std::clamp(refund, 1, std::max(1, cap));
+}
+
+int GameEngine::explorationObjectivesCleared() const {
+    return exploration_.stats().objectivesCleared;
+}
+
+int GameEngine::explorationObjectivesTotal() const {
+    return exploration_.stats().objectivesTotal;
+}
+
+int GameEngine::explorationBossesCleared() const {
+    return exploration_.stats().bossesCleared;
+}
+
+int GameEngine::explorationEventsTriggered() const {
+    return exploration_.stats().eventsTriggered;
+}
+
+int GameEngine::explorationTrapsTriggered() const {
+    return exploration_.stats().trapsTriggered;
+}
+
+int GameEngine::randomGoldEventsClaimed() const {
+    return exploration_.stats().randomGoldEventsClaimed;
 }
 
 void GameEngine::resetCombatantsForPreparation() {
-    resetBoard();
+    resetBoard(mapKind_);
+    corpses_.clear();
 
     for (PlayerState& p : players_) {
         p.bench.clear();
@@ -986,38 +3050,183 @@ void GameEngine::resetCombatantsForPreparation() {
     }
 
     for (Unit& u : units_) {
+        bool neutralSporeServant = isNeutralSpawServant(u);
+        UnitId summonedBy = kInvalidUnitId;
+        double summonedRemaining = -1.0;
+        if (neutralSporeServant) {
+            for (const StatusEffect& status : u.statuses) {
+                if (status.kind == StatusKind::Summoned && status.source != kInvalidUnitId) {
+                    summonedBy = status.source;
+                    summonedRemaining = status.remaining;
+                    break;
+                }
+            }
+        }
+
         u.shield = 0;
         u.target = kInvalidUnitId;
         u.retargetTimer = 0.0;
         u.moveProgress = 0.0;
         u.attackTimer = 0.0;
         u.abilityTimer = 0.0;
-        u.lifespan = -1.0;
+        if (!neutralSporeServant) u.lifespan = -1.0;
         u.firstStrikeReady = false;
+        if (u.neutralBehavior == NeutralBehavior::PassiveGuardian && isNeutralMonsterType(u.spec.type)) {
+            u.neutralReturningHome = board_.inBounds(u.homeCoord) && board_.inBounds(u.coord) &&
+                                     u.coord != u.homeCoord;
+        } else if (u.neutralBehavior != NeutralBehavior::HostileAmbusher && !neutralSporeServant) {
+            u.neutralReturningHome = false;
+        }
+        u.neutralProvoked = u.neutralBehavior == NeutralBehavior::HostileAmbusher;
+        if (u.neutralBehavior != NeutralBehavior::HostileAmbusher) u.provokedBy = kInvalidUnitId;
         u.specialCounter = 0;
         u.stuckTicks = 0;
         u.statuses.clear();
+        if (neutralSporeServant) {
+            double remaining = summonedRemaining > 0.0 ? summonedRemaining : std::max(0.1, u.lifespan);
+            u.lifespan = remaining;
+            u.statuses.push_back({StatusKind::Summoned, remaining, 0, summonedBy});
+            u.neutralBehavior = NeutralBehavior::PassiveGuardian;
+            u.neutralProvoked = true;
+            u.neutralReturningHome = false;
+        }
 
-        if (u.spec.type == UnitType::DefenseTower) {
-            Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
-            u.coord = home;
-            u.lastCoord = home;
-            if (!u.alive || u.hp.empty()) {
-                u.deployed = false;
-                continue;
-            }
-            u.deployed = true;
-            placeUnit(u.id, home);
-            player(u.owner).deployed.push_back(u.id);
-        } else {
+        if (isRoundTransientUnit(u.spec.type)) {
             u.alive = false;
             u.deployed = false;
             u.hp.clear();
             u.coord = {};
             u.lastCoord = {};
             u.homeCoord = {};
+            u.neutralReturningHome = false;
+            continue;
+        }
+
+        if (!u.alive || u.hp.empty()) {
+            u.deployed = false;
+            if (!isInternalUnit(u.spec.type)) {
+                u.coord = {-1, -1};
+                u.lastCoord = u.coord;
+                u.homeCoord = u.coord;
+                u.neutralReturningHome = false;
+            }
+            continue;
+        }
+
+        if (stage_ == GameStage::Exploration &&
+            (!isInternalUnit(u.spec.type) || neutralSporeServant || isNeutralMonsterType(u.spec.type))) {
+            Coord stay = board_.inBounds(u.coord) ? u.coord : u.homeCoord;
+            bool placed = board_.inBounds(stay) && placeUnit(u.id, stay);
+            if (!placed && board_.inBounds(stay)) {
+                int radius = neutralSporeServant ? kNeutralSummonGuardRadius
+                             : (u.spec.type == UnitType::NeutralRedcap ? kRedcapAmbushRadius : 2);
+                for (Coord candidate : cellsInRange(stay, radius)) {
+                    if (neutralSporeServant && manhattan(candidate, u.homeCoord) > kNeutralSummonGuardRadius) {
+                        continue;
+                    }
+                    if (placeUnit(u.id, candidate)) {
+                        stay = candidate;
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (placed) {
+                u.coord = stay;
+                u.lastCoord = stay;
+                u.deployed = true;
+                player(u.owner).deployed.push_back(u.id);
+            } else {
+                u.deployed = false;
+                u.coord = {-1, -1};
+                u.lastCoord = u.coord;
+                if (!neutralSporeServant && !isNeutralMonsterType(u.spec.type)) {
+                    u.homeCoord = u.coord;
+                    u.neutralReturningHome = false;
+                    player(u.owner).bench.push_back(u.id);
+                }
+            }
+        } else if (u.spec.type == UnitType::DefenseTower || isNeutralMonsterType(u.spec.type)) {
+            Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+            if (u.neutralBehavior == NeutralBehavior::HostileAmbusher) {
+                u.neutralProvoked = true;
+            }
+            if (u.spec.ability == AbilityKind::GuardianShield) {
+                u.statuses.push_back({StatusKind::Taunt, 9999.0, 80, u.id});
+            }
+
+            Coord placement = home;
+            bool placed = board_.inBounds(placement) && placeUnit(u.id, placement);
+            if (!placed && u.neutralBehavior == NeutralBehavior::HostileAmbusher) {
+                for (Coord candidate : cellsInRange(home, kRedcapAmbushRadius)) {
+                    if (placeUnit(u.id, candidate)) {
+                        placement = candidate;
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (placed) {
+                u.coord = placement;
+                u.lastCoord = placement;
+                u.deployed = true;
+                player(u.owner).deployed.push_back(u.id);
+            } else {
+                u.deployed = false;
+                u.coord = {-1, -1};
+                u.lastCoord = u.coord;
+                u.neutralReturningHome = false;
+            }
+        } else {
+            bool wasDeployed = u.deployed || board_.inBounds(u.homeCoord);
+            Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+            if (u.spec.ability == AbilityKind::GuardianShield) {
+                u.statuses.push_back({StatusKind::Taunt, 9999.0, 80, u.id});
+            }
+
+            if (wasDeployed && board_.inBounds(home) && isDeploymentCell(u.owner, home)) {
+                u.coord = home;
+                u.lastCoord = home;
+                u.homeCoord = home;
+                u.deployed = true;
+                placeUnit(u.id, home);
+                player(u.owner).deployed.push_back(u.id);
+            } else {
+                u.deployed = false;
+                u.coord = {-1, -1};
+                u.lastCoord = u.coord;
+                u.homeCoord = u.coord;
+                u.neutralReturningHome = false;
+                player(u.owner).bench.push_back(u.id);
+            }
         }
     }
+
+    bool trapTerrainChanged = false;
+    for (size_t index = 0; index < exploration_.objectives().size(); ++index) {
+        const ExplorationObjectiveState* objective = exploration_.objective(index);
+        if (!objective || objective->kind != ExplorationObjectiveKind::Trap ||
+            !objective->triggered || objective->cleared) {
+            continue;
+        }
+        bool hasLiveRedcap = false;
+        for (UnitId id : objective->spawnedUnitIds) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& redcap = unit(id);
+            if (redcap.alive && redcap.deployed && redcap.spec.type == UnitType::NeutralRedcap) {
+                hasLiveRedcap = true;
+                break;
+            }
+        }
+        if (!hasLiveRedcap) {
+            exploration_.markCleared(index);
+            exploration_.clearTrapSpawns(index);
+            trapTerrainChanged = true;
+        }
+    }
+    if (trapTerrainChanged) applyExplorationObjectiveTerrain();
 }
 
 void GameEngine::ensureAiPlanner() {
@@ -1032,6 +3241,11 @@ void GameEngine::loadAiPlanner() {
     aiPolicyMetadata_.rulesFingerprint = rulesFingerprint();
     aiPolicyMetadata_.stateFeatureCount = kStateFeatureCount;
     aiPolicyMetadata_.actionFeatureCount = kActionFeatureCount;
+
+    if (config_.aiDifficulty == AiDifficulty::Normal) {
+        useScriptedNormalAiPlanner();
+        return;
+    }
 
     std::string path = joinPath(config_.aiPolicyDirectory, policyFileName(config_.aiDifficulty));
     aiPolicyMetadata_.path = path;
@@ -1097,6 +3311,16 @@ void GameEngine::loadAiPlanner() {
                {}, {}, 0, "AI policy " + toString(config_.aiDifficulty) + " loaded"});
 }
 
+void GameEngine::useScriptedNormalAiPlanner() {
+    aiPolicyMetadata_.loaded = false;
+    aiPolicyMetadata_.valid = true;
+    aiPolicyMetadata_.path = "built-in";
+    aiPolicyMetadata_.status = "built-in normal strategy";
+    aiPlanner_ = std::make_unique<ScriptedNormalAiPlanner>();
+    pushEvent({EventType::AiPolicyStatus, PlayerId::Two, kInvalidUnitId, kInvalidUnitId,
+               {}, {}, 0, "AI Normal uses built-in strategy"});
+}
+
 void GameEngine::useHeuristicAiPlanner(const std::string& status) {
     aiPolicyMetadata_.valid = false;
     aiPolicyMetadata_.status = status;
@@ -1107,18 +3331,271 @@ void GameEngine::useHeuristicAiPlanner(const std::string& status) {
 
 void GameEngine::aiPrepare(PlayerId playerId) {
     ensureAiPlanner();
+    std::vector<UnitId> movedThisPreparation;
     for (int step = 0; step < kMaxAiActionsPerPreparation && phase_ == Phase::Preparation; ++step) {
         std::vector<AiAction> actions = legalActions(playerId);
+        actions.erase(std::remove_if(actions.begin(), actions.end(), [&](const AiAction& action) {
+            if (action.kind == AiActionKind::ReturnToBench) return true;
+            if (action.kind != AiActionKind::MoveDeployed) return false;
+            return std::find(movedThisPreparation.begin(), movedThisPreparation.end(), action.unitId) !=
+                   movedThisPreparation.end();
+        }), actions.end());
         if (actions.empty()) break;
         std::optional<AiAction> action = aiPlanner_->chooseAction(*this, playerId, actions);
         if (!action) break;
         AiActionKind kind = action->kind;
         if (!applyAiAction(playerId, *action)) break;
+        if (kind == AiActionKind::MoveDeployed) movedThisPreparation.push_back(action->unitId);
         if (kind == AiActionKind::Ready) return;
     }
     if (phase_ == Phase::Preparation && hasActiveCombatUnit(playerId)) {
         setReady(playerId, true);
     }
+}
+
+std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
+    PlayerId playerId,
+    const std::vector<AiAction>& legalActions) const {
+    if (legalActions.empty()) return std::nullopt;
+
+    const PlayerState& self = player(playerId);
+    const PlayerState& foe = player(opponent(playerId));
+
+    auto findAction = [&](AiActionKind kind, UnitType type) -> const AiAction* {
+        for (const AiAction& action : legalActions) {
+            if (action.kind == kind && action.type == type) return &action;
+        }
+        return nullptr;
+    };
+
+    auto countOwned = [&](UnitType type) {
+        int count = 0;
+        auto countIds = [&](const std::vector<UnitId>& ids) {
+            for (UnitId id : ids) {
+                if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+                const Unit& u = unit(id);
+                if (u.alive && u.owner == playerId && u.spec.type == type) ++count;
+            }
+        };
+        countIds(self.bench);
+        countIds(self.deployed);
+        return count;
+    };
+
+    int enemyAir = 0;
+    int enemySupport = 0;
+    for (UnitId id : foe.deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& enemy = unit(id);
+        if (!enemy.alive || enemy.spec.type == UnitType::DefenseTower ||
+            isInternalUnitType(enemy.spec.type)) {
+            continue;
+        }
+        if (enemy.spec.layer == UnitLayer::Air) ++enemyAir;
+        if (enemy.spec.roleMask & kRoleSupport) ++enemySupport;
+    }
+    for (UnitType recent : foe.recentBuys) {
+        const UnitSpec* spec = specFor(recent);
+        if (!spec) continue;
+        if (spec->layer == UnitLayer::Air) ++enemyAir;
+        if (spec->roleMask & kRoleSupport) ++enemySupport;
+    }
+
+    auto targetCount = [&](UnitType type) {
+        if (round_ <= 1) {
+            switch (type) {
+                case UnitType::ShieldGuardian:
+                case UnitType::Ranger:
+                case UnitType::Cleric:
+                    return 1;
+                case UnitType::ImpSwarm:
+                    return enemyAir > 0 ? 1 : 0;
+                default:
+                    return 0;
+            }
+        }
+        switch (type) {
+            case UnitType::ShieldGuardian:
+            case UnitType::Ranger:
+            case UnitType::Cleric:
+            case UnitType::Skeleton:
+                return 1;
+            case UnitType::ImpSwarm:
+                return enemyAir > 0 || round_ >= 2 ? 1 : 0;
+            case UnitType::RogueAssassin:
+                return enemySupport > 0 || round_ >= 3 ? 1 : 0;
+            case UnitType::Paladin:
+            case UnitType::Evoker:
+            case UnitType::Druid:
+                return round_ >= 2 ? 1 : 0;
+            case UnitType::DragonWyrmling:
+            case UnitType::Barbarian:
+                return round_ >= 3 ? 1 : 0;
+            case UnitType::Necromancer:
+            case UnitType::FireMephit:
+                return round_ >= 4 ? 1 : 0;
+            case UnitType::GithyankiWarrior:
+            case UnitType::GoblinSkirmisher:
+                return round_ >= 2 ? 1 : 0;
+            default:
+                return 0;
+        }
+    };
+
+    std::vector<UnitType> buyPlan;
+    if (encounterContext_.active) {
+        switch (encounterContext_.family) {
+            case NeutralFamily::Swarm:
+                buyPlan.insert(buyPlan.end(), {UnitType::Ranger, UnitType::Evoker,
+                                               UnitType::DragonWyrmling, UnitType::ShieldGuardian});
+                break;
+            case NeutralFamily::Guardian:
+                buyPlan.insert(buyPlan.end(), {UnitType::Evoker, UnitType::DragonWyrmling,
+                                               UnitType::Necromancer, UnitType::Ranger});
+                break;
+            case NeutralFamily::Caster:
+                buyPlan.insert(buyPlan.end(), {UnitType::RogueAssassin, UnitType::GithyankiWarrior,
+                                               UnitType::Ranger, UnitType::ImpSwarm});
+                break;
+            case NeutralFamily::Assassin:
+                buyPlan.insert(buyPlan.end(), {UnitType::ShieldGuardian, UnitType::Cleric,
+                                               UnitType::Paladin, UnitType::Barbarian});
+                break;
+            case NeutralFamily::Artillery:
+                buyPlan.insert(buyPlan.end(), {UnitType::RogueAssassin, UnitType::GithyankiWarrior,
+                                               UnitType::ImpSwarm, UnitType::FireMephit});
+                break;
+        }
+    }
+    if (enemyAir > 0) {
+        buyPlan.push_back(UnitType::Ranger);
+        buyPlan.push_back(UnitType::ImpSwarm);
+        buyPlan.push_back(UnitType::DragonWyrmling);
+    }
+    if (enemySupport > 0) buyPlan.push_back(UnitType::RogueAssassin);
+
+    const std::vector<UnitType> defaultPlan = {
+        UnitType::ShieldGuardian,
+        UnitType::Ranger,
+        UnitType::Cleric,
+        UnitType::Paladin,
+        UnitType::Skeleton,
+        UnitType::Evoker,
+        UnitType::Druid,
+        UnitType::ImpSwarm,
+        UnitType::DragonWyrmling,
+        UnitType::Barbarian,
+        UnitType::RogueAssassin,
+        UnitType::Necromancer,
+        UnitType::FireMephit,
+        UnitType::GithyankiWarrior,
+        UnitType::GoblinSkirmisher
+    };
+    buyPlan.insert(buyPlan.end(), defaultPlan.begin(), defaultPlan.end());
+
+    for (UnitType type : buyPlan) {
+        if (countOwned(type) >= targetCount(type)) continue;
+        if (const AiAction* buy = findAction(AiActionKind::Buy, type)) return *buy;
+    }
+
+    const AiAction* bestDeploy = nullptr;
+    int bestDeployScore = std::numeric_limits<int>::min();
+    auto deploymentScore = [&](const Unit& u, Coord coord) {
+        int forward = playerId == PlayerId::One ? coord.x : (board_.width - 1 - coord.x);
+        int desiredForward = 1;
+        int desiredY = board_.height / 2;
+
+        if (u.spec.roleMask & kRoleTank) desiredForward = 2;
+        if (u.spec.roleMask & kRoleMelee) desiredForward = std::max(desiredForward, 2);
+        if (u.spec.roleMask & kRoleRanged) desiredForward = 0;
+        if (u.spec.roleMask & kRoleSupport) desiredForward = 0;
+        if (u.spec.layer == UnitLayer::Air) desiredForward = 1;
+
+        switch (u.spec.type) {
+            case UnitType::ShieldGuardian:
+            case UnitType::Barbarian:
+            case UnitType::Paladin:
+            case UnitType::GithyankiWarrior:
+            case UnitType::Skeleton:
+                desiredY = 3;
+                break;
+            case UnitType::GoblinSkirmisher:
+                desiredY = 4;
+                break;
+            case UnitType::Ranger:
+                desiredY = 2;
+                break;
+            case UnitType::Cleric:
+            case UnitType::Druid:
+            case UnitType::Necromancer:
+                desiredY = 3;
+                break;
+            case UnitType::Evoker:
+                desiredY = 4;
+                break;
+            case UnitType::RogueAssassin:
+                desiredForward = 2;
+                desiredY = coord.y < board_.height / 2 ? 0 : board_.height - 1;
+                break;
+            case UnitType::FireMephit:
+            case UnitType::ImpSwarm:
+            case UnitType::DragonWyrmling:
+                desiredY = board_.height / 2;
+                break;
+            default:
+                break;
+        }
+
+        int score = 200;
+        score -= std::abs(forward - desiredForward) * 45;
+        score -= std::abs(coord.y - desiredY) * 10;
+        score += u.spec.threat / 2;
+        score += aiDeploymentScore(playerId, u, coord);
+        if (u.spec.type == UnitType::RogueAssassin && (coord.y == 0 || coord.y == board_.height - 1)) score += 20;
+        return score;
+    };
+
+    for (const AiAction& action : legalActions) {
+        if (action.kind != AiActionKind::Deploy ||
+            action.unitId < 0 || action.unitId >= static_cast<int>(units_.size())) {
+            continue;
+        }
+        const Unit& u = unit(action.unitId);
+        int score = deploymentScore(u, action.coord);
+        if (!bestDeploy || score > bestDeployScore) {
+            bestDeploy = &action;
+            bestDeployScore = score;
+        }
+    }
+    if (bestDeploy) return *bestDeploy;
+
+    const AiAction* bestUpgrade = nullptr;
+    double bestUpgradeScore = -std::numeric_limits<double>::infinity();
+    for (const AiAction& action : legalActions) {
+        if (action.kind != AiActionKind::Upgrade ||
+            action.unitId < 0 || action.unitId >= static_cast<int>(units_.size())) {
+            continue;
+        }
+        const Unit& u = unit(action.unitId);
+        double score = u.spec.threat + u.spec.maxHp * 0.08 + u.spec.attack * 0.35;
+        if (u.spec.roleMask & kRoleTank) score += 8.0;
+        if (u.spec.roleMask & kRoleAoe) score += 6.0;
+        if (!bestUpgrade || score > bestUpgradeScore) {
+            bestUpgrade = &action;
+            bestUpgradeScore = score;
+        }
+    }
+    if (bestUpgrade && self.money >= kInterestGoldStep &&
+        heuristicActionScore(playerId, *bestUpgrade) > 8.0) {
+        return *bestUpgrade;
+    }
+
+    for (const AiAction& action : legalActions) {
+        if (action.kind == AiActionKind::Ready) return action;
+    }
+
+    if (bestUpgrade) return *bestUpgrade;
+    return chooseHeuristicAction(playerId, legalActions);
 }
 
 std::optional<AiAction> GameEngine::chooseHeuristicAction(
@@ -1164,10 +3641,10 @@ std::optional<AiAction> GameEngine::chooseHeuristicAction(
     }
 
     if (bestBuy) return *bestBuy;
-    if (bestUpgrade && player(playerId).bench.empty()) return *bestUpgrade;
     if (bestDeploy) return *bestDeploy;
+    if (bestUpgrade && bestUpgradeScore > 8.0) return *bestUpgrade;
     if (ready) return *ready;
-    if (bestUpgrade) return *bestUpgrade;
+    if (bestUpgrade && !ready) return *bestUpgrade;
     return legalActions.front();
 }
 
@@ -1181,24 +3658,102 @@ double GameEngine::heuristicActionScore(PlayerId playerId, const AiAction& actio
         case AiActionKind::MoveDeployed: {
             if (action.unitId < 0 || action.unitId >= static_cast<int>(units_.size())) return -1000.0;
             const Unit& u = unit(action.unitId);
-            return aiDeploymentScore(playerId, u, action.coord) + u.spec.threat * 0.5;
+            double score = aiDeploymentScore(playerId, u, action.coord) + u.spec.threat * 0.5;
+            if (action.kind == AiActionKind::MoveDeployed) score -= 120.0;
+            return score;
         }
         case AiActionKind::Upgrade: {
             if (action.unitId < 0 || action.unitId >= static_cast<int>(units_.size())) return -1000.0;
             const Unit& u = unit(action.unitId);
-            return u.spec.threat + u.spec.attack * 0.4 + u.spec.maxHp * 0.05;
+            const PlayerState& self = player(playerId);
+            int combatUnits = 0;
+            auto countCombatUnits = [&](const std::vector<UnitId>& ids) {
+                for (UnitId id : ids) {
+                    if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+                    const Unit& owned = unit(id);
+                    if (owned.alive && !isInternalUnit(owned.spec.type)) ++combatUnits;
+                }
+            };
+            countCombatUnits(self.bench);
+            countCombatUnits(self.deployed);
+
+            int upgradeCost = effectiveUpgradeCost(playerId, u.spec);
+            double score = u.spec.threat * 0.32 + u.spec.attack * 0.20 + u.spec.maxHp * 0.015 +
+                           u.spec.attackBonus * 1.2 + u.spec.armorClass * 0.8;
+            if (u.spec.ability == AbilityKind::BarbarianHeavySwing) score += u.spec.attack * 0.05;
+            if (u.spec.roleMask & kRoleTank) score += 4.0;
+            if (u.spec.roleMask & kRoleAoe) score += 5.0;
+            if (u.spec.roleMask & kRoleSupport) score += 4.0;
+
+            score -= upgradeCost * 2.4;
+            int desiredCombatUnits = round_ <= 1 ? 4 : 5;
+            if (combatUnits < desiredCombatUnits) {
+                score -= (desiredCombatUnits - combatUnits) * 18.0;
+            }
+
+            int surplusAfterUpgrade = self.money - upgradeCost;
+            if (surplusAfterUpgrade > 0) {
+                score += std::min(24.0, surplusAfterUpgrade * 0.8);
+            } else {
+                score -= 8.0;
+            }
+            if (round_ <= 1 && u.spec.cost >= 18) score -= 30.0;
+            return score;
         }
         case AiActionKind::ReturnToBench:
             return -500.0;
         case AiActionKind::Ready:
-            return -50.0;
+            return hasActiveCombatUnit(playerId) ? 5.0 : -1000.0;
     }
     return -1000.0;
 }
 
 double GameEngine::aiPurchaseScore(PlayerId playerId, const UnitSpec& spec) const {
+    const PlayerState& self = player(playerId);
     const PlayerState& foe = player(opponent(playerId));
-    double score = spec.threat + spec.attack * 0.8 + spec.range * 4.0 + spec.speed * 2.0;
+    const RunModifiers& modifiers = runModifiers_[playerIndex(playerId)];
+    double attackScore = spec.attack * 0.8;
+    if (spec.ability == AbilityKind::BarbarianHeavySwing) attackScore *= 1.08;
+    if (spec.ability == AbilityKind::DragonBreath || spec.ability == AbilityKind::FrostNova ||
+        spec.ability == AbilityKind::MephitDeathBurst || spec.ability == AbilityKind::EvokerMagicMissile) {
+        attackScore += spec.attack * 0.25;
+    }
+    double score = spec.threat + attackScore + spec.range * 4.0 + spec.speed * 2.0 +
+                   spec.attackBonus * 1.4 + spec.armorClass * 0.9 +
+                   std::max(0, spec.spellSaveDc - 10) * 1.1 -
+                   effectiveBuyCost(playerId, spec) * 2.8;
+    score += modifiers.familyBias[static_cast<size_t>(familyIndexForUnitType(spec.type))] * 5.5;
+    if (encounterContext_.active) {
+        auto hasEncounterTag = [&](const std::string& tag) {
+            return std::find(encounterContext_.riskTags.begin(), encounterContext_.riskTags.end(), tag) !=
+                   encounterContext_.riskTags.end();
+        };
+        score += familyCounterBonus(spec, encounterContext_.family);
+        if (encounterContext_.nodeType == RouteNodeType::Elite && (spec.roleMask & kRoleAoe)) score += 8.0;
+        if (encounterContext_.nodeType == RouteNodeType::Boss && (spec.roleMask & kRoleControl)) score += 8.0;
+        if (encounterContext_.nodeType == RouteNodeType::Shop && spec.cost <= 6) score += 4.0;
+        if ((hasEncounterTag("wide-board") || hasEncounterTag("backline-collapse") ||
+             hasEncounterTag("cluster-punish")) &&
+            (spec.roleMask & kRoleAoe)) {
+            score += 12.0;
+        }
+        if ((hasEncounterTag("armor-check") || hasEncounterTag("failsafe") ||
+             hasEncounterTag("control-check")) &&
+            (spec.roleMask & kRoleControl)) {
+            score += 12.0;
+        }
+        if ((hasEncounterTag("carry-threat") || hasEncounterTag("support-punish") ||
+             hasEncounterTag("ambush")) &&
+            (spec.roleMask & kRoleAssassin)) {
+            score += 10.0;
+        }
+        if ((hasEncounterTag("charge") || hasEncounterTag("lifesteal") ||
+             hasEncounterTag("reset-threat")) &&
+            (spec.roleMask & kRoleTank)) {
+            score += 10.0;
+        }
+        if (hasEncounterTag("anti-air") && spec.canAttackAir) score += 8.0;
+    }
 
     int enemyAir = 0;
     int enemyHealers = 0;
@@ -1217,6 +3772,50 @@ double GameEngine::aiPurchaseScore(PlayerId playerId, const UnitSpec& spec) cons
     if (enemyDense >= 3 && (spec.roleMask & kRoleAoe)) score += 30;
     if (spec.roleMask & kRoleTank) score += 8;
     if (spec.roleMask & kRoleSupport) score += 5;
+    if (spec.roleMask & kRoleControl) score += 8;
+    if (spec.roleMask & kRoleSummoner) score += 6;
+    if (spec.roleMask & kRoleAoe) score += 5;
+    if (spec.layer == UnitLayer::Air) score += 4;
+
+    int ownedSame = 0;
+    int friendlyCombat = 0;
+    bool hasTank = false;
+    bool hasRanged = false;
+    bool hasSupport = false;
+    bool hasAirAnswer = false;
+    auto inspectOwned = [&](const std::vector<UnitId>& ids) {
+        for (UnitId id : ids) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& u = unit(id);
+            if (!u.alive || isInternalUnit(u.spec.type)) continue;
+            ++friendlyCombat;
+            if (u.spec.type == spec.type) ++ownedSame;
+            hasTank = hasTank || (u.spec.roleMask & kRoleTank);
+            hasRanged = hasRanged || (u.spec.roleMask & kRoleRanged);
+            hasSupport = hasSupport || (u.spec.roleMask & kRoleSupport);
+            hasAirAnswer = hasAirAnswer || u.spec.canAttackAir;
+        }
+    };
+    inspectOwned(self.bench);
+    inspectOwned(self.deployed);
+
+    score -= ownedSame * 28.0;
+    if (!hasTank && (spec.roleMask & kRoleTank)) score += 15.0;
+    if (!hasRanged && (spec.roleMask & kRoleRanged)) score += 10.0;
+    if (!hasSupport && friendlyCombat >= 2 && (spec.roleMask & kRoleSupport)) score += 12.0;
+    if (!hasAirAnswer && spec.canAttackAir) score += 6.0;
+    if (hasTank && (spec.roleMask & kRoleSupport)) score += 6.0;
+    if (hasSupport && (spec.roleMask & kRoleTank)) score += 5.0;
+    if (friendlyCombat >= 5 && spec.cost <= 6) score -= 10.0;
+
+    int effectiveCost = effectiveBuyCost(playerId, spec);
+    if (round_ <= 1 && effectiveCost >= 18) score -= 12.0;
+    if (round_ <= 1 && self.money - effectiveCost <= 5) score -= 8.0;
+    if (config_.aiDifficulty == AiDifficulty::Hard && round_ <= 1) {
+        if (effectiveCost >= 18) score -= 25.0;
+        if (effectiveCost >= 14) score -= 10.0;
+        if (spec.roleMask & kRoleAssassin) score -= 25.0;
+    }
 
     for (UnitType recent : foe.recentBuys) {
         const UnitSpec* recentSpec = specFor(recent);
@@ -1242,6 +3841,21 @@ int GameEngine::aiDeploymentScore(PlayerId playerId, const Unit& unit, Coord coo
     if (unit.spec.roleMask & kRoleAssassin) score += std::abs(coord.y - 3) * 8 + forward * 3;
     if (unit.spec.layer == UnitLayer::Air) score += 5 - centerPenalty;
 
+    int bestTargetScore = std::numeric_limits<int>::min();
+    for (const Unit& target : units_) {
+        if (!target.alive || !target.deployed || !canAttack(unit, target)) continue;
+        if (board_.blocked(coord) || board_.blocked(target.coord)) continue;
+        int targetScore = target.spec.threat - manhattan(coord, target.coord) * 2;
+        if (isNeutralMonsterType(target.spec.type)) targetScore += 45;
+        if (target.spec.type == UnitType::DefenseTower) targetScore += 22;
+        bestTargetScore = std::max(bestTargetScore, targetScore);
+    }
+    if (bestTargetScore == std::numeric_limits<int>::min()) {
+        if (std::abs(coord.y - board_.height / 2) > 2) score -= 160;
+    } else {
+        score += std::min(150, bestTargetScore);
+    }
+
     return score;
 }
 
@@ -1257,12 +3871,13 @@ void GameEngine::tickAbilities(UnitId id, double dt) {
     Unit& u = unit(id);
     if (!u.alive || !u.deployed) return;
     if (u.spec.abilityCooldown <= 0.0) return;
+    if (!canNeutralAct(u)) return;
 
     u.abilityTimer += dt;
     if (u.abilityTimer < u.spec.abilityCooldown) return;
 
     switch (u.spec.ability) {
-        case AbilityKind::ShieldGuard:
+        case AbilityKind::GuardianShield:
             addShield(id, u.spec.abilityValue, id);
             u.abilityTimer = 0.0;
             break;
@@ -1274,27 +3889,81 @@ void GameEngine::tickAbilities(UnitId id, double dt) {
             }
             break;
         }
-        case AbilityKind::WitchSummon:
+        case AbilityKind::NecromancerSummon:
         case AbilityKind::DruidSummon: {
+            if (!canSummonMore(id)) break;
             PlayerId owner = u.owner;
             Coord origin = u.coord;
             std::string summonerName = u.spec.name;
             AbilityKind ability = u.spec.ability;
             std::optional<Coord> spot = findSummonCell(owner, origin, UnitLayer::Land);
             if (spot) {
-                UnitType summonType = ability == AbilityKind::WitchSummon
-                                          ? UnitType::SkeletonByWitch
+                UnitType summonType = ability == AbilityKind::NecromancerSummon
+                                          ? UnitType::SkeletonByNecromancer
                                           : UnitType::Treant;
                 UnitId summon = createUnit(owner, summonType);
                 Unit& summoned = unit(summon);
                 summoned.deployed = true;
-                summoned.lifespan = summonType == UnitType::Treant ? 8.0 : -1.0;
-                placeUnit(summon, *spot);
+                summoned.lifespan = summonType == UnitType::Treant ? 8.0 : kNecromancerSkeletonLifespan;
+                for (StatusEffect& status : summoned.statuses) {
+                    if (status.kind == StatusKind::Summoned) {
+                        status.source = id;
+                        status.remaining = summoned.lifespan;
+                    }
+                }
+                if (!placeUnit(summon, *spot)) {
+                    summoned.alive = false;
+                    break;
+                }
                 summoned.homeCoord = *spot;
                 player(owner).deployed.push_back(summon);
                 pushEvent({EventType::Deployed, owner, summon, id, origin, *spot, 0,
                            summonerName + " summoned " + summoned.spec.name});
             }
+            if (id >= 0 && id < static_cast<int>(units_.size())) unit(id).abilityTimer = 0.0;
+            break;
+        }
+        case AbilityKind::AnimatingSpores: {
+            if (!canSummonMore(id)) break;
+            PlayerId owner = u.owner;
+            Coord origin = u.coord;
+            double lifespan = u.spec.abilityDuration > 0.0 ? u.spec.abilityDuration : 12.0;
+            std::string casterName = eventUnitName(u);
+            std::optional<size_t> corpseIndex = selectCorpseForSpores(u);
+            if (!corpseIndex) break;
+
+            CorpseState& corpse = corpses_[*corpseIndex];
+            std::optional<Coord> spot = selectSporeSpawnCell(corpse.coord);
+            if (!spot) break;
+
+            corpse.consumed = true;
+            UnitType oldType = corpse.type;
+            UnitId summon = createUnit(owner, UnitType::SporeServant);
+            Unit& servant = unit(summon);
+            servant.deployed = true;
+            servant.lifespan = lifespan;
+            servant.neutralBehavior = NeutralBehavior::PassiveGuardian;
+            servant.neutralProvoked = true;
+            servant.provokedBy = kInvalidUnitId;
+            for (StatusEffect& status : servant.statuses) {
+                if (status.kind == StatusKind::Summoned) {
+                    status.source = id;
+                    status.remaining = lifespan;
+                }
+            }
+            if (!placeUnit(summon, *spot)) {
+                servant.alive = false;
+                corpse.consumed = false;
+                break;
+            }
+            servant.homeCoord = *spot;
+            servant.lastCoord = *spot;
+            servant.target = kInvalidUnitId;
+            servant.retargetTimer = 0.0;
+            player(owner).deployed.push_back(summon);
+            pushEvent({EventType::Deployed, owner, summon, id, origin, *spot, 0,
+                       casterName + " used Animating Spores on a " + toString(oldType) +
+                           " corpse"});
             if (id >= 0 && id < static_cast<int>(units_.size())) unit(id).abilityTimer = 0.0;
             break;
         }
@@ -1322,17 +3991,41 @@ void GameEngine::tickCombat(double dt) {
 
     for (UnitId id : ids) {
         if (!unit(id).alive) continue;
+        triggerTamiaDominate(id);
+    }
+
+    for (UnitId id : ids) {
+        if (!unit(id).alive) continue;
         tickAbilities(id, dt);
     }
 
     for (UnitId id : ids) {
         if (!unit(id).alive) continue;
         Unit& u = unit(id);
+        if (!canNeutralAct(u)) continue;
+        if (hasStatus(u, StatusKind::Stunned) || hasStatus(u, StatusKind::Prone)) continue;
         u.attackTimer += dt;
         u.retargetTimer -= dt;
         bool force = u.target == kInvalidUnitId ||
                      u.target >= static_cast<int>(units_.size()) ||
                      !unit(u.target).alive;
+        if (!force && u.spec.type == UnitType::NeutralRedcap) {
+            Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+            force = manhattan(unit(u.target).coord, origin) > kRedcapAmbushRadius;
+        }
+        if (!force && isNeutralGuardianUnit(u)) {
+            force = !withinNeutralLeash(u, unit(u.target).coord);
+        }
+        if (!force && isNeutralSpawServant(u)) {
+            force = !withinNeutralLeash(u, unit(u.target).coord);
+        }
+        if (!force && stage_ == GameStage::Exploration && isRoundTransientUnit(u.spec.type)) {
+            force = !isNeutralSpawServant(u);
+        }
+        if (!force && stage_ == GameStage::Exploration && !isNeutralLikeCombatant(u)) {
+            force = manhattan(u.coord, unit(u.target).coord) >
+                    std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
+        }
         refreshTarget(u, force);
 
         if (u.target != kInvalidUnitId && u.attackTimer >= effectiveAttackCooldown(u) &&
@@ -1344,54 +4037,142 @@ void GameEngine::tickCombat(double dt) {
 
     moveUnits(dt);
     clearDeadUnits();
+    if (phase_ == Phase::Combat && shouldTransitionFromExploration()) {
+        std::string completion = explorationCompletionReason();
+        if (!completion.empty()) {
+            pushEvent({EventType::RoundStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
+                       {}, {}, explorationRound_, completion});
+        }
+        transitionToMainBattle();
+        return;
+    }
     resolveVictory();
 
-    if (phase_ == Phase::Combat && combatTime_ >= 45.0) {
-        startNextRound();
+    if (phase_ == Phase::Combat && stage_ == GameStage::Exploration &&
+        combatTime_ >= kExplorationCombatRoundCap) {
+        startNextRound("combat time cap");
+    } else if (phase_ == Phase::Combat && stage_ == GameStage::MainBattle &&
+               combatTime_ >= kMainBattleCombatRoundCap) {
+        startNextRound("combat time cap");
     }
 }
 
 void GameEngine::refreshTarget(Unit& u, bool force) {
     if (!force && u.retargetTimer > 0.0) return;
     u.target = selectTarget(u);
-    u.retargetTimer = 0.2;
+    u.retargetTimer = kRetargetInterval;
 }
 
 UnitId GameEngine::selectTarget(const Unit& u) const {
     if (!u.alive || !u.deployed) return kInvalidUnitId;
+    if (!canNeutralAct(u)) return kInvalidUnitId;
+    if (u.neutralReturningHome) return kInvalidUnitId;
+    Coord redcapOrigin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+    auto insideRedcapAmbush = [&](const Unit& candidate) {
+        return u.spec.type != UnitType::NeutralRedcap ||
+               manhattan(candidate.coord, redcapOrigin) <= kRedcapAmbushRadius;
+    };
+    auto insideExplorationAggro = [&](const Unit& candidate) {
+        if (stage_ != GameStage::Exploration || isNeutralLikeCombatant(u)) return true;
+        if (isNeutralSpawServant(u)) return withinNeutralLeash(u, candidate.coord);
+        if (isRoundTransientUnit(u.spec.type)) return false;
+        return manhattan(u.coord, candidate.coord) <=
+               std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
+    };
     if (u.spec.ability == AbilityKind::ClericHeal) {
         if (selectGlobalHealTarget(u) != kInvalidUnitId) return kInvalidUnitId;
         if (selectFollowAlly(u) != kInvalidUnitId) {
             UnitId closeEnemy = kInvalidUnitId;
             int bestDist = std::numeric_limits<int>::max();
-            for (UnitId candidateId : player(opponent(u.owner)).deployed) {
-                if (candidateId < 0 || candidateId >= static_cast<int>(units_.size())) continue;
-                const Unit& candidate = unit(candidateId);
+            for (const Unit& candidate : units_) {
                 if (!candidate.alive || !candidate.deployed || !inAttackRange(u, candidate)) continue;
                 int dist = manhattan(u.coord, candidate.coord);
                 if (dist < bestDist) {
                     bestDist = dist;
-                    closeEnemy = candidateId;
+                    closeEnemy = candidate.id;
                 }
             }
             return closeEnemy;
         }
     }
 
+    if (stage_ == GameStage::Exploration && !isNeutralLikeCombatant(u)) {
+        UnitId bestImmediate = kInvalidUnitId;
+        int bestTier = -1;
+        double bestImmediateScore = -std::numeric_limits<double>::infinity();
+        for (const Unit& candidate : units_) {
+            if (!candidate.alive || !candidate.deployed || !canAttack(u, candidate)) continue;
+            if (!insideExplorationAggro(candidate)) continue;
+            int tier = -1;
+            bool candidateTargetsMe = candidate.target == u.id && canAttack(candidate, u);
+            if (candidateTargetsMe) {
+                tier = 4;
+            } else if (candidate.spec.type == UnitType::NeutralRedcap &&
+                       candidate.neutralBehavior == NeutralBehavior::HostileAmbusher) {
+                tier = 3;
+            } else if (inAttackRange(u, candidate)) {
+                tier = 2;
+            } else if (manhattan(u.coord, candidate.coord) <= 1) {
+                tier = 1;
+            }
+            if (tier < 0) continue;
+            if (!inAttackRange(u, candidate) && u.spec.layer != UnitLayer::Air &&
+                !findPathToAttackCell(u, candidate.coord, u.spec.range).found) {
+                continue;
+            }
+            double score = tier * 10000.0 + candidate.spec.threat - manhattan(u.coord, candidate.coord) * 8.0;
+            if (candidate.id == u.target) score += 250.0;
+            if (score > bestImmediateScore) {
+                bestImmediateScore = score;
+                bestTier = tier;
+                bestImmediate = candidate.id;
+            }
+        }
+        if (bestTier >= 0) return bestImmediate;
+    }
+
+    if (u.neutralBehavior == NeutralBehavior::HostileAmbusher &&
+        u.provokedBy >= 0 && u.provokedBy < static_cast<int>(units_.size())) {
+        const Unit& triggered = unit(u.provokedBy);
+        if (triggered.alive && triggered.deployed && canAttack(u, triggered) &&
+            insideRedcapAmbush(triggered) &&
+            (inAttackRange(u, triggered) ||
+             u.spec.layer == UnitLayer::Air ||
+             findPathToAttackCell(u, triggered.coord, u.spec.range).found)) {
+            return triggered.id;
+        }
+    }
+
+    if (isNeutralGuardianUnit(u) && u.provokedBy >= 0 && u.provokedBy < static_cast<int>(units_.size())) {
+        const Unit& provoker = unit(u.provokedBy);
+        if (provoker.alive && provoker.deployed && canAttack(u, provoker) &&
+            withinNeutralLeash(u, provoker.coord) &&
+            (inAttackRange(u, provoker) ||
+             u.spec.layer == UnitLayer::Air ||
+             findPathToAttackCell(u, provoker.coord, u.spec.range).found)) {
+            return provoker.id;
+        }
+    }
+
     UnitId best = kInvalidUnitId;
     double bestScore = -std::numeric_limits<double>::infinity();
-    PlayerId foe = opponent(u.owner);
 
-    for (UnitId candidateId : player(foe).deployed) {
-        if (candidateId < 0 || candidateId >= static_cast<int>(units_.size())) continue;
-        const Unit& candidate = unit(candidateId);
+    for (const Unit& candidate : units_) {
         if (!candidate.alive || !candidate.deployed || !canAttack(u, candidate)) continue;
+        if (!insideRedcapAmbush(candidate) || !insideExplorationAggro(candidate)) continue;
+        if ((isNeutralGuardianUnit(u) || isNeutralSpawServant(u)) && !withinNeutralLeash(u, candidate.coord)) {
+            continue;
+        }
 
         int dist = manhattan(u.coord, candidate.coord);
         double score = candidate.spec.threat - dist * 8.0;
+        if (candidate.id == u.target) score += 18.0;
         if (candidate.hp.size() < static_cast<size_t>(candidate.spec.unitCount)) score += 10.0;
-        if (totalHp(candidate) < candidate.spec.maxHp * candidate.spec.unitCount / 2) score += 8.0;
-        if (hasStatus(candidate, StatusKind::Taunt) || candidate.spec.ability == AbilityKind::ShieldGuard) {
+        int candidateMaxHp = std::max(1, candidate.spec.maxHp * candidate.spec.unitCount);
+        int missingHp = std::max(0, candidateMaxHp - totalHp(candidate));
+        score += std::min(35.0, missingHp * 0.12);
+        if (totalHp(candidate) < candidateMaxHp / 2) score += 18.0;
+        if (hasStatus(candidate, StatusKind::Taunt) || candidate.spec.ability == AbilityKind::GuardianShield) {
             score += dist <= 3 ? 80.0 : 25.0;
         }
         if (u.spec.roleMask & kRoleAssassin) {
@@ -1402,7 +4183,9 @@ UnitId GameEngine::selectTarget(const Unit& u) const {
             score += backline * 4.0;
         }
         if (u.spec.roleMask & kRoleAoe) {
-            score += clusterScoreAround(u, candidate.coord);
+            score += clusterScoreAround(u, candidate.coord) * 4.0;
+            if (candidate.spec.type != UnitType::DefenseTower) score += 55.0;
+            if (candidate.spec.type == UnitType::DefenseTower) score -= 70.0;
         }
         if (u.spec.roleMask & kRoleRanged) {
             if (dist <= u.spec.range) score += 20.0;
@@ -1413,16 +4196,86 @@ UnitId GameEngine::selectTarget(const Unit& u) const {
         if (candidate.spec.type == UnitType::DefenseTower && dist > u.spec.range) {
             score -= 35.0;
         }
-        if (u.spec.layer == UnitLayer::Land && !inAttackRange(u, candidate)) {
-            if (!findPathToAttackCell(u, candidate.coord, u.spec.range).found) score -= 1000.0;
+        if (!inAttackRange(u, candidate) && u.spec.layer != UnitLayer::Air &&
+            !findPathToAttackCell(u, candidate.coord, u.spec.range).found) {
+            continue;
         }
         if (score > bestScore) {
             bestScore = score;
-            best = candidateId;
+            best = candidate.id;
         }
     }
 
     return best;
+}
+
+UnitId GameEngine::selectDominatePersonTarget(const Unit& caster) const {
+    if (!caster.alive || !caster.deployed || caster.spec.type != UnitType::NeutralTamiaHolzt) {
+        return kInvalidUnitId;
+    }
+    int range = std::max(1, caster.spec.abilityRange);
+    UnitId best = kInvalidUnitId;
+    double bestScore = -std::numeric_limits<double>::infinity();
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed) continue;
+        if (isNeutralLikeCombatant(candidate) || candidate.spec.type == UnitType::DefenseTower) continue;
+        if (!isHumanoidUnitType(candidate.spec.type)) continue;
+        if (manhattan(caster.coord, candidate.coord) > range) continue;
+        double score = candidate.spec.threat - manhattan(caster.coord, candidate.coord) * 9.0;
+        if (candidate.hp.size() < static_cast<size_t>(candidate.spec.unitCount)) score += 16.0;
+        if (totalHp(candidate) < candidate.spec.maxHp * candidate.spec.unitCount / 2) score += 12.0;
+        if (candidate.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) score += 22.0;
+        if (score > bestScore) {
+            bestScore = score;
+            best = candidate.id;
+        }
+    }
+    return best;
+}
+
+void GameEngine::triggerTamiaDominate(UnitId id) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& tamia = unit(id);
+    if (!tamia.alive || !tamia.deployed || tamia.spec.type != UnitType::NeutralTamiaHolzt) return;
+    if (!canNeutralAct(tamia) || tamia.oneShotAbilityUsed) return;
+
+    UnitId targetId = selectDominatePersonTarget(tamia);
+    if (targetId == kInvalidUnitId) return;
+
+    tamia.oneShotAbilityUsed = true;
+    pushEvent({EventType::StatusApplied, tamia.owner, id, targetId, tamia.coord, unit(targetId).coord, 0,
+               eventUnitName(tamia) + " cast Dominate Person"});
+
+    bool saved = savingThrowSucceeds(targetId, id, "Wis");
+    if (saved) return;
+
+    Unit& target = unit(targetId);
+    const std::string targetName = eventUnitName(target);
+    PlayerId originalOwner = target.owner;
+    eraseValue(player(originalOwner).bench, targetId);
+    eraseValue(player(originalOwner).deployed, targetId);
+    target.owner = tamia.owner;
+    target.neutralControlled = true;
+    Unit& dominated = unit(targetId);
+    dominated.target = kInvalidUnitId;
+    dominated.retargetTimer = 0.0;
+    dominated.neutralProvoked = false;
+    dominated.provokedBy = kInvalidUnitId;
+    if (dominated.deployed) {
+        auto& neutralRoster = player(tamia.owner).deployed;
+        if (std::find(neutralRoster.begin(), neutralRoster.end(), targetId) == neutralRoster.end()) {
+            neutralRoster.push_back(targetId);
+        }
+    }
+    for (Unit& other : units_) {
+        if (!other.alive || !other.deployed) continue;
+        if (other.target == targetId) {
+            other.target = kInvalidUnitId;
+            other.retargetTimer = 0.0;
+        }
+    }
+    pushEvent({EventType::StatusApplied, tamia.owner, id, targetId, tamia.coord, dominated.coord, 0,
+               targetName + " was dominated and turned hostile to both parties"});
 }
 
 UnitId GameEngine::selectHealTarget(const Unit& healer) const {
@@ -1431,7 +4284,7 @@ UnitId GameEngine::selectHealTarget(const Unit& healer) const {
     for (UnitId id : player(healer.owner).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& ally = unit(id);
-        if (!ally.alive || !ally.deployed || ally.spec.type == UnitType::DefenseTower) continue;
+        if (!ally.alive || !ally.deployed || isInternalUnit(ally.spec.type)) continue;
         if (manhattan(healer.coord, ally.coord) > healer.spec.abilityRange) continue;
 
         int maxHp = ally.spec.maxHp * ally.spec.unitCount;
@@ -1451,7 +4304,7 @@ UnitId GameEngine::selectGlobalHealTarget(const Unit& healer) const {
     for (UnitId id : player(healer.owner).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& ally = unit(id);
-        if (!ally.alive || !ally.deployed || ally.spec.type == UnitType::DefenseTower) continue;
+        if (!ally.alive || !ally.deployed || isInternalUnit(ally.spec.type)) continue;
 
         int maxHp = ally.spec.maxHp * ally.spec.unitCount;
         if (maxHp <= 0) continue;
@@ -1475,7 +4328,7 @@ UnitId GameEngine::selectFollowAlly(const Unit& u) const {
     for (UnitId id : player(u.owner).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size()) || id == u.id) continue;
         const Unit& ally = unit(id);
-        if (!ally.alive || !ally.deployed || ally.spec.type == UnitType::DefenseTower) continue;
+        if (!ally.alive || !ally.deployed || isInternalUnit(ally.spec.type)) continue;
         double score = ally.spec.threat + totalHp(ally) * 0.12 - manhattan(u.coord, ally.coord) * 2.0;
         if (ally.spec.roleMask & kRoleTank) score += 18.0;
         if (ally.spec.roleMask & kRoleMelee) score += 8.0;
@@ -1487,15 +4340,56 @@ UnitId GameEngine::selectFollowAlly(const Unit& u) const {
     return best;
 }
 
+std::optional<size_t> GameEngine::selectCorpseForSpores(const Unit& caster) const {
+    size_t bestIndex = corpses_.size();
+    int bestScore = std::numeric_limits<int>::min();
+    int range = std::max(1, caster.spec.abilityRange);
+    for (size_t i = 0; i < corpses_.size(); ++i) {
+        const CorpseState& corpse = corpses_[i];
+        if (corpse.consumed || corpse.round != round_) continue;
+        if (!board_.inBounds(corpse.coord)) continue;
+        int dist = manhattan(caster.coord, corpse.coord);
+        if (dist > range) continue;
+        int score = 100 - dist * 8;
+        if (corpse.owner != caster.owner) score += 20;
+        if (score > bestScore) {
+            bestScore = score;
+            bestIndex = i;
+        }
+    }
+    if (bestIndex == corpses_.size()) return std::nullopt;
+    return bestIndex;
+}
+
+std::optional<Coord> GameEngine::selectSporeSpawnCell(Coord corpseCoord) const {
+    auto isLandable = [&](Coord coord) {
+        if (!board_.inBounds(coord) || board_.blocked(coord)) return false;
+        if (coord == baseCoord(PlayerId::One) || coord == baseCoord(PlayerId::Two)) return false;
+        for (UnitId other : board_.occupants(coord, UnitLayer::Land)) {
+            if (other < 0 || other >= static_cast<int>(units_.size())) continue;
+            const Unit& u = unit(other);
+            if (u.alive && u.deployed) return false;
+        }
+        return true;
+    };
+
+    if (isLandable(corpseCoord)) return corpseCoord;
+    for (Coord coord : adjacentCells(corpseCoord)) {
+        if (isLandable(coord)) return coord;
+    }
+    for (Coord coord : cellsInRange(corpseCoord, 2)) {
+        if (isLandable(coord)) return coord;
+    }
+    return std::nullopt;
+}
+
 double GameEngine::clusterScoreAround(const Unit& attacker, Coord center) const {
-    int radius = attacker.spec.ability == AbilityKind::StormChain ? 2 : 1;
+    int radius = 1;
     int count = 0;
     int threat = 0;
-    for (UnitId id : player(opponent(attacker.owner)).deployed) {
-        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
-        const Unit& enemy = unit(id);
+    for (const Unit& enemy : units_) {
+        if (enemy.spec.type == UnitType::DefenseTower) continue;
         if (!enemy.alive || !enemy.deployed || !canAttack(attacker, enemy)) continue;
-        if (attacker.spec.ability == AbilityKind::BomberSplash && enemy.spec.layer != UnitLayer::Land) continue;
         if (manhattan(center, enemy.coord) > radius) continue;
         ++count;
         threat += enemy.spec.threat;
@@ -1505,26 +4399,92 @@ double GameEngine::clusterScoreAround(const Unit& attacker, Coord center) const 
 }
 
 bool GameEngine::canAttack(const Unit& attacker, const Unit& target) const {
-    if (!attacker.alive || !target.alive || attacker.owner == target.owner) return false;
+    if (isNeutralLikeCombatant(attacker)) {
+        if (isNeutralLikeCombatant(target) || target.spec.type == UnitType::DefenseTower) {
+            return false;
+        }
+    }
+    if (isNeutralSpawServant(attacker)) {
+        if (!target.alive || attacker.id == target.id || isNeutralLikeCombatant(target) ||
+            target.spec.type == UnitType::DefenseTower) {
+            return false;
+        }
+    } else if (!isHostileCombatTarget(attacker, target)) {
+        return false;
+    }
     if (target.spec.layer == UnitLayer::Land && !attacker.spec.canAttackLand) return false;
     if (target.spec.layer == UnitLayer::Air && !attacker.spec.canAttackAir) return false;
     return true;
 }
 
 bool GameEngine::inAttackRange(const Unit& attacker, const Unit& target) const {
-    return canAttack(attacker, target) && manhattan(attacker.coord, target.coord) <= attacker.spec.range;
+    if (!canAttack(attacker, target)) return false;
+    if (attacker.spec.ability == AbilityKind::MinotaurCharge) {
+        Coord step{0, 0};
+        int dx = target.coord.x - attacker.coord.x;
+        int dy = target.coord.y - attacker.coord.y;
+        int distance = 0;
+        if (dx != 0 && dy != 0) return false;
+        if (dx != 0) {
+            step.x = dx > 0 ? 1 : -1;
+            distance = std::abs(dx);
+        } else {
+            step.y = dy > 0 ? 1 : -1;
+            distance = std::abs(dy);
+        }
+        if (distance <= 0 || distance > std::max(1, attacker.spec.abilityRange)) return false;
+        Coord current = attacker.coord;
+        for (int i = 0; i < distance; ++i) {
+            current = {current.x + step.x, current.y + step.y};
+            if (!board_.inBounds(current) || board_.blocked(current)) return false;
+        }
+        return true;
+    }
+    return manhattan(attacker.coord, target.coord) <= attacker.spec.range;
 }
 
 double GameEngine::effectiveSpeed(const Unit& u) const {
+    if (hasStatus(u, StatusKind::Stunned) || hasStatus(u, StatusKind::Prone)) return 0.0;
     double speed = u.spec.speed;
     if (hasStatus(u, StatusKind::Slow)) speed *= 0.6;
+    if (hasStatus(u, StatusKind::Chilled)) speed *= 0.55;
+    if (hasStatus(u, StatusKind::Frightened)) speed *= 0.45;
     return speed;
 }
 
 double GameEngine::effectiveAttackCooldown(const Unit& u) const {
+    if (hasStatus(u, StatusKind::Stunned) || hasStatus(u, StatusKind::Prone)) {
+        return std::numeric_limits<double>::infinity();
+    }
     double cooldown = u.spec.attackCooldown;
     if (hasStatus(u, StatusKind::Slow)) cooldown /= 0.6;
+    if (u.spec.ability == AbilityKind::BarbarianHeavySwing) {
+        int maxHp = u.spec.maxHp * u.spec.unitCount;
+        if (maxHp > 0) {
+            double hpRatio = static_cast<double>(totalHp(u)) / maxHp;
+            if (hpRatio <= 0.50) {
+                cooldown *= 0.58;
+            } else if (hpRatio <= 0.75) {
+                cooldown *= 0.78;
+            }
+        }
+    }
     return cooldown;
+}
+
+int GameEngine::effectiveArmorClass(const Unit& u) const {
+    int armorClass = u.spec.armorClass;
+    if (u.shield > 0) armorClass += 1;
+    return std::max(1, armorClass);
+}
+
+int GameEngine::effectiveAttackBonus(const Unit& u) const {
+    int attackBonus = u.spec.attackBonus;
+    if (hasStatus(u, StatusKind::Poisoned)) attackBonus -= 2;
+    if (hasStatus(u, StatusKind::Blinded)) attackBonus -= 4;
+    if (hasStatus(u, StatusKind::Frightened)) attackBonus -= 3;
+    if (hasStatus(u, StatusKind::Staggered)) attackBonus -= 3;
+    return std::max(0, attackBonus);
 }
 
 bool GameEngine::hasStatus(const Unit& u, StatusKind kind) const {
@@ -1533,9 +4493,398 @@ bool GameEngine::hasStatus(const Unit& u, StatusKind kind) const {
     });
 }
 
+bool GameEngine::canNeutralAct(const Unit& u) const {
+    if (!isNeutralMonsterType(u.spec.type)) return true;
+    if (u.neutralBehavior == NeutralBehavior::HostileAmbusher) return true;
+    if (u.spec.type == UnitType::NeutralRedcap) return u.neutralProvoked;
+    if (u.neutralReturningHome) return true;
+    return u.neutralProvoked;
+}
+
+bool GameEngine::canActivateNeutralFrom(UnitId sourceId) const {
+    if (sourceId < 0 || sourceId >= static_cast<int>(units_.size())) return false;
+    const Unit& source = unit(sourceId);
+    if (!source.alive || source.spec.type == UnitType::DefenseTower) return false;
+    if (isNeutralLikeCombatant(source)) return false;
+    return true;
+}
+
+bool GameEngine::isNeutralGuardianUnit(const Unit& u) const {
+    return isNeutralMonsterType(u.spec.type) &&
+           u.neutralBehavior == NeutralBehavior::PassiveGuardian &&
+           u.spec.type != UnitType::NeutralRedcap;
+}
+
+bool GameEngine::isNeutralSpawServant(const Unit& u) const {
+    if (u.spec.type != UnitType::SporeServant) return false;
+    for (const StatusEffect& status : u.statuses) {
+        if (status.kind != StatusKind::Summoned ||
+            status.source < 0 || status.source >= static_cast<int>(units_.size())) {
+            continue;
+        }
+        const Unit& source = unit(status.source);
+        if (source.spec.type == UnitType::NeutralSovereignSpaw && isNeutralMonsterType(source.spec.type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool GameEngine::isNeutralLikeCombatant(const Unit& u) const {
+    return isNeutralMonsterType(u.spec.type) || isNeutralSpawServant(u) || u.neutralControlled;
+}
+
+bool GameEngine::withinNeutralLeash(const Unit& u, Coord coord) const {
+    Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+    int radius = isNeutralSpawServant(u) ? kNeutralSummonGuardRadius : kNeutralGuardianLeashRadius;
+    if (u.spec.type == UnitType::NeutralRedcap) radius = kRedcapAmbushRadius;
+    return manhattan(coord, origin) <= radius;
+}
+
+void GameEngine::activateNeutral(UnitId neutralId, UnitId sourceId, const std::string& reason) {
+    if (neutralId < 0 || neutralId >= static_cast<int>(units_.size())) return;
+    Unit& neutral = unit(neutralId);
+    if (!neutral.alive || !isNeutralMonsterType(neutral.spec.type)) return;
+    if (neutral.neutralBehavior != NeutralBehavior::PassiveGuardian) return;
+    if (!canActivateNeutralFrom(sourceId)) return;
+
+    neutral.neutralReturningHome = false;
+    if (!neutral.neutralProvoked) {
+        neutral.neutralProvoked = true;
+        neutral.provokedBy = sourceId;
+        neutral.target = sourceId;
+        neutral.retargetTimer = 0.0;
+        std::string text = eventUnitName(neutral) + " awakens";
+        if (!reason.empty()) text += " (" + reason + ")";
+        pushEvent({EventType::StatusApplied, neutral.owner, sourceId, neutralId, {}, neutral.coord, 0,
+                   std::move(text)});
+    } else if (sourceId != kInvalidUnitId) {
+        neutral.provokedBy = sourceId;
+    }
+}
+
+void GameEngine::provokeNeutral(UnitId neutralId, UnitId sourceId) {
+    activateNeutral(neutralId, sourceId, "provoked");
+}
+
+void GameEngine::convertUnitOwner(UnitId id, PlayerId newOwner) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& converted = unit(id);
+    if (!converted.alive || converted.owner == newOwner) return;
+
+    PlayerId oldOwner = converted.owner;
+    eraseValue(player(oldOwner).bench, id);
+    eraseValue(player(oldOwner).deployed, id);
+    converted.owner = newOwner;
+    converted.neutralProvoked = false;
+    converted.neutralReturningHome = false;
+    converted.provokedBy = kInvalidUnitId;
+    converted.target = kInvalidUnitId;
+    converted.retargetTimer = 0.0;
+    converted.firstStrikeReady = false;
+
+    if (converted.deployed) {
+        auto& deployed = player(newOwner).deployed;
+        if (std::find(deployed.begin(), deployed.end(), id) == deployed.end()) {
+            deployed.push_back(id);
+        }
+    } else {
+        auto& bench = player(newOwner).bench;
+        if (std::find(bench.begin(), bench.end(), id) == bench.end()) {
+            bench.push_back(id);
+        }
+    }
+
+    for (Unit& other : units_) {
+        if (!other.alive || !other.deployed) continue;
+        if (other.target == id) {
+            other.target = kInvalidUnitId;
+            other.retargetTimer = 0.0;
+        }
+    }
+}
+
+int GameEngine::rollD20(int advantageScore) {
+    std::uniform_int_distribution<int> die(1, 20);
+    int first = die(rng_);
+    if (advantageScore == 0) return first;
+
+    int second = die(rng_);
+    bool advantage = advantageScore > 0;
+    return advantage ? std::max(first, second) : std::min(first, second);
+}
+
+int GameEngine::rollDice(int count, int sides) {
+    if (count <= 0 || sides <= 0) return 0;
+    std::uniform_int_distribution<int> die(1, sides);
+    int total = 0;
+    for (int i = 0; i < count; ++i) total += die(rng_);
+    return total;
+}
+
+int GameEngine::rollDamageRoll(const DamageRoll& roll) {
+    int total = std::max(0, roll.flatBonus);
+    if (roll.diceCount > 0 && roll.diceSides > 0) {
+        total += rollDice(roll.diceCount, roll.diceSides);
+    }
+    return total;
+}
+
+DamagePacket GameEngine::scaledDamagePacket(DamagePacket packet, int numerator, int denominator) const {
+    if (denominator <= 0) denominator = 1;
+    numerator = std::max(0, numerator);
+    for (DamageRoll& roll : packet.rolls) {
+        roll.diceCount = (roll.diceCount * numerator + denominator - 1) / denominator;
+        roll.flatBonus = (roll.flatBonus * numerator + denominator - 1) / denominator;
+    }
+    packet.flatDamage = (packet.flatDamage * numerator + denominator - 1) / denominator;
+    return packet;
+}
+
+bool GameEngine::savingThrowSucceeds(UnitId targetId, UnitId sourceId, const std::string& saveName,
+                                     int advantageScore) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size())) return true;
+    Unit& target = unit(targetId);
+    if (!target.alive) return true;
+
+    int dc = 10;
+    std::string sourceName = "spell";
+    if (sourceId >= 0 && sourceId < static_cast<int>(units_.size())) {
+        const Unit& source = unit(sourceId);
+        dc = source.spec.spellSaveDc;
+        sourceName = eventUnitName(source);
+    }
+
+    int selectedRoll = rollD20(advantageScore);
+    int bonus = target.spec.savingThrowBonus;
+    int total = selectedRoll + bonus;
+    bool success = selectedRoll == 20 || (selectedRoll != 1 && total >= dc);
+
+    std::ostringstream text;
+    text << eventUnitName(target) << (success ? " resisted " : " failed ")
+         << saveName << " save vs DC " << dc
+         << " against " << sourceName;
+    pushEvent({EventType::StatusApplied, target.owner, sourceId, targetId, {}, target.coord, total,
+               text.str()});
+    return success;
+}
+
+bool GameEngine::knockbackUnit(UnitId targetId, Coord source, int distance, UnitId sourceId) {
+    return resolveKnockbackLine(targetId, source, distance, sourceId).moved;
+}
+
+bool GameEngine::isPushableLandUnit(const Unit& u) const {
+    if (!u.alive || !u.deployed || u.spec.layer != UnitLayer::Land) return false;
+    if (u.spec.type == UnitType::DefenseTower) return false;
+    switch (u.spec.type) {
+        case UnitType::NeutralMindFlayer:
+        case UnitType::NeutralWaterMyrmidon:
+        case UnitType::NeutralPhaseSpiderMatriarch:
+        case UnitType::NeutralRaphael:
+        case UnitType::NeutralKethericThorm:
+        case UnitType::NeutralMoonlightSliver:
+        case UnitType::NeutralTamiaHolzt:
+            return false;
+        default:
+            return true;
+    }
+}
+
+bool GameEngine::isLandOccupiedByBlockingUnit(Coord coord) const {
+    if (!board_.inBounds(coord) || board_.blocked(coord)) return true;
+    for (UnitId id : board_.occupants(coord, UnitLayer::Land)) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& occupant = unit(id);
+        if (occupant.alive && occupant.deployed) return true;
+    }
+    return false;
+}
+
+GameEngine::KnockbackResult GameEngine::resolveKnockbackLine(UnitId targetId,
+                                                             Coord source,
+                                                             int distance,
+                                                             UnitId sourceId) {
+    KnockbackResult result;
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || distance <= 0) return result;
+    Unit& target = unit(targetId);
+    if (!isPushableLandUnit(target)) {
+        result.blockedAtEnd = target.alive && target.deployed && target.spec.layer == UnitLayer::Land;
+        return result;
+    }
+
+    Coord step{0, 0};
+    int dx = target.coord.x - source.x;
+    int dy = target.coord.y - source.y;
+    if (std::abs(dx) >= std::abs(dy) && dx != 0) {
+        step.x = dx > 0 ? 1 : -1;
+    } else if (dy != 0) {
+        step.y = dy > 0 ? 1 : -1;
+    } else {
+        step.x = target.owner == PlayerId::One ? -1 : 1;
+    }
+
+    const int maxChain = board_.width * board_.height;
+    int appliedSteps = 0;
+    for (int stepIndex = 0; stepIndex < distance; ++stepIndex) {
+        std::vector<UnitId> chain;
+        std::vector<Coord> starts;
+        UnitId currentId = targetId;
+        bool blocked = false;
+
+        while (currentId != kInvalidUnitId && static_cast<int>(chain.size()) < maxChain) {
+            const Unit& current = unit(currentId);
+            if (!isPushableLandUnit(current) ||
+                std::find(chain.begin(), chain.end(), currentId) != chain.end()) {
+                blocked = true;
+                break;
+            }
+
+            chain.push_back(currentId);
+            starts.push_back(current.coord);
+            Coord next{current.coord.x + step.x, current.coord.y + step.y};
+            if (!board_.inBounds(next) || board_.blocked(next)) {
+                blocked = true;
+                break;
+            }
+
+            UnitId occupantId = kInvalidUnitId;
+            for (UnitId id : board_.occupants(next, UnitLayer::Land)) {
+                if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+                const Unit& occupant = unit(id);
+                if (!occupant.alive || !occupant.deployed) continue;
+                occupantId = id;
+                break;
+            }
+
+            if (occupantId == kInvalidUnitId) break;
+            if (!isPushableLandUnit(unit(occupantId))) {
+                blocked = true;
+                break;
+            }
+            currentId = occupantId;
+        }
+
+        if (blocked || chain.empty()) {
+            result.blockedAtEnd = true;
+            break;
+        }
+
+        std::vector<Coord> destinations;
+        destinations.reserve(starts.size());
+        for (Coord from : starts) destinations.push_back({from.x + step.x, from.y + step.y});
+
+        for (UnitId id : chain) removeFromBoard(id);
+        bool placed = true;
+        for (size_t i = 0; i < chain.size(); ++i) {
+            if (!placeUnit(chain[i], destinations[i])) {
+                placed = false;
+                for (size_t restore = 0; restore <= i; ++restore) removeFromBoard(chain[restore]);
+                for (size_t restore = 0; restore < chain.size(); ++restore) placeUnit(chain[restore], starts[restore]);
+                break;
+            }
+        }
+        if (!placed) {
+            result.blockedAtEnd = true;
+            break;
+        }
+
+        ++appliedSteps;
+        for (size_t i = 0; i < chain.size(); ++i) {
+            if (starts[i] == destinations[i]) continue;
+            Unit& moved = unit(chain[i]);
+            moved.lastCoord = starts[i];
+            moved.moveProgress = 0.0;
+            moved.stuckTicks = 0;
+            moved.target = kInvalidUnitId;
+            moved.retargetTimer = 0.0;
+            moved.neutralReturningHome = false;
+            activateNeutral(chain[i], sourceId, "shoved");
+            bool primary = chain[i] == targetId;
+            result.moves.push_back({chain[i], starts[i], destinations[i], primary});
+        }
+    }
+
+    if (appliedSteps <= 0) return result;
+
+    std::vector<UnitId> announced;
+    for (const KnockbackMove& move : result.moves) {
+        if (std::find(announced.begin(), announced.end(), move.id) != announced.end()) continue;
+        announced.push_back(move.id);
+        const Unit& moved = unit(move.id);
+        Coord finalTo = move.to;
+        Coord firstFrom = move.from;
+        bool primary = move.primary;
+        for (const KnockbackMove& later : result.moves) {
+            if (later.id != move.id) continue;
+            finalTo = later.to;
+            primary = primary || later.primary;
+        }
+        std::string sourceLabel;
+        if (sourceId >= 0 && sourceId < static_cast<int>(units_.size())) {
+            switch (unit(sourceId).spec.ability) {
+                case AbilityKind::MinotaurCharge: sourceLabel = " by Charge"; break;
+                case AbilityKind::OwlbearMultiattack: sourceLabel = " by Multiattack"; break;
+                case AbilityKind::DiabolicChains: sourceLabel = " by Diabolic Chains"; break;
+                case AbilityKind::KethericSmite: sourceLabel = " by Ketheric's Smite"; break;
+                default: break;
+            }
+        }
+        pushEvent({EventType::UnitMoved, moved.owner, sourceId, move.id, firstFrom, finalTo, appliedSteps,
+                   eventUnitName(moved) + (primary ? " was knocked back" : " was shoved back") + sourceLabel});
+    }
+    result.moved = !result.moves.empty();
+    return result;
+}
+
+GameEngine::KnockbackResult GameEngine::resolveRadialKnockback(Coord center,
+                                                               int radius,
+                                                               int distance,
+                                                               UnitId sourceId) {
+    KnockbackResult combined;
+    if (radius <= 0 || distance <= 0) return combined;
+
+    std::vector<UnitId> targets;
+    const Unit* source = (sourceId >= 0 && sourceId < static_cast<int>(units_.size())) ? &unit(sourceId) : nullptr;
+    for (const Unit& candidate : units_) {
+        if (!isPushableLandUnit(candidate)) continue;
+        if (candidate.coord == center || manhattan(candidate.coord, center) > radius) continue;
+        if (source && !canAttack(*source, candidate)) continue;
+        targets.push_back(candidate.id);
+    }
+    std::sort(targets.begin(), targets.end(), [this, center](UnitId a, UnitId b) {
+        return manhattan(unit(a).coord, center) > manhattan(unit(b).coord, center);
+    });
+
+    for (UnitId id : targets) {
+        if (id < 0 || id >= static_cast<int>(units_.size()) || !unit(id).alive || !unit(id).deployed) continue;
+        KnockbackResult partial = resolveKnockbackLine(id, center, distance, sourceId);
+        combined.moved = combined.moved || partial.moved;
+        combined.blockedAtEnd = combined.blockedAtEnd || partial.blockedAtEnd;
+        combined.moves.insert(combined.moves.end(), partial.moves.begin(), partial.moves.end());
+    }
+    return combined;
+}
+
 void GameEngine::addStatus(UnitId id, StatusEffect status) {
     if (id < 0 || id >= static_cast<int>(units_.size())) return;
     Unit& u = unit(id);
+    switch (status.kind) {
+        case StatusKind::Slow:
+        case StatusKind::Stunned:
+        case StatusKind::Prone:
+        case StatusKind::Chilled:
+        case StatusKind::Poisoned:
+        case StatusKind::Blinded:
+        case StatusKind::Frightened:
+        case StatusKind::Staggered:
+            activateNeutral(id, status.source, "afflicted");
+            break;
+        case StatusKind::Shield:
+        case StatusKind::Taunt:
+        case StatusKind::Summoned:
+        case StatusKind::FirstStrike:
+            break;
+    }
     auto it = std::find_if(u.statuses.begin(), u.statuses.end(), [status](const StatusEffect& current) {
         return current.kind == status.kind;
     });
@@ -1547,7 +4896,7 @@ void GameEngine::addStatus(UnitId id, StatusEffect status) {
         it->source = status.source;
     }
     pushEvent({EventType::StatusApplied, u.owner, status.source, id, {}, u.coord, status.value,
-               "Status applied to " + eventUnitName(u)});
+               eventUnitName(u) + " became " + statusName(status.kind)});
 }
 
 void GameEngine::attack(UnitId attackerId, UnitId targetId) {
@@ -1556,93 +4905,575 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
         return;
     }
     Unit& attacker = unit(attackerId);
-    if (!attacker.alive || !unit(targetId).alive) return;
-
-    pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-               unit(targetId).coord, attacker.spec.attack, eventUnitName(attacker) + " attacked"});
-
-    int damage = attacker.spec.attack * std::max(1, static_cast<int>(attacker.hp.size()));
-
-    if (attacker.spec.ability == AbilityKind::PekkaHeavySwing) {
-        ++attacker.specialCounter;
-        if (attacker.specialCounter % 2 == 1) return;
-    }
-
-    if (attacker.spec.ability == AbilityKind::PrinceCharge && attacker.firstStrikeReady) {
-        damage *= 2;
-        attacker.firstStrikeReady = false;
-    }
-
-    if (attacker.spec.ability == AbilityKind::DragonBreath) {
-        std::vector<UnitId> targets;
-        for (UnitId id : player(opponent(attacker.owner)).deployed) {
-            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
-                canAttack(attacker, unit(id)) && manhattan(attacker.coord, unit(id).coord) <= attacker.spec.range) {
-                targets.push_back(id);
-            }
-        }
-        for (UnitId id : targets) applyDamage(id, attacker.spec.attack, attackerId);
+    Unit& target = unit(targetId);
+    if (!attacker.alive || !target.alive) return;
+    if (!canNeutralAct(attacker)) return;
+    if (target.spec.type == UnitType::NeutralMindFlayer && !target.counterspellUsed &&
+        isSpellLikeAbility(attacker.spec.ability) && attacker.spec.ability != AbilityKind::Counterspell) {
+        target.counterspellUsed = true;
+        pushEvent({EventType::StatusApplied, target.owner, targetId, attackerId, target.coord,
+                   attacker.coord, 0,
+                   eventUnitName(target) + " cast Counterspell and stopped " +
+                       eventUnitName(attacker)});
         return;
     }
 
-    if (attacker.spec.ability == AbilityKind::BomberSplash ||
-        attacker.spec.ability == AbilityKind::FrostNova) {
-        std::vector<UnitId> targets;
-        Coord center = unit(targetId).coord;
-        for (UnitId id : player(opponent(attacker.owner)).deployed) {
-            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
-                canAttack(attacker, unit(id)) && manhattan(center, unit(id).coord) <= 1) {
-                if (attacker.spec.ability == AbilityKind::BomberSplash && unit(id).spec.layer != UnitLayer::Land) continue;
-                targets.push_back(id);
+    if (attacker.spec.type == UnitType::NeutralMindFlayer && !attacker.oneShotAbilityUsed) {
+        UnitId extractTarget = kInvalidUnitId;
+        double bestExtractScore = -std::numeric_limits<double>::infinity();
+        for (const Unit& candidate : units_) {
+            if (!candidate.alive || !candidate.deployed || !hasStatus(candidate, StatusKind::Stunned)) continue;
+            if (!canAttack(attacker, candidate)) continue;
+            if (manhattan(attacker.coord, candidate.coord) > 1) continue;
+            double score = candidate.spec.threat + totalHp(candidate) * 0.35;
+            if (candidate.id == targetId) score += 40.0;
+            if (score > bestExtractScore) {
+                bestExtractScore = score;
+                extractTarget = candidate.id;
             }
         }
+        if (extractTarget != kInvalidUnitId) {
+            attacker.oneShotAbilityUsed = true;
+            Coord victimCoord = unit(extractTarget).coord;
+            pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, extractTarget, attacker.coord,
+                       victimCoord, 0,
+                       eventUnitName(attacker) + " used Extract Brain on " +
+                           eventUnitName(unit(extractTarget))});
+            killUnit(extractTarget, attackerId);
+            if (attackerId >= 0 && attackerId < static_cast<int>(units_.size()) && unit(attackerId).alive) {
+                applyHeal(attackerId, rollDice(6, 6), attackerId);
+            }
+            return;
+        }
+    }
+
+    int baseStrikeCount = std::max(1, static_cast<int>(attacker.hp.size()));
+    int damage = attacker.spec.attack;
+    auto applyStrikes = [this, attackerId](UnitId target, const DamagePacket& strikeDamage, int strikeCount) {
+        for (int i = 0; i < strikeCount; ++i) {
+            if (target < 0 || target >= static_cast<int>(units_.size()) || !unit(target).alive) break;
+            applyDamage(target, strikeDamage, attackerId);
+        }
+    };
+
+    if (attacker.spec.ability == AbilityKind::DragonBreath) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " breathed fire through clustered enemies"});
+        std::vector<UnitId> targets;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed) continue;
+            if (!canAttack(attacker, enemy) || manhattan(attacker.coord, enemy.coord) > attacker.spec.range) continue;
+            targets.push_back(enemy.id);
+        }
         for (UnitId id : targets) {
-            applyDamage(id, attacker.spec.attack, attackerId);
-            if (attacker.spec.ability == AbilityKind::FrostNova && id < static_cast<int>(units_.size()) && unit(id).alive) {
+            bool saved = savingThrowSucceeds(id, attackerId, "Dex");
+            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+                        DamageType::Fire, attackerId);
+        }
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::MephitDeathBurst) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " scattered cinders around the target"});
+        std::vector<UnitId> targets;
+        Coord center = target.coord;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed) continue;
+            if (!canAttack(attacker, enemy) || manhattan(center, enemy.coord) > 1) continue;
+            targets.push_back(enemy.id);
+        }
+        for (UnitId id : targets) {
+            bool saved = savingThrowSucceeds(id, attackerId, "Dex");
+            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+                        DamageType::Fire, attackerId);
+        }
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::FrostNova) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " cast frost nova"});
+        std::vector<UnitId> targets;
+        Coord center = target.coord;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed) continue;
+            if (!canAttack(attacker, enemy) || manhattan(center, enemy.coord) > 1) continue;
+            targets.push_back(enemy.id);
+        }
+        for (UnitId id : targets) {
+            bool saved = savingThrowSucceeds(id, attackerId, "Con");
+            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+                        DamageType::Cold, attackerId);
+            if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
                 addStatus(id, {StatusKind::Slow, attacker.spec.abilityDuration, attacker.spec.abilityValue, attackerId});
             }
         }
         return;
     }
 
-    if (attacker.spec.ability == AbilityKind::StormChain) {
-        applyDamage(targetId, attacker.spec.attack, attackerId);
-        std::vector<std::pair<int, UnitId>> nearby;
-        Coord center = unit(targetId).coord;
-        for (UnitId id : player(opponent(attacker.owner)).deployed) {
-            if (id == targetId || id < 0 || id >= static_cast<int>(units_.size())) continue;
-            if (!unit(id).alive || !canAttack(attacker, unit(id))) continue;
-            int dist = manhattan(center, unit(id).coord);
-            if (dist <= 2) nearby.push_back({dist, id});
-        }
-        std::sort(nearby.begin(), nearby.end());
-        for (int i = 0; i < static_cast<int>(nearby.size()) && i < 2; ++i) {
-            applyDamage(nearby[i].second, static_cast<int>(attacker.spec.attack * 0.6), attackerId);
-        }
+    if (attacker.spec.ability == AbilityKind::SpectatorWoundingRay) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " cast Wounding Ray"});
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
+        applyDamage(targetId, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+                    DamageType::Necrotic, attackerId);
         return;
     }
 
-    if (attacker.spec.ability == AbilityKind::LancerPierce) {
-        Coord targetCoord = unit(targetId).coord;
-        applyDamage(targetId, damage, attackerId);
-        Coord behind{targetCoord.x + sign(targetCoord.x - attacker.coord.x),
-                     targetCoord.y + sign(targetCoord.y - attacker.coord.y)};
-        if (board_.inBounds(behind)) {
-            UnitId pierced = board_.occupant(behind, UnitLayer::Land);
-            if (pierced != kInvalidUnitId && unit(pierced).alive && unit(pierced).owner != attacker.owner) {
-                applyDamage(pierced, damage / 2, attackerId);
+    if (attacker.spec.ability == AbilityKind::MindBlast) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " unleashed Mind Blast"});
+        std::vector<UnitId> targets;
+        Coord center = target.coord;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed) continue;
+            if (!canAttack(attacker, enemy)) continue;
+            if (manhattan(attacker.coord, enemy.coord) > attacker.spec.range) continue;
+            if (enemy.id != targetId && manhattan(center, enemy.coord) > 2) continue;
+            targets.push_back(enemy.id);
+        }
+        for (UnitId id : targets) {
+            bool saved = savingThrowSucceeds(id, attackerId, "Int");
+            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+                        DamageType::Psychic, attackerId);
+            if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                addStatus(id, {StatusKind::Stunned,
+                               std::max(0.8, attacker.spec.abilityDuration),
+                               0,
+                               attackerId});
             }
         }
         return;
     }
 
-    applyDamage(targetId, damage, attackerId);
+    if (attacker.spec.ability == AbilityKind::DiabolicChains) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " lashed out with Diabolic Chains"});
+        std::vector<UnitId> targets{targetId};
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed || enemy.id == targetId) continue;
+            if (!canAttack(attacker, enemy)) continue;
+            if (manhattan(attacker.coord, enemy.coord) <= attacker.spec.range &&
+                manhattan(target.coord, enemy.coord) <= 2) {
+                targets.push_back(enemy.id);
+            }
+            if (targets.size() >= 3) break;
+        }
+        for (UnitId id : targets) {
+            bool saved = savingThrowSucceeds(id, attackerId, "Dex");
+            DamagePacket chainDamage = abilityDamagePacketFor(attacker.spec, AbilityKind::DiabolicChains);
+            applyDamage(id, saved ? scaledDamagePacket(chainDamage, 1, 2) : chainDamage, attackerId);
+            if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                addStatus(id, {StatusKind::Slow, std::max(0.8, attacker.spec.abilityDuration), 0, attackerId});
+                if (unit(id).spec.layer == UnitLayer::Land) {
+                    knockbackUnit(id, attacker.coord, 1, attackerId);
+                }
+            }
+        }
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::SelunesIre) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack + attacker.spec.abilityValue,
+                   eventUnitName(attacker) + " invoked Selune's Ire"});
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Dex");
+        int radiantDamage = attacker.spec.attack + std::max(0, attacker.spec.abilityValue);
+        applyDamage(targetId, saved ? std::max(1, radiantDamage / 2) : radiantDamage,
+                    DamageType::Radiant, attackerId);
+        if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            addStatus(targetId, {StatusKind::Blinded,
+                                 std::max(0.8, attacker.spec.abilityDuration),
+                                 0,
+                                 attackerId});
+        }
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::Blight) {
+        int necroticDamage = isPlantLikeUnitType(target.spec.type) ? 64 : rollDice(8, 8);
+        bool plantLike = isPlantLikeUnitType(target.spec.type);
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Con", plantLike ? -1 : 0);
+        int finalDamage = saved ? std::max(1, necroticDamage / 2) : necroticDamage;
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, finalDamage,
+                   eventUnitName(attacker) + " cast Blight"});
+        applyDamage(targetId, finalDamage, DamageType::Necrotic, attackerId);
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::EvokerMagicMissile) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.attack,
+                   eventUnitName(attacker) + " cast Magic Missile barrage"});
+        std::vector<UnitId> targets{targetId};
+        Coord center = target.coord;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed || enemy.id == targetId) continue;
+            if (!canAttack(attacker, enemy)) continue;
+            if (manhattan(center, enemy.coord) <= 1 && manhattan(attacker.coord, enemy.coord) <= attacker.spec.range) {
+                targets.push_back(enemy.id);
+            }
+        }
+        int missileDamage = std::max(1, attacker.spec.attack / 3);
+        for (int i = 0; i < 3 && !targets.empty(); ++i) {
+            UnitId id = targets[static_cast<size_t>(i) % targets.size()];
+            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                applyDamage(id, missileDamage, DamageType::Force, attackerId);
+            }
+        }
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::StrikeOfTheGuardian) {
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.abilityValue,
+                   eventUnitName(attacker) + " used Strike of the Guardian"});
+        std::vector<UnitId> targets;
+        Coord center = target.coord;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed) continue;
+            if (!canAttack(attacker, enemy)) continue;
+            if (manhattan(attacker.coord, enemy.coord) > std::max(1, attacker.spec.abilityRange)) continue;
+            if (manhattan(center, enemy.coord) > 1) continue;
+            targets.push_back(enemy.id);
+        }
+        if (targets.empty()) targets.push_back(targetId);
+        DamagePacket guardianStrike = abilityDamagePacketFor(attacker.spec, AbilityKind::StrikeOfTheGuardian);
+        for (UnitId id : targets) {
+            if (id < 0 || id >= static_cast<int>(units_.size()) || !unit(id).alive) continue;
+            bool undead = isUndeadUnitType(unit(id).spec.type);
+            bool saved = undead ? false : savingThrowSucceeds(id, attackerId, "Dex");
+            applyDamage(id, saved ? scaledDamagePacket(guardianStrike, 1, 2) : guardianStrike, attackerId);
+            if (undead && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                applyDamage(id,
+                            DamagePacket{{DamageRoll{0, 0, 20, DamageType::Radiant}},
+                                         0,
+                                         "anti-undead radiance"},
+                            attackerId);
+            }
+        }
+        return;
+    }
+
+    if (attacker.spec.ability == AbilityKind::MinotaurCharge) {
+        int dx = target.coord.x - attacker.coord.x;
+        int dy = target.coord.y - attacker.coord.y;
+        Coord step{0, 0};
+        if (std::abs(dx) >= std::abs(dy) && dx != 0) {
+            step.x = dx > 0 ? 1 : -1;
+        } else if (dy != 0) {
+            step.y = dy > 0 ? 1 : -1;
+        } else {
+            step.x = attacker.owner == PlayerId::One ? 1 : -1;
+        }
+
+        std::vector<UnitId> targets;
+        Coord current = attacker.coord;
+        int chargeRange = std::max(1, attacker.spec.abilityRange);
+        for (int i = 0; i < chargeRange; ++i) {
+            current = {current.x + step.x, current.y + step.y};
+            if (!board_.inBounds(current) || board_.blocked(current)) break;
+            for (UnitId id : board_.occupants(current, UnitLayer::Land)) {
+                if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+                const Unit& candidate = unit(id);
+                if (!candidate.alive || !candidate.deployed || !canAttack(attacker, candidate)) continue;
+                if (std::find(targets.begin(), targets.end(), id) == targets.end()) targets.push_back(id);
+            }
+        }
+        if (std::find(targets.begin(), targets.end(), targetId) == targets.end() &&
+            canAttack(attacker, target)) {
+            targets.push_back(targetId);
+        }
+
+        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+                   target.coord, attacker.spec.abilityValue,
+                   eventUnitName(attacker) + " used Charge"});
+        DamagePacket charge = abilityDamagePacketFor(attacker.spec, AbilityKind::MinotaurCharge);
+        for (UnitId id : targets) {
+            if (id < 0 || id >= static_cast<int>(units_.size()) || !unit(id).alive) continue;
+            bool saved = savingThrowSucceeds(id, attackerId, "Str");
+            applyDamage(id, saved ? scaledDamagePacket(charge, 1, 2) : charge, attackerId);
+            if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
+                addStatus(id, {StatusKind::Prone, std::max(1.0, attacker.spec.abilityDuration), 0, attackerId});
+                knockbackUnit(id, attacker.coord, 1, attackerId);
+            }
+        }
+        return;
+    }
+
+    bool berserkerRage = attacker.spec.ability == AbilityKind::BarbarianHeavySwing;
+    if (berserkerRage) ++attacker.specialCounter;
+    bool hiemalStrike = attacker.spec.ability == AbilityKind::HiemalStrike;
+    bool venomousBite = attacker.spec.ability == AbilityKind::VenomousBite;
+    bool kethericSmite = attacker.spec.ability == AbilityKind::KethericSmite;
+    bool staggeringSmite = attacker.spec.ability == AbilityKind::StaggeringSmite;
+    bool electrifiedFlail = attacker.spec.ability == AbilityKind::ElectrifiedFlail;
+    if (kethericSmite) ++attacker.specialCounter;
+
+    int targetMaxHp = target.spec.maxHp * target.spec.unitCount;
+    bool cruelSting = attacker.spec.ability == AbilityKind::KarnissCruelSting &&
+                      targetMaxHp > 0 && totalHp(target) < targetMaxHp;
+    bool owlbearMultiattack = attacker.spec.ability == AbilityKind::OwlbearMultiattack;
+    bool frenziedStrike = berserkerRage && attacker.specialCounter % 3 == 0;
+    int attackerMaxHp = attacker.spec.maxHp * attacker.spec.unitCount;
+    bool bloodiedRage = berserkerRage && attackerMaxHp > 0 && totalHp(attacker) <= attackerMaxHp * 3 / 4;
+    bool nearDeathRage = berserkerRage && attackerMaxHp > 0 && totalHp(attacker) <= attackerMaxHp / 2;
+
+    int advantageScore = 0;
+    if (attacker.firstStrikeReady) ++advantageScore;
+    if (berserkerRage) ++advantageScore;
+    if (nearDeathRage) ++advantageScore;
+    if (cruelSting) ++advantageScore;
+    if (hasStatus(target, StatusKind::Slow)) ++advantageScore;
+    if (hasStatus(target, StatusKind::Chilled)) ++advantageScore;
+    if (hasStatus(target, StatusKind::Prone) || hasStatus(target, StatusKind::Stunned)) ++advantageScore;
+    if (hasStatus(attacker, StatusKind::Slow) || hasStatus(attacker, StatusKind::Chilled) ||
+        hasStatus(attacker, StatusKind::Poisoned) || hasStatus(attacker, StatusKind::Blinded) ||
+        hasStatus(attacker, StatusKind::Frightened)) {
+        --advantageScore;
+    }
+
+    int selectedRoll = rollD20(advantageScore);
+    int attackBonus = effectiveAttackBonus(attacker);
+    int attackTotal = selectedRoll + attackBonus;
+    int targetArmorClass = effectiveArmorClass(target);
+    bool criticalHit = selectedRoll == 20;
+    bool hit = criticalHit || (selectedRoll != 1 && attackTotal >= targetArmorClass);
+
+    std::ostringstream attackText;
+    (void)attackTotal;
+    (void)targetArmorClass;
+    attackText << eventUnitName(attacker) << (hit ? " hit " : " missed ")
+               << eventUnitName(target) << " with an attack";
+    if (criticalHit) attackText << " with a critical";
+    if (cruelSting) attackText << " using Multiattack - Cruel Sting";
+    if (owlbearMultiattack) attackText << " using Multiattack";
+    if (frenziedStrike) attackText << " with Frenzied Strike";
+    if (bloodiedRage) attackText << " while raging";
+    if (hiemalStrike) attackText << " using Hiemal Strike";
+    if (venomousBite) attackText << " using Venomous Bite";
+    if (staggeringSmite) attackText << " using Staggering Smite";
+    if (electrifiedFlail) attackText << " with Electrified Flail";
+    if (kethericSmite) {
+        attackText << (attacker.specialCounter % 2 == 0 ? " with Blinding Smite"
+                                                        : " with Wrathful Smite");
+    }
+
+    pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
+               target.coord, hit ? damage : 0, attackText.str()});
+
+    if (!hit) {
+        if (attacker.firstStrikeReady) attacker.firstStrikeReady = false;
+        return;
+    }
+
+    DamagePacket strikePacket = basicDamagePacketFor(attacker.spec);
+    DamageType baseDamageType = basicDamageTypeFor(attacker.spec.type);
+
+    if (criticalHit) {
+        damage *= 2;
+        strikePacket = scaledDamagePacket(strikePacket, 2);
+    }
+
+    if (attacker.spec.ability == AbilityKind::PaladinCharge && attacker.firstStrikeReady) {
+        damage *= 2;
+        strikePacket = scaledDamagePacket(strikePacket, 2);
+        attacker.firstStrikeReady = false;
+    }
+
+    if (attacker.spec.ability == AbilityKind::GithyankiAstralRaid && attacker.firstStrikeReady) {
+        damage += attacker.spec.abilityValue;
+        strikePacket.rolls.push_back(DamageRoll{0, 0, attacker.spec.abilityValue, DamageType::Psychic});
+        attacker.firstStrikeReady = false;
+    }
+
+    if (attacker.spec.ability == AbilityKind::RogueAmbush && attacker.firstStrikeReady) {
+        damage += attacker.spec.abilityValue;
+        strikePacket.rolls.push_back(DamageRoll{0, 0, attacker.spec.abilityValue, DamageType::Piercing});
+        attacker.firstStrikeReady = false;
+    }
+
+    if (berserkerRage) {
+        int rageBonus = nearDeathRage ? std::max(18, attacker.spec.attack / 2)
+                                      : (bloodiedRage ? std::max(10, attacker.spec.attack / 4) : 0);
+        damage += rageBonus;
+        if (rageBonus > 0) strikePacket.rolls.push_back(DamageRoll{0, 0, rageBonus, baseDamageType});
+    }
+
+    if (hiemalStrike) {
+        damage += attacker.spec.abilityValue;
+        strikePacket.rolls.push_back(DamageRoll{0, 0, attacker.spec.abilityValue, DamageType::Cold});
+    }
+
+    if (venomousBite) {
+        damage += attacker.spec.abilityValue;
+        strikePacket.rolls.push_back(DamageRoll{0, 0, attacker.spec.abilityValue, DamageType::Poison});
+    }
+
+    bool kethericBlindingSmite = kethericSmite && attacker.specialCounter % 2 == 0;
+    if (kethericSmite) {
+        int smiteDamage = kethericBlindingSmite ? attacker.spec.abilityValue : attacker.spec.abilityValue * 2;
+        damage += smiteDamage;
+        strikePacket.rolls.push_back(DamageRoll{0, 0, smiteDamage, DamageType::Radiant});
+    }
+
+    if (staggeringSmite) {
+        strikePacket = abilityDamagePacketFor(attacker.spec, AbilityKind::StaggeringSmite);
+        if (criticalHit) strikePacket = scaledDamagePacket(strikePacket, 2);
+    }
+
+    if (electrifiedFlail) {
+        strikePacket = abilityDamagePacketFor(attacker.spec, AbilityKind::ElectrifiedFlail);
+        if (criticalHit) strikePacket = scaledDamagePacket(strikePacket, 2);
+    }
+
+    if (cruelSting) {
+        applyStrikes(targetId, scaledDamagePacket(strikePacket, 1, 2), baseStrikeCount * 3);
+        return;
+    }
+
+    if (owlbearMultiattack) {
+        applyDamage(targetId, strikePacket, attackerId);
+        if (targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            applyDamage(targetId, DamagePacket{{damageRollForValue(std::max(1, (attacker.spec.attack * 2) / 3),
+                                                                DamageType::Piercing)},
+                                               0,
+                                               "bite"},
+                        attackerId);
+            if (targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+                addStatus(targetId, {StatusKind::Prone, 1.1, 0, attackerId});
+                knockbackUnit(targetId, attacker.coord, 1, attackerId);
+            }
+        }
+        return;
+    }
+
+    applyStrikes(targetId, strikePacket, baseStrikeCount);
+    if (hiemalStrike && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+        addStatus(targetId, {StatusKind::Chilled,
+                             std::max(1.0, attacker.spec.abilityDuration),
+                             attacker.spec.abilityValue,
+                             attackerId});
+    }
+    if (venomousBite && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
+        if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            addStatus(targetId, {StatusKind::Poisoned,
+                                 std::max(1.2, attacker.spec.abilityDuration),
+                                 attacker.spec.abilityValue,
+                                 attackerId});
+        }
+    }
+    if (kethericBlindingSmite && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
+        if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            addStatus(targetId, {StatusKind::Blinded,
+                                 std::max(1.2, attacker.spec.abilityDuration),
+                                 attacker.spec.abilityValue,
+                                 attackerId});
+        }
+    }
+    if (kethericSmite && !kethericBlindingSmite) {
+        resolveRadialKnockback(attacker.coord, 1, 1, attackerId);
+        if (targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            bool saved = savingThrowSucceeds(targetId, attackerId, "Wis");
+            if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+                addStatus(targetId, {StatusKind::Frightened,
+                                     std::max(1.2, attacker.spec.abilityDuration),
+                                     attacker.spec.abilityValue,
+                                     attackerId});
+            }
+        }
+    }
+    if (staggeringSmite && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Wis");
+        if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            addStatus(targetId, {StatusKind::Staggered,
+                                 std::max(1.2, attacker.spec.abilityDuration),
+                                 attacker.spec.abilityValue,
+                                 attackerId});
+        }
+    }
+    if (electrifiedFlail && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+        bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
+        if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+            addStatus(targetId, {StatusKind::Stunned,
+                                 std::max(0.8, attacker.spec.abilityDuration),
+                                 0,
+                                 attackerId});
+        }
+    }
+    if (frenziedStrike && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
+        applyDamage(targetId, std::max(18, damage / 2), baseDamageType, attackerId);
+    }
 }
 
-void GameEngine::applyDamage(UnitId targetId, int amount, UnitId sourceId) {
-    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return;
+void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId sourceId) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size())) return;
     Unit& target = unit(targetId);
     if (!target.alive || target.hp.empty()) return;
+
+    int amount = 0;
+    std::vector<std::string> affinityNotes;
+    std::vector<std::string> damageTypes;
+    for (const DamageRoll& roll : packet.rolls) {
+        int raw = rollDamageRoll(roll);
+        if (raw <= 0) continue;
+        DamageAffinity affinity = damageAffinity(target.spec.type, roll.type);
+        int adjusted = raw;
+        if (affinity == DamageAffinity::Immune) adjusted = 0;
+        if (affinity == DamageAffinity::Resistant) adjusted = std::max(1, raw / 2);
+        if (affinity == DamageAffinity::Vulnerable) adjusted = raw * 2;
+        amount += adjusted;
+        std::string typeName = toString(roll.type);
+        if (std::find(damageTypes.begin(), damageTypes.end(), typeName) == damageTypes.end()) {
+            damageTypes.push_back(typeName);
+        }
+        if (affinity != DamageAffinity::Normal) {
+            std::string note = toString(affinity) + " to " + typeName;
+            if (std::find(affinityNotes.begin(), affinityNotes.end(), note) == affinityNotes.end()) {
+                affinityNotes.push_back(note);
+            }
+        }
+    }
+    if (packet.flatDamage > 0) {
+        amount += packet.flatDamage;
+        if (std::find(damageTypes.begin(), damageTypes.end(), "Force") == damageTypes.end()) {
+            damageTypes.push_back("Force");
+        }
+    }
+
+    if (amount <= 0) {
+        std::string text = eventUnitName(target) + " took no damage";
+        if (!affinityNotes.empty()) text += " (" + affinityNotes.front() + ")";
+        pushEvent({EventType::DamageDealt, target.owner, sourceId, targetId, {}, target.coord, 0, text});
+        return;
+    }
+
+    activateNeutral(targetId, sourceId, "struck");
+
+    if (target.spec.ability == AbilityKind::BarbarianHeavySwing) {
+        int maxHp = target.spec.maxHp * target.spec.unitCount;
+        int beforeHp = totalHp(target);
+        if (maxHp > 0) {
+            double hpRatio = static_cast<double>(beforeHp) / maxHp;
+            int reduction = hpRatio <= 0.50 ? amount / 3 : amount / 4;
+            amount = std::max(1, amount - reduction);
+            if (reduction > 0) {
+                pushEvent({EventType::Shielded, target.owner, sourceId, targetId, {}, target.coord, reduction,
+                           eventUnitName(target) + " reduced " + std::to_string(reduction) +
+                               " damage with Rage"});
+            }
+        }
+    }
 
     int absorbed = std::min(target.shield, amount);
     if (absorbed > 0) {
@@ -1653,17 +5484,41 @@ void GameEngine::applyDamage(UnitId targetId, int amount, UnitId sourceId) {
     }
     if (amount <= 0) return;
 
-    std::uniform_int_distribution<int> pick(0, static_cast<int>(target.hp.size()) - 1);
-    int index = pick(rng_);
+    auto hpIt = std::min_element(target.hp.begin(), target.hp.end());
+    int index = static_cast<int>(std::distance(target.hp.begin(), hpIt));
     target.hp[index] -= amount;
 
+    std::ostringstream typeText;
+    for (size_t i = 0; i < damageTypes.size(); ++i) {
+        if (i > 0) typeText << "/";
+        typeText << damageTypes[i];
+    }
+    std::string text = eventUnitName(target) + " took " + std::to_string(amount) + " " +
+                       (damageTypes.empty() ? std::string("damage") : typeText.str() + " damage");
+    if (!affinityNotes.empty()) {
+        text += " (";
+        for (size_t i = 0; i < affinityNotes.size(); ++i) {
+            if (i > 0) text += ", ";
+            text += affinityNotes[i];
+        }
+        text += ")";
+    }
     pushEvent({EventType::DamageDealt, target.owner, sourceId, targetId, {}, target.coord, amount,
-               eventUnitName(target) + " took " + std::to_string(amount) + " damage"});
+               text});
 
     if (target.hp[index] <= 0) {
         target.hp.erase(target.hp.begin() + index);
     }
     if (target.hp.empty()) killUnit(targetId, sourceId);
+}
+
+void GameEngine::applyDamage(UnitId targetId, int amount, DamageType type, UnitId sourceId) {
+    if (amount <= 0) return;
+    applyDamage(targetId, DamagePacket{{DamageRoll{0, 0, amount, type}}, 0, "flat"}, sourceId);
+}
+
+void GameEngine::applyDamage(UnitId targetId, int amount, UnitId sourceId) {
+    applyDamage(targetId, amount, DamageType::Force, sourceId);
 }
 
 void GameEngine::applyHeal(UnitId targetId, int amount, UnitId sourceId) {
@@ -1697,29 +5552,64 @@ void GameEngine::killUnit(UnitId id, UnitId sourceId) {
 
     Coord deathCoord = dead.coord;
     PlayerId owner = dead.owner;
+    UnitType deadType = dead.spec.type;
     AbilityKind deathAbility = dead.spec.ability;
+    bool deadIsNeutral = isNeutralMonsterType(dead.spec.type);
     dead.alive = false;
     dead.hp.clear();
     removeFromBoard(id);
     eraseValue(player(owner).bench, id);
-    if (isRoundTransientUnit(dead.spec.type)) {
-        dead.deployed = false;
-        eraseValue(player(owner).deployed, id);
-    }
+    eraseValue(player(owner).deployed, id);
+    dead.deployed = false;
+    dead.target = kInvalidUnitId;
+    dead.retargetTimer = 0.0;
+    dead.neutralReturningHome = false;
 
     pushEvent({EventType::UnitDied, owner, sourceId, id, deathCoord, deathCoord, 0,
                eventUnitName(dead) + " died"});
 
-    if (deathAbility == AbilityKind::BalloonBomb) {
-        std::vector<UnitId> targets;
-        for (UnitId enemyId : player(opponent(owner)).deployed) {
-            if (enemyId < 0 || enemyId >= static_cast<int>(units_.size())) continue;
-            const Unit& enemy = unit(enemyId);
-            if (enemy.alive && enemy.spec.layer == UnitLayer::Land && manhattan(enemy.coord, deathCoord) <= 1) {
-                targets.push_back(enemyId);
+    updateExplorationObjectiveForDeath(id, sourceId);
+
+    if (deadType != UnitType::DefenseTower && !isRoundTransientUnit(deadType)) {
+        corpses_.push_back({deathCoord, owner, deadType, round_, false});
+    }
+
+    if (sourceId >= 0 && sourceId < static_cast<int>(units_.size())) {
+        Unit& killer = unit(sourceId);
+        bool killerIsNeutral = isNeutralLikeCombatant(killer);
+        if (killer.alive && !killerIsNeutral && (killer.owner != owner || deadIsNeutral)) {
+            int bounty = killBountyFor(dead);
+            if (bounty > 0) {
+                PlayerState& killerPlayer = player(killer.owner);
+                killerPlayer.money += bounty;
+                std::string bountyText = deadIsNeutral
+                                             ? eventUnitName(dead) + " dropped " +
+                                                   std::to_string(bounty) + " gp bounty"
+                                             : killerPlayer.name + " claimed " +
+                                                   std::to_string(bounty) + " gp bounty";
+                pushEvent({EventType::GoldGained, killer.owner, sourceId, id, {}, deathCoord, bounty,
+                           std::move(bountyText)});
             }
         }
-        for (UnitId targetId : targets) applyDamage(targetId, 60, id);
+    }
+
+    if (deathAbility == AbilityKind::MephitDeathBurst) {
+        pushEvent({EventType::UnitAttacked, owner, id, kInvalidUnitId, deathCoord, deathCoord, 60,
+                   eventUnitName(dead) + " exploded in a fire death burst"});
+        std::vector<UnitId> targets;
+        for (const Unit& enemy : units_) {
+            if (!enemy.alive || !enemy.deployed) continue;
+            bool enemyIsNeutral = isNeutralMonsterType(enemy.spec.type);
+            if (deadIsNeutral && enemyIsNeutral) continue;
+            if (!deadIsNeutral && !enemyIsNeutral && enemy.owner == owner) continue;
+            if (enemy.spec.layer == UnitLayer::Land && manhattan(enemy.coord, deathCoord) <= 1) {
+                targets.push_back(enemy.id);
+            }
+        }
+        for (UnitId targetId : targets) {
+            bool saved = savingThrowSucceeds(targetId, id, "Dex");
+            applyDamage(targetId, saved ? 30 : 60, DamageType::Fire, id);
+        }
     }
 }
 
@@ -1730,38 +5620,42 @@ void GameEngine::clearDeadUnits() {
         }), p.bench.end());
         p.deployed.erase(std::remove_if(p.deployed.begin(), p.deployed.end(), [this](UnitId id) {
             return id < 0 || id >= static_cast<int>(units_.size()) ||
-                   (!unit(id).alive && isRoundTransientUnit(unit(id).spec.type));
+                   !unit(id).alive;
         }), p.deployed.end());
     }
 }
 
 void GameEngine::resolveVictory() {
     if (phase_ != Phase::Combat) return;
-    for (const Unit& u : units_) {
-        if (!u.alive || !u.deployed || u.spec.type == UnitType::DefenseTower) continue;
-        if (u.coord == baseCoord(opponent(u.owner))) {
-            finishCombat(u.owner);
-            return;
-        }
-    }
 
-    for (PlayerId p : {PlayerId::One, PlayerId::Two}) {
-        bool towerAlive = false;
-        for (UnitId id : player(p).deployed) {
-            if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
-                unit(id).spec.type == UnitType::DefenseTower) {
-                towerAlive = true;
-                break;
+    if (stage_ == GameStage::MainBattle) {
+        for (const Unit& u : units_) {
+            if (!u.alive || !u.deployed || isInternalUnit(u.spec.type)) continue;
+            if (u.coord == baseCoord(opponent(u.owner))) {
+                finishCombat(u.owner);
+                return;
             }
         }
-        if (!towerAlive) {
-            finishCombat(opponent(p));
-            return;
+
+        for (PlayerId p : {PlayerId::One, PlayerId::Two}) {
+            bool towerAlive = false;
+            for (UnitId id : player(p).deployed) {
+                if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive &&
+                    unit(id).spec.type == UnitType::DefenseTower) {
+                    towerAlive = true;
+                    break;
+                }
+            }
+            if (!towerAlive) {
+                finishCombat(opponent(p));
+                return;
+            }
         }
     }
 
     if (!hasActiveCombatUnit(PlayerId::One) && !hasActiveCombatUnit(PlayerId::Two)) {
-        startNextRound();
+        startNextRound("no player/AI combat units remain");
+        return;
     }
 }
 
@@ -1769,7 +5663,7 @@ bool GameEngine::hasActiveCombatUnit(PlayerId playerId) const {
     for (UnitId id : player(playerId).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& u = unit(id);
-        if (u.alive && u.deployed && u.spec.type != UnitType::DefenseTower) return true;
+        if (u.alive && u.deployed && !isInternalUnit(u.spec.type) && !u.neutralControlled) return true;
     }
     return false;
 }
@@ -1788,7 +5682,7 @@ void GameEngine::moveUnits(double dt) {
         int aDepth = a.owner == PlayerId::One ? a.coord.x : (board_.width - 1 - a.coord.x);
         int bDepth = b.owner == PlayerId::One ? b.coord.x : (board_.width - 1 - b.coord.x);
         if (aDepth != bDepth) return aDepth > bDepth;
-        if (a.spec.speed != b.spec.speed) return a.spec.speed < b.spec.speed;
+        if (a.spec.speed != b.spec.speed) return a.spec.speed > b.spec.speed;
         if (totalHp(a) != totalHp(b)) return totalHp(a) < totalHp(b);
         return lhs < rhs;
     });
@@ -1797,7 +5691,9 @@ void GameEngine::moveUnits(double dt) {
     for (UnitId id : ids) {
         Unit& u = unit(id);
         if (!u.alive || !u.deployed || u.spec.speed <= 0.0 || u.spec.type == UnitType::DefenseTower) continue;
-        if (u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
+        if (hasStatus(u, StatusKind::Stunned) || hasStatus(u, StatusKind::Prone)) continue;
+        if (!hasStatus(u, StatusKind::Frightened) &&
+            u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
             unit(u.target).alive && inAttackRange(u, unit(u.target))) {
             continue;
         }
@@ -1809,9 +5705,11 @@ void GameEngine::moveUnits(double dt) {
         std::optional<Coord> next = chooseNextStep(id, reserved);
         if (!next || *next == u.coord) {
             ++u.stuckTicks;
-            if (u.stuckTicks > 30) {
+            if (u.stuckTicks > 12) {
                 u.target = kInvalidUnitId;
                 u.retargetTimer = 0.0;
+                u.moveProgress = 0.0;
+                u.lastCoord = u.coord;
                 u.stuckTicks = 0;
             }
             continue;
@@ -1822,23 +5720,65 @@ void GameEngine::moveUnits(double dt) {
         if (!placeUnit(id, *next)) {
             placeUnit(id, from);
             ++u.stuckTicks;
+            if (u.stuckTicks > 8) {
+                u.target = kInvalidUnitId;
+                u.retargetTimer = 0.0;
+                u.moveProgress = 0.0;
+                u.lastCoord = u.coord;
+                u.stuckTicks = 0;
+            }
             continue;
         }
 
-        if (u.spec.ability == AbilityKind::PrinceCharge) u.firstStrikeReady = true;
+        if (u.spec.ability == AbilityKind::PaladinCharge) u.firstStrikeReady = true;
         u.stuckTicks = from == *next ? u.stuckTicks + 1 : 0;
         u.lastCoord = from;
-        reserved.push_back(*next);
-        pushEvent({EventType::UnitMoved, u.owner, id, kInvalidUnitId, from, *next, 0,
-                   eventUnitName(u) + " moved"});
+        if (u.neutralReturningHome && board_.inBounds(u.homeCoord) && u.coord == u.homeCoord) {
+            u.neutralReturningHome = false;
+            u.neutralProvoked = false;
+            u.provokedBy = kInvalidUnitId;
+            u.target = kInvalidUnitId;
+            u.retargetTimer = 0.0;
+            pushEvent({EventType::UnitMoved, u.owner, id, kInvalidUnitId, from, *next, 0,
+                       eventUnitName(u) + " returned to its guard post"});
+        } else {
+            pushEvent({EventType::UnitMoved, u.owner, id, kInvalidUnitId, from, *next, 0,
+                       eventUnitName(u) + " moved"});
+        }
+        if (u.spec.layer == UnitLayer::Land) reserved.push_back(*next);
+        if (canTriggerHiddenEvent(u)) {
+            triggerHiddenEventAt(u.owner, *next, id);
+            triggerTrapAt(u.owner, *next, id);
+        }
     }
 }
 
 std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coord>& reserved) const {
     const Unit& u = unit(id);
+    if (isNeutralMonsterType(u.spec.type) && !neutralCanLeaveHome(u)) return std::nullopt;
+    if (isNeutralSpawServant(u)) return chooseNeutralSummonGuardStep(u, reserved);
+    if (isNeutralGuardianUnit(u)) return chooseNeutralGuardianStep(u, reserved);
+
     Coord target = baseCoord(opponent(u.owner));
     bool hasUnitTarget = u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
                          unit(u.target).alive;
+    auto hasAttackableHostile = [&]() {
+        Coord redcapOrigin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+        for (const Unit& candidate : units_) {
+            if (!candidate.alive || !candidate.deployed) continue;
+            if (u.spec.type == UnitType::NeutralRedcap &&
+                manhattan(candidate.coord, redcapOrigin) > kRedcapAmbushRadius) {
+                continue;
+            }
+        if (stage_ == GameStage::Exploration && !isNeutralLikeCombatant(u) &&
+            manhattan(u.coord, candidate.coord) >
+                std::max(kExplorationUnitAggroRadius, u.spec.range + 3)) {
+                continue;
+            }
+            if (inAttackRange(u, candidate)) return true;
+        }
+        return false;
+    };
 
     if (u.spec.ability == AbilityKind::ClericHeal) {
         if (std::optional<Coord> supportStep = chooseSupportStep(u, reserved)) return supportStep;
@@ -1847,15 +5787,151 @@ std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coo
         }
     }
 
+    if (hasStatus(u, StatusKind::Frightened)) {
+        UnitId threat = u.target;
+        if (threat == kInvalidUnitId || threat >= static_cast<int>(units_.size()) || !unit(threat).alive) {
+            threat = selectTarget(u);
+        }
+        if (threat != kInvalidUnitId) {
+            Coord away = u.coord;
+            int bestDistance = manhattan(u.coord, unit(threat).coord);
+            for (Coord candidate : neighbors4(u.coord)) {
+                if (std::find(reserved.begin(), reserved.end(), candidate) != reserved.end()) continue;
+                if (!passableForLand(u, candidate)) continue;
+                int distance = manhattan(candidate, unit(threat).coord);
+                if (distance > bestDistance) {
+                    bestDistance = distance;
+                    away = candidate;
+                }
+            }
+            if (away != u.coord) return away;
+        }
+    }
+
+    if (u.spec.type == UnitType::NeutralRedcap && !hasUnitTarget) return std::nullopt;
+    if (u.neutralControlled && !hasUnitTarget) return std::nullopt;
+
+    std::optional<Coord> explorationGoal;
+    if (!hasUnitTarget && stage_ == GameStage::Exploration &&
+        !isNeutralLikeCombatant(u) && !isRoundTransientUnit(u.spec.type)) {
+        explorationGoal = chooseExplorationGoal(u);
+        if (explorationGoal) target = *explorationGoal;
+    }
+
     if (hasUnitTarget) {
         target = unit(u.target).coord;
         if (inAttackRange(u, unit(u.target))) return std::nullopt;
+    } else if (hasAttackableHostile()) {
+        return std::nullopt;
     }
 
     if (u.spec.layer == UnitLayer::Air) return chooseAirStep(u, target, reserved);
 
-    PathResult path = hasUnitTarget ? findPathToAttackCell(u, target, u.spec.range)
+    int attackPathRange = u.spec.ability == AbilityKind::MinotaurCharge ? 1 : u.spec.range;
+    PathResult path = hasUnitTarget ? findPathToAttackCell(u, target, attackPathRange)
                                     : findPathToGoal(u, target);
+    if (!path.found || path.steps.size() < 2) return std::nullopt;
+    Coord next = path.steps[1];
+    if (!hasUnitTarget && explorationGoal && next == u.lastCoord) {
+        Coord bestAlternate = next;
+        int bestScore = std::numeric_limits<int>::min();
+        for (Coord candidate : neighbors4(u.coord)) {
+            if (candidate == u.lastCoord) continue;
+            if (std::find(reserved.begin(), reserved.end(), candidate) != reserved.end()) continue;
+            if (!passableForLand(u, candidate)) continue;
+            Unit probe = u;
+            probe.coord = candidate;
+            PathResult alternatePath = findPathToGoal(probe, target);
+            if (!alternatePath.found) continue;
+            int score = -static_cast<int>(alternatePath.steps.size()) * 10;
+            score += (manhattan(u.coord, target) - manhattan(candidate, target)) * 4;
+            if (score > bestScore) {
+                bestScore = score;
+                bestAlternate = candidate;
+            }
+        }
+        if (bestScore == std::numeric_limits<int>::min() && u.stuckTicks < 6) {
+            return std::nullopt;
+        }
+        next = bestAlternate;
+    }
+    if (u.spec.type == UnitType::NeutralRedcap) {
+        Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+        if (manhattan(next, origin) > kRedcapAmbushRadius) return std::nullopt;
+    }
+    if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
+    if (!passableForLand(u, next)) return std::nullopt;
+    return next;
+}
+
+bool GameEngine::neutralCanLeaveHome(const Unit& u) const {
+    if (!isNeutralMonsterType(u.spec.type)) return true;
+    if (u.spec.type == UnitType::NeutralRedcap) {
+        Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+        return manhattan(u.coord, origin) <= kRedcapAmbushRadius;
+    }
+    if (u.neutralBehavior == NeutralBehavior::HostileAmbusher) return true;
+    if (!board_.inBounds(u.homeCoord)) return false;
+    if (u.neutralReturningHome) return true;
+    return u.neutralProvoked;
+}
+
+std::optional<Coord> GameEngine::chooseNeutralGuardianStep(const Unit& u,
+                                                           const std::vector<Coord>& reserved) const {
+    if (u.neutralReturningHome || !u.neutralProvoked) {
+        Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+        if (u.coord == home) return std::nullopt;
+        PathResult homePath = u.spec.layer == UnitLayer::Air ? PathResult{true, {u.coord, home}}
+                                                             : findPathToGoal(u, home);
+        if (!homePath.found || homePath.steps.size() < 2) return std::nullopt;
+        Coord next = homePath.steps[1];
+        if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
+        if (!withinNeutralLeash(u, next)) return std::nullopt;
+        if (u.spec.layer == UnitLayer::Air) return chooseAirStep(u, home, reserved);
+        if (!passableForLand(u, next)) return std::nullopt;
+        return next;
+    }
+    if (u.target == kInvalidUnitId || u.target >= static_cast<int>(units_.size()) ||
+        !unit(u.target).alive || !unit(u.target).deployed ||
+        !withinNeutralLeash(u, unit(u.target).coord)) {
+        return std::nullopt;
+    }
+
+    const Unit& target = unit(u.target);
+    if (inAttackRange(u, target)) return std::nullopt;
+    if (u.spec.layer == UnitLayer::Air) {
+        std::optional<Coord> next = chooseAirStep(u, target.coord, reserved);
+        if (next && withinNeutralLeash(u, *next)) return next;
+        return std::nullopt;
+    }
+    PathResult path = findPathToAttackCell(u, target.coord, u.spec.range);
+    if (!path.found || path.steps.size() < 2) return std::nullopt;
+    Coord next = path.steps[1];
+    if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
+    if (!withinNeutralLeash(u, next)) return std::nullopt;
+    if (!passableForLand(u, next)) return std::nullopt;
+    return next;
+}
+
+std::optional<Coord> GameEngine::chooseNeutralSummonGuardStep(const Unit& u,
+                                                              const std::vector<Coord>& reserved) const {
+    Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+    if (u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
+        unit(u.target).alive && unit(u.target).deployed && withinNeutralLeash(u, unit(u.target).coord)) {
+        if (inAttackRange(u, unit(u.target))) return std::nullopt;
+        PathResult path = findPathToAttackCell(u, unit(u.target).coord, u.spec.range);
+        if (path.found && path.steps.size() >= 2) {
+            Coord next = path.steps[1];
+            if (manhattan(next, home) <= kNeutralSummonGuardRadius &&
+                std::find(reserved.begin(), reserved.end(), next) == reserved.end() &&
+                passableForLand(u, next)) {
+                return next;
+            }
+        }
+    }
+
+    if (u.coord == home || manhattan(u.coord, home) <= 1) return std::nullopt;
+    PathResult path = findPathToGoal(u, home);
     if (!path.found || path.steps.size() < 2) return std::nullopt;
     Coord next = path.steps[1];
     if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
@@ -1863,7 +5939,87 @@ std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coo
     return next;
 }
 
+std::optional<Coord> GameEngine::chooseExplorationGoal(const Unit& u) const {
+    Coord best{};
+    double bestScore = -std::numeric_limits<double>::infinity();
+
+    auto consider = [&](Coord coord, const PathResult& path, double score) {
+        if (!board_.inBounds(coord) || board_.blocked(coord)) return;
+        if (!path.found) return;
+        int pathCost = path.steps.empty() ? manhattan(u.coord, coord)
+                                          : static_cast<int>(path.steps.size()) - 1;
+        score -= pathCost * 5.0;
+        if (path.steps.size() > 1 && path.steps[1] == u.lastCoord) score -= 45.0;
+        if (score > bestScore) {
+            bestScore = score;
+            best = path.steps.empty() ? coord : path.steps.back();
+        }
+    };
+
+    int maxHp = std::max(1, u.spec.maxHp * u.spec.unitCount);
+    double hpRatio = std::clamp(static_cast<double>(totalHp(u)) / static_cast<double>(maxHp), 0.0, 1.0);
+    auto onHomeFront = [&](Coord coord) {
+        int center = board_.width / 2;
+        return u.owner == PlayerId::One ? coord.x <= center : coord.x >= center;
+    };
+    bool homeFrontObjectiveAvailable = false;
+    for (const ExplorationObjectiveState& objective : exploration_.objectives()) {
+        if (objective.cleared) continue;
+        if (objective.kind == ExplorationObjectiveKind::Trap && objective.triggered) continue;
+        if (onHomeFront(objective.coord)) {
+            homeFrontObjectiveAvailable = true;
+            break;
+        }
+    }
+    for (const ExplorationObjectiveState& objective : exploration_.objectives()) {
+        if (objective.cleared) continue;
+        if (objective.kind == ExplorationObjectiveKind::Trap && objective.triggered) continue;
+        if (homeFrontObjectiveAvailable && !onHomeFront(objective.coord)) continue;
+
+        double score = objective.rewardGold * 4.0 + objective.rewardQuality * 18.0;
+        switch (objective.kind) {
+            case ExplorationObjectiveKind::Camp:
+                score += 100.0;
+                break;
+            case ExplorationObjectiveKind::Elite:
+                score += 140.0 - (hpRatio < 0.55 ? 42.0 : 0.0);
+                break;
+            case ExplorationObjectiveKind::Boss:
+                score += 185.0 - (hpRatio < 0.70 ? 80.0 : 0.0);
+                break;
+            case ExplorationObjectiveKind::Trap:
+                score += 82.0 - (hpRatio < 0.50 ? 28.0 : 0.0);
+                break;
+        }
+
+        if (objective.unitId != kInvalidUnitId) {
+            if (objective.unitId < 0 || objective.unitId >= static_cast<int>(units_.size())) continue;
+            const Unit& objectiveUnit = unit(objective.unitId);
+            if (!objectiveUnit.alive || !objectiveUnit.deployed) continue;
+            score += objectiveUnit.spec.threat * 0.45;
+            if (objective.kind == ExplorationObjectiveKind::Boss) {
+                score -= objectiveUnit.spec.threat * (hpRatio < 0.85 ? 0.45 : 0.18);
+            }
+            PathResult path = u.spec.layer == UnitLayer::Air
+                                  ? PathResult{true, {u.coord, objectiveUnit.coord}}
+                                  : findPathToAttackCell(u, objectiveUnit.coord, u.spec.range);
+            if (onHomeFront(objective.coord)) score += 10.0;
+            consider(objectiveUnit.coord, path, score);
+            continue;
+        }
+
+        if (onHomeFront(objective.coord)) score += 10.0;
+        PathResult path = u.spec.layer == UnitLayer::Air ? PathResult{true, {u.coord, objective.coord}}
+                                                         : findPathToGoal(u, objective.coord);
+        consider(objective.coord, path, score);
+    }
+
+    if (bestScore == -std::numeric_limits<double>::infinity()) return std::nullopt;
+    return best;
+}
+
 std::optional<Coord> GameEngine::chooseSupportStep(const Unit& u, const std::vector<Coord>& reserved) const {
+    (void)reserved;
     if (!u.alive || !u.deployed || u.spec.ability != AbilityKind::ClericHeal) return std::nullopt;
 
     UnitId healTarget = selectGlobalHealTarget(u);
@@ -1874,7 +6030,6 @@ std::optional<Coord> GameEngine::chooseSupportStep(const Unit& u, const std::vec
         PathResult path = findPathToAttackCell(u, target.coord, u.spec.abilityRange);
         if (!path.found || path.steps.size() < 2) return std::nullopt;
         Coord next = path.steps[1];
-        if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
         if (!passableForLand(u, next)) return std::nullopt;
         return next;
     }
@@ -1885,7 +6040,6 @@ std::optional<Coord> GameEngine::chooseSupportStep(const Unit& u, const std::vec
     PathResult path = findPathToGoal(u, *goal);
     if (!path.found || path.steps.size() < 2) return std::nullopt;
     Coord next = path.steps[1];
-    if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
     if (!passableForLand(u, next)) return std::nullopt;
     return next;
 }
@@ -1925,6 +6079,7 @@ std::optional<Coord> GameEngine::chooseFollowAllyGoal(const Unit& u) const {
 }
 
 std::optional<Coord> GameEngine::chooseAirStep(const Unit& u, Coord target, const std::vector<Coord>& reserved) const {
+    (void)reserved;
     std::vector<Coord> candidates = neighbors4(u.coord);
     Coord forward = forwardCoord(u.owner, u.coord);
     if (board_.inBounds(forward)) candidates.insert(candidates.begin(), forward);
@@ -1934,8 +6089,6 @@ std::optional<Coord> GameEngine::chooseAirStep(const Unit& u, Coord target, cons
     int bestScore = std::numeric_limits<int>::min();
     for (Coord candidate : candidates) {
         if (!board_.inBounds(candidate)) continue;
-        if (board_.occupant(candidate, UnitLayer::Air) != kInvalidUnitId) continue;
-        if (std::find(reserved.begin(), reserved.end(), candidate) != reserved.end()) continue;
         int dist = manhattan(candidate, target);
         if (dist > currentDist) continue;
         int forwardBias = u.owner == PlayerId::One ? candidate.x : (board_.width - 1 - candidate.x);
@@ -1951,20 +6104,46 @@ std::optional<Coord> GameEngine::chooseAirStep(const Unit& u, Coord target, cons
 
 GameEngine::PathResult GameEngine::findPathToAttackCell(const Unit& u, Coord target, int range) const {
     if (manhattan(u.coord, target) <= range) return {true, {u.coord}};
+    if (!board_.inBounds(target)) return {};
 
-    std::vector<Coord> goals;
-    for (Coord coord : cellsInRange(target, range)) {
-        if (coord == target) continue;
-        if (!board_.inBounds(coord)) continue;
-        if (coord == u.coord || passableForLand(u, coord)) goals.push_back(coord);
+    const int n = board_.width * board_.height;
+    std::vector<int> dist(n, std::numeric_limits<int>::max());
+    std::vector<Coord> parent(n, Coord{-1, -1});
+    auto index = [this](Coord coord) { return coord.y * board_.width + coord.x; };
+    auto buildPath = [&](Coord goal) {
+        std::vector<Coord> reversed;
+        Coord step = goal;
+        while (step != Coord{-1, -1}) {
+            reversed.push_back(step);
+            if (step == u.coord) break;
+            step = parent[index(step)];
+        }
+        std::reverse(reversed.begin(), reversed.end());
+        return reversed;
+    };
+
+    std::queue<Coord> q;
+    dist[index(u.coord)] = 0;
+    q.push(u.coord);
+
+    while (!q.empty()) {
+        Coord current = q.front();
+        q.pop();
+        if (current != u.coord && manhattan(current, target) <= range) {
+            return {true, buildPath(current)};
+        }
+
+        for (Coord next : neighbors4(current)) {
+            if (!passableForLand(u, next)) continue;
+            int ni = index(next);
+            if (dist[ni] != std::numeric_limits<int>::max()) continue;
+            dist[ni] = dist[index(current)] + 1;
+            parent[ni] = current;
+            q.push(next);
+        }
     }
 
-    PathResult best;
-    for (Coord goal : goals) {
-        PathResult path = findPathToGoal(u, goal);
-        if (path.found && (!best.found || path.steps.size() < best.steps.size())) best = path;
-    }
-    return best;
+    return {};
 }
 
 GameEngine::PathResult GameEngine::findPathToGoal(const Unit& u, Coord goal) const {
@@ -2012,8 +6191,16 @@ GameEngine::PathResult GameEngine::findPathToGoal(const Unit& u, Coord goal) con
 
 bool GameEngine::passableForLand(const Unit& u, Coord coord) const {
     if (!board_.inBounds(coord)) return false;
-    if (coord == u.coord) return true;
-    return board_.occupant(coord, UnitLayer::Land) == kInvalidUnitId;
+    if (board_.blocked(coord)) return false;
+    for (UnitId id : board_.occupants(coord, UnitLayer::Land)) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& occupant = unit(id);
+        if (!occupant.alive || occupant.id == u.id) continue;
+        if (occupant.deployed) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::vector<Coord> GameEngine::neighbors4(Coord coord) const {
@@ -2051,15 +6238,32 @@ Coord GameEngine::forwardCoord(PlayerId playerId, Coord coord) const {
 }
 
 std::optional<Coord> GameEngine::findSummonCell(PlayerId owner, Coord origin, UnitLayer layer) const {
+    (void)layer;
+    auto isLandable = [&](Coord coord) -> bool {
+        if (!board_.inBounds(coord)) return false;
+        if (board_.blocked(coord)) return false;
+        // Bases trigger an instant victory if anyone stands there - never
+        // summon onto an enemy base, and don't summon onto our own base
+        // either (collides with tower placement).
+        if (coord == baseCoord(PlayerId::One) || coord == baseCoord(PlayerId::Two)) return false;
+        for (UnitId id : board_.occupants(coord, UnitLayer::Land)) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& u = unit(id);
+            if (u.alive && u.deployed) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     std::vector<Coord> candidates;
     Coord forward = forwardCoord(owner, origin);
     if (board_.inBounds(forward)) candidates.push_back(forward);
     for (Coord coord : adjacentCells(origin)) {
         if (coord != forward) candidates.push_back(coord);
     }
-
     for (Coord coord : candidates) {
-        if (board_.inBounds(coord) && board_.occupant(coord, layer) == kInvalidUnitId) return coord;
+        if (isLandable(coord)) return coord;
     }
     return std::nullopt;
 }
@@ -2067,32 +6271,59 @@ std::optional<Coord> GameEngine::findSummonCell(PlayerId owner, Coord origin, Un
 void GameEngine::performAssassinLeap(UnitId id) {
     if (id < 0 || id >= static_cast<int>(units_.size())) return;
     Unit& assassin = unit(id);
-    if (!assassin.alive || assassin.spec.ability != AbilityKind::AssassinLeap) return;
+    if (!assassin.alive || assassin.spec.ability != AbilityKind::RogueAmbush) return;
+    if (isNeutralMonsterType(assassin.spec.type)) return;
 
     UnitId target = kInvalidUnitId;
     int bestScore = std::numeric_limits<int>::min();
-    for (UnitId enemyId : player(opponent(assassin.owner)).deployed) {
-        if (enemyId < 0 || enemyId >= static_cast<int>(units_.size())) continue;
-        const Unit& enemy = unit(enemyId);
-        if (!enemy.alive || enemy.spec.type == UnitType::DefenseTower) continue;
+    for (const Unit& enemy : units_) {
+        if (!enemy.alive || !enemy.deployed || enemy.spec.type == UnitType::DefenseTower) continue;
+        if (!canAttack(assassin, enemy)) continue;
+        if (manhattan(assassin.coord, enemy.coord) > kRogueAmbushMaxRange) continue;
+        if (!inAttackRange(assassin, enemy) &&
+            !findPathToAttackCell(assassin, enemy.coord, assassin.spec.range).found) {
+            continue;
+        }
         int backline = enemy.owner == PlayerId::One ? (board_.width - 1 - enemy.coord.x) : enemy.coord.x;
         int score = enemy.spec.threat + backline * 8;
         if (enemy.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) score += 30;
         if (score > bestScore) {
             bestScore = score;
-            target = enemyId;
+            target = enemy.id;
         }
     }
     if (target == kInvalidUnitId) return;
 
+    Coord targetCoord = unit(target).coord;
+    auto isLandable = [&](Coord coord) -> bool {
+        if (!board_.inBounds(coord)) return false;
+        if (board_.blocked(coord)) return false;
+        if (coord == targetCoord) return false;  // adjacent, not on top of
+        if (coord == baseCoord(PlayerId::One) || coord == baseCoord(PlayerId::Two)) return false;
+        for (UnitLayer occupiedLayer : {UnitLayer::Land, UnitLayer::Air}) {
+            for (UnitId other : board_.occupants(coord, occupiedLayer)) {
+                if (other < 0 || other >= static_cast<int>(units_.size())) continue;
+                const Unit& u = unit(other);
+                if (u.alive && (u.spec.type == UnitType::DefenseTower || isNeutralMonsterType(u.spec.type))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    // Pick the adjacent cell furthest forward into enemy territory among
+    // valid landing spots. Falls back to the closest adjacent cell if no
+    // forward candidate exists.
     Coord best{-1, -1};
-    int bestDist = std::numeric_limits<int>::max();
-    for (Coord coord : adjacentCells(unit(target).coord)) {
-        if (!board_.inBounds(coord)) continue;
-        if (board_.occupant(coord, assassin.spec.layer) != kInvalidUnitId) continue;
-        int dist = manhattan(coord, unit(target).coord);
-        if (dist < bestDist) {
-            bestDist = dist;
+    int bestForward = std::numeric_limits<int>::min();
+    for (Coord coord : neighbors4(targetCoord)) {
+        if (!isLandable(coord)) continue;
+        int forwardDepth = assassin.owner == PlayerId::One
+                               ? coord.x
+                               : (board_.width - 1 - coord.x);
+        if (forwardDepth > bestForward) {
+            bestForward = forwardDepth;
             best = coord;
         }
     }
@@ -2103,7 +6334,65 @@ void GameEngine::performAssassinLeap(UnitId id) {
     if (placeUnit(id, best)) {
         assassin.firstStrikeReady = true;
         pushEvent({EventType::UnitMoved, assassin.owner, id, target, from, best, 0,
-                   eventUnitName(assassin) + " leaped to the backline"});
+                   eventUnitName(assassin) + " used Ambush on " + eventUnitName(unit(target))});
+    } else {
+        placeUnit(id, from);
+    }
+}
+
+void GameEngine::performGithyankiAstralRaid(UnitId id) {
+    if (id < 0 || id >= static_cast<int>(units_.size())) return;
+    Unit& raider = unit(id);
+    if (!raider.alive || !raider.deployed ||
+        raider.spec.ability != AbilityKind::GithyankiAstralRaid) {
+        return;
+    }
+
+    UnitId target = kInvalidUnitId;
+    double bestTargetScore = -std::numeric_limits<double>::infinity();
+    for (const Unit& enemy : units_) {
+        if (!enemy.alive || !enemy.deployed || enemy.spec.type == UnitType::DefenseTower) continue;
+        if (!canAttack(raider, enemy)) continue;
+        if (!inAttackRange(raider, enemy) &&
+            !findPathToAttackCell(raider, enemy.coord, raider.spec.range).found) {
+            continue;
+        }
+        int dist = manhattan(raider.coord, enemy.coord);
+        double score = enemy.spec.threat - dist * 4.0;
+        if (enemy.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) score += 20.0;
+        if (totalHp(enemy) < enemy.spec.maxHp * enemy.spec.unitCount / 2) score += 8.0;
+        if (score > bestTargetScore) {
+            bestTargetScore = score;
+            target = enemy.id;
+        }
+    }
+    if (target == kInvalidUnitId) return;
+
+    Coord targetCoord = unit(target).coord;
+    Coord best = raider.coord;
+    int currentDist = manhattan(raider.coord, targetCoord);
+    double bestCellScore = -std::numeric_limits<double>::infinity();
+    int blinkRange = std::max(1, raider.spec.abilityRange);
+    for (Coord coord : cellsInRange(raider.coord, blinkRange)) {
+        if (coord == raider.coord || coord == targetCoord) continue;
+        if (!passableForLand(raider, coord)) continue;
+        int dist = manhattan(coord, targetCoord);
+        if (dist >= currentDist) continue;
+        int forwardDepth = raider.owner == PlayerId::One ? coord.x : (board_.width - 1 - coord.x);
+        double score = (currentDist - dist) * 100.0 + forwardDepth * 3.0 - std::abs(coord.y - targetCoord.y) * 6.0;
+        if (score > bestCellScore) {
+            bestCellScore = score;
+            best = coord;
+        }
+    }
+    if (best == raider.coord) return;
+
+    Coord from = raider.coord;
+    removeFromBoard(id);
+    if (placeUnit(id, best)) {
+        raider.firstStrikeReady = true;
+        pushEvent({EventType::UnitMoved, raider.owner, id, target, from, best, raider.spec.abilityValue,
+                   eventUnitName(raider) + " made an astral raid"});
     } else {
         placeUnit(id, from);
     }
@@ -2134,6 +6423,14 @@ std::string toString(AiActionKind kind) {
     return "Ready";
 }
 
+std::string toString(GameStage stage) {
+    switch (stage) {
+        case GameStage::Exploration: return "Exploration";
+        case GameStage::MainBattle: return "Main Battle";
+    }
+    return "Stage";
+}
+
 std::string toString(Phase phase) {
     switch (phase) {
         case Phase::Preparation: return "Preparation";
@@ -2150,26 +6447,40 @@ std::string toString(UnitLayer layer) {
 std::string toString(UnitType type) {
     switch (type) {
         case UnitType::Skeleton: return "Skeleton";
-        case UnitType::SkeletonByWitch: return "SkeletonByWitch";
-        case UnitType::Knight: return "Knight";
-        case UnitType::Archer: return "Archer";
-        case UnitType::Pekka: return "Pekka";
-        case UnitType::Witch: return "Witch";
-        case UnitType::Balloon: return "Balloon";
-        case UnitType::Minions: return "Minions";
-        case UnitType::Goblin: return "Goblin";
-        case UnitType::Prince: return "Prince";
-        case UnitType::BabyDragon: return "BabyDragon";
+        case UnitType::SkeletonByNecromancer: return "SkeletonByNecromancer";
+        case UnitType::GithyankiWarrior: return "GithyankiWarrior";
+        case UnitType::Ranger: return "Ranger";
+        case UnitType::Barbarian: return "Barbarian";
+        case UnitType::Necromancer: return "Necromancer";
+        case UnitType::FireMephit: return "FireMephit";
+        case UnitType::ImpSwarm: return "ImpSwarm";
+        case UnitType::GoblinSkirmisher: return "GoblinSkirmisher";
+        case UnitType::Paladin: return "Paladin";
+        case UnitType::DragonWyrmling: return "DragonWyrmling";
+        case UnitType::NeutralSpectator: return "NeutralSpectator";
+        case UnitType::NeutralOwlbear: return "NeutralOwlbear";
+        case UnitType::NeutralMindFlayer: return "NeutralMindFlayer";
+        case UnitType::NeutralSovereignSpaw: return "NeutralSovereignSpaw";
+        case UnitType::NeutralKarniss: return "NeutralKarniss";
+        case UnitType::NeutralRedcap: return "NeutralRedcap";
+        case UnitType::NeutralWaterMyrmidon: return "NeutralWaterMyrmidon";
+        case UnitType::NeutralPhaseSpiderMatriarch: return "NeutralPhaseSpiderMatriarch";
+        case UnitType::NeutralRaphael: return "NeutralRaphael";
+        case UnitType::NeutralKethericThorm: return "NeutralKethericThorm";
+        case UnitType::NeutralMoonlightSliver: return "NeutralMoonlightSliver";
+        case UnitType::NeutralGuardianOfFaith: return "NeutralGuardianOfFaith";
+        case UnitType::NeutralMinotaur: return "NeutralMinotaur";
+        case UnitType::NeutralDeathKnight: return "NeutralDeathKnight";
+        case UnitType::NeutralAirMyrmidon: return "NeutralAirMyrmidon";
+        case UnitType::NeutralTamiaHolzt: return "NeutralTamiaHolzt";
         case UnitType::DefenseTower: return "DefenseTower";
-        case UnitType::ShieldGuard: return "ShieldGuard";
+        case UnitType::ShieldGuardian: return "ShieldGuardian";
         case UnitType::Cleric: return "Cleric";
-        case UnitType::FrostMage: return "FrostMage";
-        case UnitType::Bomber: return "Bomber";
-        case UnitType::ShadowAssassin: return "ShadowAssassin";
+        case UnitType::Evoker: return "Evoker";
+        case UnitType::RogueAssassin: return "RogueAssassin";
         case UnitType::Druid: return "Druid";
         case UnitType::Treant: return "Treant";
-        case UnitType::Lancer: return "Lancer";
-        case UnitType::StormSpirit: return "StormSpirit";
+        case UnitType::SporeServant: return "SporeServant";
     }
     return "Unknown";
 }

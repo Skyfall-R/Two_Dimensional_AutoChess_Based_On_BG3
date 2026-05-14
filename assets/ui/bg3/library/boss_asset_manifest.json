@@ -1,0 +1,112 @@
+[
+  {
+    "category": "unit",
+    "title": "Water Myrmidon",
+    "source_page": "https://bg3.wiki/wiki/Water_Myrmidon",
+    "source_url": "https://bg3.wiki/w/images/8/8b/Portrait_Water_Myrmidon.png",
+    "local_file": "assets/ui/bg3/library/monsters/creatures/water_myrmidon.png",
+    "size": [
+      152,
+      152
+    ]
+  },
+  {
+    "category": "unit",
+    "title": "Phase Spider Matriarch",
+    "source_page": "https://bg3.wiki/wiki/Phase_Spider_Matriarch",
+    "source_url": "https://bg3.wiki/w/images/6/68/Portrait_Phase_Spider_Matriarch.png",
+    "local_file": "assets/ui/bg3/library/monsters/creatures/phase_spider_matriarch.png",
+    "size": [
+      152,
+      152
+    ]
+  },
+  {
+    "category": "unit",
+    "title": "Raphael",
+    "source_page": "https://bg3.wiki/wiki/Raphael",
+    "source_url": "https://bg3.wiki/w/images/3/39/Portrait_Raphael.png",
+    "local_file": "assets/ui/bg3/library/monsters/creatures/raphael.png",
+    "size": [
+      152,
+      152
+    ]
+  },
+  {
+    "category": "unit",
+    "title": "Ketheric Thorm",
+    "source_page": "https://bg3.wiki/wiki/Ketheric_Thorm",
+    "source_url": "https://bg3.wiki/w/images/f/f2/Portrait_Ketheric_Thorm.png",
+    "local_file": "assets/ui/bg3/library/monsters/creatures/ketheric_thorm.png",
+    "size": [
+      152,
+      152
+    ]
+  },
+  {
+    "category": "skill",
+    "title": "Hiemal Strike",
+    "source_page": "https://bg3.wiki/wiki/Hiemal_Strike",
+    "source_url": "https://bg3.wiki/w/images/6/64/Winter%27s_Breath.webp",
+    "local_file": "assets/ui/bg3/library/skills/actions/hiemal_strike.png",
+    "size": [
+      96,
+      96
+    ]
+  },
+  {
+    "category": "skill",
+    "title": "Venomous Bite",
+    "source_page": "https://bg3.wiki/wiki/Venomous_Bite",
+    "source_url": "https://bg3.wiki/w/images/d/d5/Venomous_Bite_Icon.webp",
+    "local_file": "assets/ui/bg3/library/skills/actions/venomous_bite.png",
+    "size": [
+      96,
+      96
+    ]
+  },
+  {
+    "category": "skill",
+    "title": "Diabolic Chains",
+    "source_page": "https://bg3.wiki/wiki/Diabolic_Chains",
+    "source_url": "https://bg3.wiki/w/images/7/76/Scorching_Ray.webp",
+    "local_file": "assets/ui/bg3/library/skills/actions/diabolic_chains.png",
+    "size": [
+      96,
+      96
+    ]
+  },
+  {
+    "category": "skill",
+    "title": "Divine Smite",
+    "source_page": "https://bg3.wiki/wiki/Divine_Smite",
+    "source_url": "https://bg3.wiki/w/images/d/d5/Divine_Smite.webp",
+    "local_file": "assets/ui/bg3/library/skills/actions/divine_smite.png",
+    "size": [
+      96,
+      96
+    ]
+  },
+  {
+    "category": "skill",
+    "title": "Blinding Smite",
+    "source_page": "https://bg3.wiki/wiki/Blinding_Smite",
+    "source_url": "https://bg3.wiki/w/images/7/7a/Blinding_Smite.webp",
+    "local_file": "assets/ui/bg3/library/skills/actions/blinding_smite.png",
+    "size": [
+      96,
+      96
+    ]
+  },
+  {
+    "category": "skill",
+    "title": "Ketheric Smite Pair",
+    "source_page": "https://bg3.wiki/wiki/Ketheric_Thorm",
+    "source_url": "https://bg3.wiki/wiki/Divine_Smite and https://bg3.wiki/wiki/Blinding_Smite",
+    "local_file": "assets/ui/bg3/library/skills/actions/ketheric_smite_pair.png",
+    "size": [
+      96,
+      96
+    ]
+  }
+]

@@ -12,7 +12,7 @@ namespace {
 
 bool isShopUnit(const UnitSpec& spec) {
     return spec.cost > 0 && spec.type != UnitType::DefenseTower &&
-           spec.type != UnitType::SkeletonByWitch && spec.type != UnitType::Treant;
+           spec.type != UnitType::SkeletonByNecromancer && spec.type != UnitType::Treant;
 }
 
 const UnitView* findUnit(const GameSnapshot& snapshot, UnitId id) {
@@ -65,7 +65,8 @@ void printBoard(const GameSnapshot& snapshot) {
         std::cout << "  #" << unit.id << " " << unit.name << " "
                   << (unit.owner == PlayerId::One ? "P1" : "P2")
                   << " (" << unit.coord.x << "," << unit.coord.y << ") "
-                  << unit.units << "u HP " << unit.totalHp << "/" << unit.maxTotalHp;
+                  << unit.units << "u HP " << unit.totalHp << "/" << unit.maxTotalHp
+                  << " AC " << unit.armorClass << " hit +" << unit.attackBonus;
         if (unit.shield > 0) std::cout << " shield " << unit.shield;
         if (unit.slowed) std::cout << " slowed";
         std::cout << "\n";
@@ -80,6 +81,8 @@ void printShop(const GameEngine& engine) {
         std::cout << "  " << index << ". " << std::setw(15) << std::left << spec.name
                   << " cost " << spec.cost
                   << " atk " << spec.attack
+                  << " hit +" << spec.attackBonus
+                  << " AC " << spec.armorClass
                   << " range " << spec.range
                   << " speed " << spec.speed
                   << " " << toString(spec.layer) << "\n";
@@ -112,12 +115,13 @@ void runCombat(GameEngine& engine) {
 
 void autoDeployPlayerOne(GameEngine& engine) {
     std::vector<UnitType> picks = {
-        UnitType::ShieldGuard,
-        UnitType::Archer,
-        UnitType::Cleric,
-        UnitType::Bomber
+        UnitType::ShieldGuardian,
+        UnitType::GithyankiWarrior,
+        UnitType::Ranger,
+        UnitType::GoblinSkirmisher,
+        UnitType::Skeleton
     };
-    std::vector<Coord> spots = {{2, 3}, {1, 2}, {0, 3}, {1, 4}};
+    std::vector<Coord> spots = {{2, 3}, {2, 2}, {0, 3}, {2, 4}, {1, 3}};
     for (UnitType type : picks) engine.buyUnit(PlayerId::One, type);
     GameSnapshot snapshot = engine.snapshot();
     for (size_t i = 0; i < snapshot.players[0].bench.size() && i < spots.size(); ++i) {

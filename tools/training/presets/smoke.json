@@ -1,0 +1,51 @@
+{
+  "preset": "smoke",
+  "iterations": 2,
+  "hours": null,
+  "seed": 7,
+  "device": "auto",
+  "checkpoint_dir": "ai_runs/smoke",
+  "checkpoint_every_iter": 1,
+  "export_dir": "assets/ai",
+  "network": {
+    "hidden_sizes": [64, 64],
+    "action_hidden": [32],
+    "activation": "relu",
+    "dropout": 0.0
+  },
+  "mcts": {
+    "simulations": 8,
+    "c_puct": 1.5,
+    "dirichlet_alpha": 0.3,
+    "dirichlet_epsilon": 0.25,
+    "temperature_moves": 4,
+    "temperature": 1.0
+  },
+  "selfplay": {
+    "workers": 1,
+    "games_per_worker_iter": 2,
+    "max_actions_per_round": 12,
+    "rounds_per_game": 2,
+    "opponent_difficulty": "Hard",
+    "use_opponent_pool": false,
+    "opponent_snapshot_every_iter": 1
+  },
+  "trainer": {
+    "batch_size": 32,
+    "minibatches_per_iter": 4,
+    "learning_rate": 1e-3,
+    "weight_decay": 1e-4,
+    "value_loss_weight": 1.0,
+    "entropy_bonus": 1e-3,
+    "max_grad_norm": 1.0
+  },
+  "replay": {
+    "capacity": 5000,
+    "min_size_to_train": 16
+  },
+  "arena": {
+    "games_per_eval": 4,
+    "accept_threshold": 0.55,
+    "eval_every_iter": 2
+  }
+}

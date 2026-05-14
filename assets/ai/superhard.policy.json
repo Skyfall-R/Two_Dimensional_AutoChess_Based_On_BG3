@@ -2,7 +2,7 @@
   "format": "autochess_policy_v1",
   "modelVersion": "linear-v1",
   "difficulty": "SuperHard",
-  "rulesFingerprint": "f4bfaf999c91853a",
+  "rulesFingerprint": "fb09b126c7a76547",
   "stateFeatureCount": 478,
   "actionFeatureCount": 20,
   "heuristicBlend": 3.0,
@@ -509,9 +509,9 @@
   ],
   "training": {
     "preset": "smoke",
-    "exportedAt": 1778160092,
+    "exportedAt": 1778219748,
     "metrics": {
-      "episodes": 1,
+      "episodes": 2,
       "totalReward": 0.0,
       "winRate": 0.0
     }

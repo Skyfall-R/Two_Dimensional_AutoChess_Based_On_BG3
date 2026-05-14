@@ -1,0 +1,51 @@
+{
+  "preset": "full",
+  "iterations": 200,
+  "hours": 8.0,
+  "seed": 7,
+  "device": "auto",
+  "checkpoint_dir": "ai_runs/full",
+  "checkpoint_every_iter": 5,
+  "export_dir": "assets/ai",
+  "network": {
+    "hidden_sizes": [256, 256],
+    "action_hidden": [128],
+    "activation": "relu",
+    "dropout": 0.0
+  },
+  "mcts": {
+    "simulations": 96,
+    "c_puct": 1.5,
+    "dirichlet_alpha": 0.3,
+    "dirichlet_epsilon": 0.25,
+    "temperature_moves": 12,
+    "temperature": 1.0
+  },
+  "selfplay": {
+    "workers": 8,
+    "games_per_worker_iter": 4,
+    "max_actions_per_round": 32,
+    "rounds_per_game": 6,
+    "opponent_difficulty": "Hard",
+    "use_opponent_pool": true,
+    "opponent_snapshot_every_iter": 4
+  },
+  "trainer": {
+    "batch_size": 256,
+    "minibatches_per_iter": 64,
+    "learning_rate": 1e-3,
+    "weight_decay": 1e-4,
+    "value_loss_weight": 1.0,
+    "entropy_bonus": 1e-3,
+    "max_grad_norm": 1.0
+  },
+  "replay": {
+    "capacity": 200000,
+    "min_size_to_train": 4000
+  },
+  "arena": {
+    "games_per_eval": 24,
+    "accept_threshold": 0.55,
+    "eval_every_iter": 5
+  }
+}
