@@ -28,24 +28,19 @@ int manhattan(Coord lhs, Coord rhs);
 enum class PlayerId { One = 0, Two = 1 };
 enum class GameMode { SinglePlayerVsAi, TwoPlayer };
 enum class AiDifficulty { Normal, Hard, SuperHard };
-enum class GameStage { Exploration, MainBattle };
-enum class MapKind { ExplorationA, ExplorationB, MainBattle };
+enum class MapKind { ExplorationA, ExplorationB };
 enum class Phase { Preparation, Combat, Finished };
 enum class UnitLayer { Land, Air };
 enum class TerrainKind : unsigned char {
     Open,
     Wall,
-    MainRoad,
     SideRoad,
-    Base,
-    TowerPad,
     NeutralCamp,
     Trap,
     BossSite,
     ClearedObjective,
     ClearedBoss
 };
-enum class RouteNodeType { Combat, Neutral, Elite, Shop, Event, Boss };
 enum class NeutralFamily { Swarm, Guardian, Caster, Assassin, Artillery };
 enum class RelicTier { Basic, Build, Transform, Unique };
 enum class ExplorationObjectiveKind { Camp, Elite, Boss, Trap };
@@ -161,7 +156,6 @@ enum class UnitType {
     NeutralMinotaur,
     NeutralDeathKnight,
     NeutralAirMyrmidon,
-    DefenseTower,
     ShieldGuardian,
     Cleric,
     Evoker,
@@ -198,19 +192,6 @@ struct RunModifiers {
     int summonLimitBonus = 0;
     std::array<int, 5> familyBias{};
     std::vector<std::string> relicIds;
-};
-
-struct EncounterContext {
-    bool active = false;
-    RouteNodeType nodeType = RouteNodeType::Combat;
-    NeutralFamily family = NeutralFamily::Swarm;
-    int depth = 0;
-    int threatBudget = 0;
-    int rewardGold = 0;
-    int rewardQuality = 0;
-    bool boss = false;
-    std::vector<std::string> riskTags;
-    std::vector<std::string> rewardTags;
 };
 
 struct UnitSpec {
@@ -437,7 +418,6 @@ struct GameSnapshot {
     int round = 0;
     double time = 0.0;
     double combatTime = 0.0;
-    GameStage stage = GameStage::Exploration;
     MapKind mapKind = MapKind::ExplorationA;
     int explorationRound = 0;
     int explorationRoundLimit = 8;
@@ -451,6 +431,10 @@ struct GameSnapshot {
     int hiddenEventsClaimed = 0;
     int randomGoldEventsClaimed = 0;
     int randomGoldEventsTotal = 0;
+    std::array<int, 2> explorationScores{};
+    std::array<int, 2> explorationObjectivesClearedByPlayer{};
+    std::array<int, 2> explorationBossesClearedByPlayer{};
+    std::array<int, 2> hiddenEventsClaimedByPlayer{};
     Phase phase = Phase::Preparation;
     std::optional<PlayerId> winner;
     std::array<PlayerView, 2> players;
@@ -504,15 +488,11 @@ public:
     bool canDeploy(PlayerId player, Coord coord, UnitLayer layer) const;
     bool isDeploymentCell(PlayerId player, Coord coord) const;
     bool isExplorationStagingCell(PlayerId player, Coord coord) const;
-    Coord baseCoord(PlayerId player) const;
     void setExplorationRoundLimit(int rounds);
     void lockExplorationRoundLimit();
     int explorationRoundLimit() const;
-    GameStage stage() const;
     void setRunModifiers(PlayerId player, const RunModifiers& modifiers);
     const RunModifiers& runModifiers(PlayerId player) const;
-    void setEncounterContext(const EncounterContext& context);
-    const EncounterContext& encounterContext() const;
     void grantGold(PlayerId player, int amount);
     void setAiDifficulty(AiDifficulty difficulty);
     AiDifficulty aiDifficulty() const;
@@ -524,6 +504,7 @@ public:
     bool debugTriggerTrap(PlayerId triggeringPlayer, Coord coord);
     bool debugTriggerRandomGold(PlayerId triggeringPlayer, Coord coord);
     bool debugTriggerHiddenEvent(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId = kInvalidUnitId);
+    bool debugClearVisibleObjectives(PlayerId clearer);
     bool debugApplyDamage(UnitId targetId, int amount, DamageType type = DamageType::Force);
     bool debugApplyDamageFrom(UnitId sourceId, UnitId targetId, int amount, DamageType type = DamageType::Force);
     UnitId debugCreateUnit(PlayerId owner, UnitType type, Coord coord);
@@ -580,7 +561,6 @@ private:
     AiPolicyMetadata aiPolicyMetadata_;
     mutable std::mt19937 rng_;
     GameMode mode_ = GameMode::SinglePlayerVsAi;
-    GameStage stage_ = GameStage::Exploration;
     MapKind mapKind_ = MapKind::ExplorationA;
     int explorationMapTemplate_ = 0;
     Phase phase_ = Phase::Preparation;
@@ -593,7 +573,10 @@ private:
     bool explorationRoundLimitLocked_ = false;
     int nextUnitId_ = 0;
     std::array<RunModifiers, 2> runModifiers_{};
-    EncounterContext encounterContext_{};
+    std::array<int, 2> explorationScores_{};
+    std::array<int, 2> explorationObjectivesClearedByPlayer_{};
+    std::array<int, 2> explorationBossesClearedByPlayer_{};
+    std::array<int, 2> hiddenEventsClaimedByPlayer_{};
 
     PlayerState& player(PlayerId id);
     const PlayerState& player(PlayerId id) const;
@@ -602,7 +585,6 @@ private:
     const Unit& unit(UnitId id) const;
 
     void resetBoard(MapKind kind);
-    void spawnDefenseTowers();
     UnitId createUnit(PlayerId owner, UnitType type);
     bool placeUnit(UnitId id, Coord coord);
     void removeFromBoard(UnitId id);
@@ -620,16 +602,17 @@ private:
     int spawnRedcapAmbush(PlayerId triggeringPlayer, Coord origin, UnitId triggerUnitId);
     void clearExplorationObjective(size_t index, PlayerId clearer, UnitId actorId);
     void updateExplorationObjectiveForDeath(UnitId deadId, UnitId sourceId);
+    void addExplorationScore(PlayerId player, int amount);
+    int explorationTiebreakThreat(PlayerId player) const;
+    std::optional<PlayerId> explorationWinner() const;
     void startCombatIfReady();
     void startCombat();
     void finishCombat(PlayerId winner);
+    void finishExplorationRun();
     void startNextRound();
     void startNextRound(const std::string& reason);
-    void transitionToMainBattle();
-    bool shouldTransitionFromExploration() const;
+    bool shouldFinishExplorationRun() const;
     std::string explorationCompletionReason() const;
-    void resolveExplorationEndEconomy();
-    int explorationRefundFor(const Unit& unit) const;
     int explorationObjectivesCleared() const;
     int explorationObjectivesTotal() const;
     int explorationBossesCleared() const;
@@ -732,7 +715,6 @@ private:
 std::string toString(PlayerId player);
 std::string toString(AiDifficulty difficulty);
 std::string toString(AiActionKind kind);
-std::string toString(GameStage stage);
 std::string toString(Phase phase);
 std::string toString(UnitLayer layer);
 std::string toString(UnitType type);

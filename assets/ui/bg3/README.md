@@ -1,8 +1,15 @@
 # BG3 UI Assets
 
-These are the active portrait and icon sources for the Tavern Tactics UI. They
-are loaded before the legacy generated artwork so the game can present BG3
-style visuals without losing fallback coverage.
+These are the active portrait and icon sources for the Tavern Tactics UI. Unit
+icons are 512x512 close bust portraits without baked decorative frames; the GUI
+draws the shared frame at render time so every token stays readable at board
+scale.
+
+Regenerate unit portraits with:
+
+```powershell
+python tools\make_bg3_portrait_tokens.py
+```
 
 Portrait mapping:
 
@@ -29,6 +36,15 @@ Portrait mapping:
 - `unit_guard_tower.png` -> `Steel_Watcher_Model.png`
 - `unit_dragon_wyrmling.png` -> `Red_Dragon_Model.png`
 - `unit_treant.png` -> `Wood_Woad_Model.png`
+- `unit_neutral_water_myrmidon.png` -> `library/monsters/creatures/water_myrmidon.png`
+- `unit_neutral_phase_spider_matriarch.png` -> `library/monsters/creatures/phase_spider_matriarch.png`
+- `unit_neutral_raphael.png` -> `library/monsters/creatures/raphael.png`
+- `unit_neutral_ketheric_thorm.png` -> `library/monsters/creatures/ketheric_thorm.png`
+- `unit_neutral_air_myrmidon.png` -> `library/monsters/creatures/air_myrmidon.png`
+- `unit_neutral_guardian_of_faith.png` -> `library/monsters/creatures/guardian_of_faith.png`
+- `unit_neutral_minotaur.png` -> `library/monsters/creatures/minotaur.png`
+- `unit_neutral_tamia_holzt.png` -> `library/monsters/creatures/tamia_holzt.png`
+- `unit_neutral_moonlight_sliver.png` -> `library/monsters/creatures/moonlight_sliver.png`
 
 Effect and ability icons:
 

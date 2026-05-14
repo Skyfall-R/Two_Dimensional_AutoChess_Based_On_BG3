@@ -120,23 +120,13 @@ EnvHandle ensureLegacy() {
     return g_legacyHandle;
 }
 
-int towerHp(const autochess::GameSnapshot& snapshot, autochess::PlayerId player) {
-    int total = 0;
-    for (const autochess::UnitView& unit : snapshot.units) {
-        if (unit.owner == player && unit.type == autochess::UnitType::DefenseTower && unit.alive) {
-            total += unit.totalHp;
-        }
-    }
-    return total;
-}
-
 PyObject* snapshotDict(const autochess::GameEngine& engine) {
     autochess::GameSnapshot snapshot = engine.snapshot();
     PyObject* dict = PyDict_New();
     setInt(dict, "round", snapshot.round);
     setDouble(dict, "time", snapshot.time);
     setDouble(dict, "combatTime", snapshot.combatTime);
-    setString(dict, "stage", autochess::toString(snapshot.stage));
+    setString(dict, "run", "Exploration");
     setInt(dict, "mapKind", static_cast<int>(snapshot.mapKind));
     setInt(dict, "explorationRound", snapshot.explorationRound);
     setInt(dict, "explorationRoundLimit", snapshot.explorationRoundLimit);
@@ -147,6 +137,10 @@ PyObject* snapshotDict(const autochess::GameEngine& engine) {
     setInt(dict, "bossesCleared", snapshot.bossesCleared);
     setInt(dict, "eventsTriggered", snapshot.eventsTriggered);
     setInt(dict, "trapsTriggered", snapshot.trapsTriggered);
+    setInt(dict, "playerExplorationScore", snapshot.explorationScores[0]);
+    setInt(dict, "enemyExplorationScore", snapshot.explorationScores[1]);
+    setInt(dict, "playerBossesCleared", snapshot.explorationBossesClearedByPlayer[0]);
+    setInt(dict, "enemyBossesCleared", snapshot.explorationBossesClearedByPlayer[1]);
     setString(dict, "phase", autochess::toString(snapshot.phase));
     setBool(dict, "done", snapshot.phase == autochess::Phase::Finished);
     setString(dict, "winner", snapshot.winner ? autochess::toString(*snapshot.winner) : "");
@@ -156,8 +150,6 @@ PyObject* snapshotDict(const autochess::GameEngine& engine) {
     setInt(dict, "enemyBench", static_cast<long>(snapshot.players[1].bench.size()));
     setInt(dict, "playerDeployed", static_cast<long>(snapshot.players[0].deployed.size()));
     setInt(dict, "enemyDeployed", static_cast<long>(snapshot.players[1].deployed.size()));
-    setInt(dict, "playerTowerHp", towerHp(snapshot, autochess::PlayerId::One));
-    setInt(dict, "enemyTowerHp", towerHp(snapshot, autochess::PlayerId::Two));
     return dict;
 }
 
@@ -206,15 +198,12 @@ double stepReward(autochess::GameEngine& engine,
                   bool done,
                   std::optional<autochess::PlayerId> winner) {
     autochess::GameSnapshot after = engine.snapshot();
-    int beforeSelfTower = towerHp(before, autochess::PlayerId::One);
-    int beforeEnemyTower = towerHp(before, autochess::PlayerId::Two);
-    int afterSelfTower = towerHp(after, autochess::PlayerId::One);
-    int afterEnemyTower = towerHp(after, autochess::PlayerId::Two);
+    int beforeScoreDelta = before.explorationScores[0] - before.explorationScores[1];
+    int afterScoreDelta = after.explorationScores[0] - after.explorationScores[1];
 
     double reward = 0.0;
     if (!applied) reward -= 0.05;
-    reward += static_cast<double>(beforeEnemyTower - afterEnemyTower) / 1600.0;
-    reward -= static_cast<double>(beforeSelfTower - afterSelfTower) / 1600.0;
+    reward += static_cast<double>(afterScoreDelta - beforeScoreDelta) / 100.0;
     if (done && winner) {
         reward += *winner == autochess::PlayerId::One ? 1.0 : -1.0;
     }

@@ -11,8 +11,8 @@ using namespace autochess;
 namespace {
 
 bool isShopUnit(const UnitSpec& spec) {
-    return spec.cost > 0 && spec.type != UnitType::DefenseTower &&
-           spec.type != UnitType::SkeletonByNecromancer && spec.type != UnitType::Treant;
+    return spec.cost > 0 && spec.type != UnitType::SkeletonByNecromancer &&
+           spec.type != UnitType::Treant && spec.type != UnitType::SporeServant;
 }
 
 const UnitView* findUnit(const GameSnapshot& snapshot, UnitId id) {

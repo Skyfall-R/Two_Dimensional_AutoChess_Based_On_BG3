@@ -1,28 +1,35 @@
 # Two Dimensional AutoChess
 
-Two Dimensional AutoChess is a C++ / raylib auto-battler prototype built around
-a two-stage match loop. Instead of sending armies down one lane immediately, the
-game opens with a shared full-board exploration phase where both sides develop
-their economy, fight neutral encounters, trigger hidden events, and contest
-boss rooms. After exploration ends, the game switches to a cleaner main-battle
-map for the final tower-pushing fight.
+Two Dimensional AutoChess is a C++ / raylib BG3-flavored roguelike
+auto-battler prototype. A match is a single dungeon run on a shared 33x19 map:
+both sides buy and deploy units, then their armies explore automatically,
+clear neutral objectives, uncover hidden events, fight bosses, collect relics,
+and race for the best run score.
 
-The project is still a prototype, but the core loop, GUI, tests, BG3-inspired
-unit rules, and trainable AI pipeline are all in the repository.
+The project is still a prototype, but the core loop, GUI, tests,
+BG3-inspired unit rules, relic system, and trainable AI pipeline are all in the
+repository.
 
 ## Highlights
 
-- Two-stage game flow:
-  - Stage 1: Exploration on a shared 33x19 dungeon map.
-  - Stage 2: Main Battle on a direct tower-push map.
-- Two randomized Stage 1 map templates:
+- Single exploration-run game flow:
+  - one continuous 33x19 dungeon board;
+  - combat, economy, relics, and scoring all resolve inside the dungeon run;
+  - the run ends when the selected round limit is reached or all visible
+    objectives are cleared.
+- Two randomized dungeon map templates:
   - underground ruin style with central boss rooms and outer loops;
-  - Underdark camp-network style with diagonal routes and edge passages.
+  - Underdark camp-network style with diagonal passages and edge paths.
 - Controlled exploration-objective placement:
   - each run starts from authored objective anchors;
   - objectives get small per-run position variation;
   - bosses stay in the middle, regular camps stay toward the outer areas;
   - objectives avoid deployment zones and keep spacing so monsters do not clump.
+- Exploration scoring:
+  - camps, elites, bosses, traps, and hidden gold caches contribute run score;
+  - visible objective score uses `rewardGold + rewardQuality * 4`;
+  - hidden gold adds score equal to the gold found;
+  - the higher score wins when the run ends.
 - BG3-inspired combat language:
   - damage formulas such as `1d6 + 7 Piercing`;
   - backend dice rolling;
@@ -38,10 +45,10 @@ unit rules, and trainable AI pipeline are all in the repository.
   - they activate only after hostile action affects them;
   - activated guardians pursue within a leash instead of chasing across the map;
   - Redcap traps spawn active ambushers with their own short leash.
-- Permanent-death economy:
+- Permanent-death run economy:
   - ordinary purchased units do not automatically revive after a round;
-  - surviving Stage 1 units are converted into gold before Stage 2;
-  - dead units refund nothing.
+  - dead units refund nothing;
+  - gold, relics, and run modifiers stay within the current run.
 - Board movement rules:
   - ground units cannot stack;
   - flying units can overlap ground and other flying units;
@@ -49,30 +56,28 @@ unit rules, and trainable AI pipeline are all in the repository.
 - Relic and roster systems:
   - relic drafts can expand to extra choices;
   - roster capacity counts bench plus deployed units;
-  - relics can alter economy, roster space, summons, and reward patterns.
+  - relics can alter economy, roster space, summons, family bias, and reward
+    patterns.
 - Raylib GUI:
   - shop, bench, deployment, unit details, relic draft, log, combat cues, and
     BG3-style icon assets;
-  - larger readable typography and compact status layout.
+  - larger readable typography and compact run-status layout.
 - AI support:
   - built-in Normal AI;
   - Hard / Super policy packages;
   - optional AlphaZero-style training pipeline and Python environment binding.
 
-## How A Match Plays
+## How A Run Plays
 
-### 1. Stage 1: Exploration
-
-The match starts in `Stage 1: Exploration + Preparation`.
+The match starts in `Exploration Run + Preparation`.
 
 The player buys units, deploys them in the left-side staging area, and selects
 an exploration-round limit from `2 / 4 / 6 / 8 / 10`. The AI deploys from the
 opposite side. When both sides are ready, units explore automatically.
 
-Exploration is not a route-clicking minigame. Both armies move on the same
-shared 33x19 board and evaluate objectives by reward, distance, risk, health,
-and enemy contest pressure. They can fight each other while also fighting the
-map.
+Both armies move on the same shared 33x19 board and evaluate objectives by
+reward, distance, risk, health, and enemy contest pressure. They can fight each
+other while also fighting the map.
 
 Visible objectives include:
 
@@ -87,37 +92,32 @@ Hidden events include:
 - hidden healing springs.
 
 Hidden events are not visible, not searchable, and do not count toward the
-objective total. They trigger only when a non-neutral player or AI unit steps on
-the tile during normal movement.
+visible objective total. They trigger only when a non-neutral player or AI unit
+steps on the tile during normal movement.
 
-Exploration ends when the selected round limit is reached or all visible
-objectives are cleared.
+The run ends when the selected round limit is reached or all visible objectives
+are cleared.
 
-### 2. Stage 1 Economy Conversion
+## Run Scoring
 
-Stage 1 units do not directly walk into Stage 2.
+Clearing visible objectives grants both gold and exploration score. The default
+score formula is:
 
-At transition time:
+```text
+rewardGold + rewardQuality * 4
+```
 
-- surviving ordinary purchased units refund gold based on value and current HP;
-- dead ordinary units refund `0`;
-- neutral monsters, temporary summons, towers, and internal units do not refund;
-- gold, relics, and persistent run modifiers remain.
+Bosses and elites naturally matter more because their authored rewards are
+higher. Hidden gold caches grant gold and also add the same amount to the
+finder's exploration score.
 
-This makes Stage 1 a development race rather than a disposable warmup.
+When the run finishes, winner selection is:
 
-### 3. Stage 2: Main Battle
-
-The game switches to `Stage 2: Main Battle + Preparation`.
-
-Stage 2 uses a separate main-battle template with bases, towers, and a direct
-lane. Stage 1 camps, traps, hidden events, and boss markers are cleared. The
-player spends the exploration economy on a fresh main-battle army, deploys, and
-then fights the final tower-pushing battle.
-
-Stage 2 victory is decided by the main-battle rules: destroying defenses,
-reaching the enemy base, or eliminating active combat units depending on the
-current state.
+1. Higher exploration score.
+2. Higher current gold.
+3. More bosses cleared.
+4. Higher total threat among surviving non-internal units.
+5. If everything is still tied, the run finishes with no winner.
 
 ## Units And Bosses
 
@@ -199,8 +199,8 @@ ambush/leap behavior.
 - Drag a deployed unit back to the bench to undeploy it.
 - Right-click or press `Esc` to cancel dragging.
 - During preparation, choose `Normal`, `Hard`, or `Super`.
-- Click the main action button to ready / switch view / pick relic depending on
-  the current state.
+- Click the main action button to ready or pick a relic depending on the
+  current state.
 
 ## Build And Run
 
@@ -250,9 +250,9 @@ weights.
 
 This is an active prototype. The current focus is:
 
-- making Stage 1 exploration feel dense, readable, and fair;
+- making the dungeon run dense, readable, and fair;
 - tightening UI readability and icon quality;
-- expanding unit, boss, relic, and event variety;
+- expanding unit, boss, relic, event, and map-template variety;
 - improving AI movement, target selection, and performance;
-- preserving robust regression coverage for death rules, stage transitions,
-  map generation, knockback, damage types, and neutral activation.
+- preserving robust regression coverage for scoring, death rules, map
+  generation, knockback, damage types, hidden events, and neutral activation.

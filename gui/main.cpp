@@ -36,11 +36,6 @@ constexpr float kLogH = 134.0f;
 constexpr float kFontScale = 1.10f;
 constexpr float kFontSpacing = 0.0f;
 constexpr int kUiFontAtlasSize = 96;
-constexpr float kRouteMapY = kBoardY;
-constexpr float kRouteMapH = 300.0f;
-constexpr float kRouteInfoY = kDetailY;
-constexpr float kRouteInfoH = kDetailH;
-constexpr float kRouteInfoFocusedW = 620.0f;
 constexpr float kShopY = 142.0f;
 constexpr float kShopCardW = kSideW;
 constexpr float kShopCardH = 104.0f;
@@ -143,7 +138,6 @@ Color knockbackCueColor(const CombatCue& cue) {
 
 struct DraftState {
     int depth = -1;
-    RouteNode node;
     std::vector<DraftOffer> offers;
     std::string fixedDropText;
 };
@@ -233,18 +227,6 @@ void loadUnitTexture(UnitType type, const char* filename) {
     gUnitTextures[static_cast<size_t>(index)] = loadUiTexture(filename, true);
 }
 
-void loadUnitTextureFirstAvailable(UnitType type, std::initializer_list<const char*> filenames) {
-    int index = static_cast<int>(type);
-    if (index < 0 || index >= static_cast<int>(gUnitTextures.size())) return;
-    for (const char* filename : filenames) {
-        Texture2D texture = loadUiTexture(filename, true);
-        if (texture.id == 0) continue;
-        unloadTextureIfLoaded(gUnitTextures[static_cast<size_t>(index)]);
-        gUnitTextures[static_cast<size_t>(index)] = texture;
-        return;
-    }
-}
-
 void loadNeutralFamilyTexture(NeutralFamily family, const char* filename) {
     int index = static_cast<int>(family);
     if (index < 0 || index >= static_cast<int>(gNeutralFamilyTextures.size())) return;
@@ -283,23 +265,22 @@ void loadUiTextures() {
     loadUnitTexture(UnitType::ImpSwarm, "unit_imp_swarm.png");
     loadUnitTexture(UnitType::GoblinSkirmisher, "unit_goblin_ambusher.png");
     loadUnitTexture(UnitType::Paladin, "unit_paladin.png");
-    loadUnitTexture(UnitType::DefenseTower, "unit_guard_tower.png");
     loadUnitTexture(UnitType::NeutralSpectator, "unit_neutral_spectator_bright.png");
     loadUnitTexture(UnitType::NeutralOwlbear, "unit_neutral_owlbear.png");
     loadUnitTexture(UnitType::NeutralMindFlayer, "unit_neutral_mind_flayer.png");
     loadUnitTexture(UnitType::NeutralSovereignSpaw, "unit_neutral_sovereign_spaw.png");
     loadUnitTexture(UnitType::NeutralKarniss, "unit_neutral_karniss.png");
     loadUnitTexture(UnitType::NeutralRedcap, "unit_neutral_redcap.png");
-    loadUnitTexture(UnitType::NeutralWaterMyrmidon, "library/monsters/creatures/water_myrmidon.png");
-    loadUnitTexture(UnitType::NeutralPhaseSpiderMatriarch, "library/monsters/creatures/phase_spider_matriarch.png");
-    loadUnitTexture(UnitType::NeutralRaphael, "library/monsters/creatures/raphael.png");
-    loadUnitTexture(UnitType::NeutralKethericThorm, "library/monsters/creatures/ketheric_thorm.png");
-    loadUnitTexture(UnitType::NeutralMoonlightSliver, "library/monsters/creatures/moonlight_sliver.png");
-    loadUnitTexture(UnitType::NeutralGuardianOfFaith, "library/monsters/creatures/guardian_of_faith.png");
-    loadUnitTexture(UnitType::NeutralMinotaur, "library/monsters/creatures/minotaur.png");
+    loadUnitTexture(UnitType::NeutralWaterMyrmidon, "unit_neutral_water_myrmidon.png");
+    loadUnitTexture(UnitType::NeutralPhaseSpiderMatriarch, "unit_neutral_phase_spider_matriarch.png");
+    loadUnitTexture(UnitType::NeutralRaphael, "unit_neutral_raphael.png");
+    loadUnitTexture(UnitType::NeutralKethericThorm, "unit_neutral_ketheric_thorm.png");
+    loadUnitTexture(UnitType::NeutralMoonlightSliver, "unit_neutral_moonlight_sliver.png");
+    loadUnitTexture(UnitType::NeutralGuardianOfFaith, "unit_neutral_guardian_of_faith.png");
+    loadUnitTexture(UnitType::NeutralMinotaur, "unit_neutral_minotaur.png");
     loadUnitTexture(UnitType::NeutralDeathKnight, "library/monsters/creatures/death_knight.png");
-    loadUnitTexture(UnitType::NeutralAirMyrmidon, "library/monsters/creatures/air_myrmidon.png");
-    loadUnitTexture(UnitType::NeutralTamiaHolzt, "library/monsters/creatures/tamia_holzt.png");
+    loadUnitTexture(UnitType::NeutralAirMyrmidon, "unit_neutral_air_myrmidon.png");
+    loadUnitTexture(UnitType::NeutralTamiaHolzt, "unit_neutral_tamia_holzt.png");
     if (gUnitTextures[static_cast<size_t>(UnitType::NeutralSpectator)].id == 0) {
         gUnitTextures[static_cast<size_t>(UnitType::NeutralSpectator)] =
             loadUiTexture("unit_neutral_spectator.png");
@@ -385,59 +366,6 @@ void loadUiTextures() {
     loadUnitTexture(UnitType::SporeServant, "unit_neutral_sovereign_spaw.png");
     loadUnitTexture(UnitType::DragonWyrmling, "unit_dragon_wyrmling.png");
 
-    loadUnitTextureFirstAvailable(UnitType::NeutralSpectator, {
-        "unit_neutral_spectator_bright.png",
-        "sources/Spectator_Art.png",
-        "library/skills/actions/generic_control.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::NeutralMindFlayer, {
-        "library/monsters/creatures/mind_flayers.png",
-        "library/monsters/creatures/mind_flayer_nautiloid_wreck.png",
-        "unit_neutral_mind_flayer.png",
-        "sources/Mind_Flayer_Model.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::NeutralKarniss, {
-        "library/skills/actions/multiattack_drider.png",
-        "unit_neutral_karniss.png",
-        "library/skills/actions/venom_claws.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::NeutralGuardianOfFaith, {
-        "sources/Guardian_of_Faith_Icon.png",
-        "library/skills/actions/strike_of_the_guardian.png",
-        "library/monsters/creatures/guardian_of_faith.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::NeutralMinotaur, {
-        "library/monsters/creatures/minotaur.png",
-        "library/skills/actions/minotaur_charge.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::NeutralMoonlightSliver, {
-        "library/monsters/creatures/moonlight_sliver.png",
-        "library/skills/actions/selunes_ire.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::NeutralTamiaHolzt, {
-        "library/monsters/creatures/tamia_holzt.png",
-        "library/skills/actions/dominate_person.png",
-        "library/skills/actions/blight.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::Ranger, {
-        "library/skills/spells/ranger.png",
-        "unit_ranger.png",
-        "sources/Goblin_Bow_Icon.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::Evoker, {
-        "library/skills/spells/wizard.png",
-        "library/skills/spells/spell.png",
-        "unit_arcane_evoker.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::Necromancer, {
-        "library/skills/actions/fungal_infestation.png",
-        "unit_necromancer.png"
-    });
-    loadUnitTextureFirstAvailable(UnitType::Paladin, {
-        "library/skills/spells/paladin.png",
-        "unit_paladin.png"
-    });
-
     loadNeutralFamilyTexture(NeutralFamily::Swarm, "neutral_swarm.png");
     loadNeutralFamilyTexture(NeutralFamily::Guardian, "neutral_guardian.png");
     loadNeutralFamilyTexture(NeutralFamily::Caster, "neutral_caster.png");
@@ -492,8 +420,7 @@ void unloadUiTextures() {
 }
 
 bool isShopUnit(const UnitSpec& spec) {
-    return spec.cost > 0 && spec.type != UnitType::DefenseTower &&
-           spec.type != UnitType::SkeletonByNecromancer && spec.type != UnitType::Treant &&
+    return spec.cost > 0 && spec.type != UnitType::SkeletonByNecromancer && spec.type != UnitType::Treant &&
            spec.type != UnitType::SporeServant;
 }
 
@@ -605,25 +532,10 @@ Rectangle explorationStatusRect() {
     return {panel.x, panel.y + panel.height - statusH, panel.width, statusH};
 }
 
-Rectangle stage1UnitDetailRect() {
+Rectangle explorationUnitDetailRect() {
     Rectangle panel = detailRect();
     Rectangle status = explorationStatusRect();
     return {panel.x, panel.y, panel.width, status.y - panel.y - 10.0f};
-}
-
-Rectangle routeMapFocusRect() {
-    return boardRect();
-}
-
-Rectangle routeMapRect(bool expanded) {
-    return expanded ? routeMapFocusRect() : boardRect();
-}
-
-Rectangle routeInfoPanelRect(bool routeMapFocused, bool draftOpen) {
-    bool compactBrief = routeMapFocused && !draftOpen;
-    float width = compactBrief ? kRouteInfoFocusedW : kShopCardW;
-    float x = compactBrief ? static_cast<float>(kScreenWidth) - width - kBoardX : kSideX;
-    return {x, kRouteInfoY, width, kRouteInfoH};
 }
 
 Rectangle shopViewportRect() {
@@ -640,10 +552,6 @@ Rectangle relicPanelRect() {
 
 Rectangle battleLogRect() {
     return {kSideX, kLogY, kSideW, kLogH};
-}
-
-Rectangle routeLayerToggleRect(Rectangle panel) {
-    return {panel.x + panel.width - 164.0f, panel.y + 12.0f, 134.0f, 32.0f};
 }
 
 Rectangle shopCardRect(int index, float scroll) {
@@ -747,18 +655,10 @@ Color terrainColor(TerrainKind terrain, Coord coord, const GameSnapshot& snapsho
     switch (terrain) {
         case TerrainKind::Wall:
             return Color{24, 23, 24, 255};
-        case TerrainKind::MainRoad:
-            return Color{58, 52, 42, 255};
         case TerrainKind::SideRoad:
             return coord.y < snapshot.height / 2
                        ? Color{43, 55, 64, 255}
                        : Color{59, 50, 45, 255};
-        case TerrainKind::Base:
-            return coord.x < snapshot.width / 2
-                       ? Color{34, 51, 58, 255}
-                       : Color{65, 38, 42, 255};
-        case TerrainKind::TowerPad:
-            return Color{87, 86, 88, 255};
         case TerrainKind::NeutralCamp:
             return coord.y < snapshot.height / 2
                        ? Color{72, 68, 43, 255}
@@ -1368,7 +1268,6 @@ void drawPanelFrame(Rectangle rect, Color fill = kPanel) {
 
 Color iconAccent(UnitType type) {
     switch (type) {
-        case UnitType::DefenseTower: return Color{144, 146, 151, 255};
         case UnitType::ShieldGuardian: return Color{105, 143, 160, 255};
         case UnitType::Cleric: return Color{184, 178, 160, 255};
         case UnitType::Evoker: return Color{128, 119, 177, 255};
@@ -1820,21 +1719,6 @@ void drawUnitGlyph(UnitType type, Rectangle rect, Color base) {
     Color accent = base;
 
     switch (type) {
-        case UnitType::DefenseTower: {
-            Color stone = Color{96, 104, 118, 255};
-            Color roof = Color{171, 177, 189, 255};
-            Rectangle keep{rect.x + w * 0.30f, rect.y + h * 0.20f, w * 0.40f, h * 0.58f};
-            DrawRectangleRounded(keep, 0.03f, 4, stone);
-            DrawRectangleRoundedLines(keep, 0.03f, 4, 2.0f, dark);
-            DrawTriangle({keep.x + keep.width * 0.04f, keep.y + h * 0.05f},
-                         {keep.x + keep.width * 0.50f, keep.y - h * 0.10f},
-                         {keep.x + keep.width * 0.96f, keep.y + h * 0.05f}, roof);
-            DrawRectangleRec({keep.x + keep.width * 0.08f, keep.y + h * 0.10f, w * 0.06f, h * 0.26f}, roof);
-            DrawRectangleRec({keep.x + keep.width * 0.86f, keep.y + h * 0.10f, w * 0.06f, h * 0.26f}, roof);
-            DrawRectangleRec({keep.x + keep.width * 0.42f, keep.y + h * 0.28f, keep.width * 0.16f, h * 0.22f}, dark);
-            DrawRectangleRec({keep.x + keep.width * 0.46f, keep.y + h * 0.30f, keep.width * 0.08f, h * 0.12f}, light);
-            break;
-        }
         case UnitType::ShieldGuardian:
         case UnitType::Paladin: {
             DrawRectangleRounded({rect.x + w * 0.32f, rect.y + h * 0.20f, w * 0.36f, h * 0.46f}, 0.20f, 4,
@@ -2591,7 +2475,7 @@ std::string abilityText(const UnitSpec& spec) {
         case AbilityKind::FrostNova:
             return "Ability: frost nova. Enemies near the target make a Con save; failures take full damage and are slowed for 2 seconds.";
         case AbilityKind::RogueAmbush:
-            return "Ability: backline ambush. At combat start, jumps next to a high-value non-tower enemy; opening attack has advantage and sneak attack damage.";
+            return "Ability: backline ambush. At combat start, jumps next to a high-value high-value enemy; opening attack has advantage and sneak attack damage.";
         case AbilityKind::DruidSummon:
             return "Ability: treant summon. Every 5 seconds, summons a temporary Treant nearby, up to 1 active summon per druid plus relic bonuses.";
         case AbilityKind::KarnissCruelSting:
@@ -2797,16 +2681,14 @@ void drawTopStatusHeader(const GameSnapshot& snapshot) {
                            static_cast<int>(titlePlate.height),
                            Color{8, 6, 5, 236},
                            Color{8, 6, 5, 132});
-    drawTextShadowed(snapshot.stage == GameStage::Exploration ? "Stage 1: Exploration"
-                                                              : "Stage 2: Main Battle",
-                     kBoardX + 30.0f, 22.0f, 42.0f, kInk);
+    const std::string title = "Exploration Run";
+    drawTextShadowed(title, kBoardX + 30.0f, 22.0f, 42.0f, kInk);
 
     std::vector<std::pair<std::string, std::string>> metrics;
     metrics.push_back({"Round", std::to_string(snapshot.round)});
     metrics.push_back({"Phase", toString(snapshot.phase)});
-    if (snapshot.stage == GameStage::Exploration) {
-        metrics.push_back({"Explore", TextFormat("%d/%d", snapshot.explorationRound, snapshot.explorationRoundLimit)});
-    }
+    metrics.push_back({"Explore", TextFormat("%d/%d", snapshot.explorationRound, snapshot.explorationRoundLimit)});
+    metrics.push_back({"Score", TextFormat("%d/%d", snapshot.explorationScores[0], snapshot.explorationScores[1])});
     metrics.push_back({"Gold", std::to_string(snapshot.players[0].money)});
 
     constexpr float labelSize = 20.0f;
@@ -2824,9 +2706,7 @@ void drawTopStatusHeader(const GameSnapshot& snapshot) {
     }
     if (!metrics.empty()) totalWidth += gap * static_cast<float>(metrics.size() - 1);
 
-    float titleWidth = measureTextStrong(snapshot.stage == GameStage::Exploration ? "Stage 1: Exploration"
-                                                                                  : "Stage 2: Main Battle",
-                                         42.0f).x;
+    float titleWidth = measureTextStrong(title, 42.0f).x;
     float minX = kBoardX + 30.0f + titleWidth + 72.0f;
     float rightEdge = board.x + board.width - 36.0f;
     float x = std::max(minX, rightEdge - totalWidth);
@@ -2853,80 +2733,76 @@ void drawTopStatusHeader(const GameSnapshot& snapshot) {
     }
 }
 
-void drawStageInfoPanel(const GameSnapshot& snapshot, bool roundChoicesDismissed) {
+void drawRunInfoPanel(const GameSnapshot& snapshot, bool roundChoicesDismissed) {
     Rectangle panel = explorationStatusRect();
     drawParchmentPanel(panel, kParchment);
 
-    if (snapshot.stage == GameStage::Exploration) {
-        bool complete = snapshot.explorationObjectivesTotal > 0 &&
-                        snapshot.explorationObjectivesCleared >= snapshot.explorationObjectivesTotal;
-        drawTextStrong("Exploration", panel.x + 18.0f, panel.y + 12.0f, 28.0f, kParchmentInk);
-        drawTextStrong(fitTextStrong(complete ? "Complete" : TextFormat("Remaining %d", snapshot.explorationRoundsRemaining),
-                                     220.0f,
-                                     24.0f),
-                       panel.x + panel.width - 230.0f, panel.y + 14.0f, 24.0f,
-                       complete ? kWine : kParchmentInk);
-        std::string stats = TextFormat("Objectives %d/%d   Boss %d/7   Trap %d/5   Secrets found %d",
-                                       snapshot.explorationObjectivesCleared,
-                                       snapshot.explorationObjectivesTotal,
-                                       snapshot.bossesCleared,
-                                       snapshot.trapsTriggered,
-                                       snapshot.hiddenEventsClaimed);
-        drawText(fitText(stats, panel.width - 36.0f, 19.0f),
-                 panel.x + 18.0f,
-                 panel.y + 45.0f,
-                 19.0f,
-                 kParchmentMuted);
+    bool complete = snapshot.explorationObjectivesTotal > 0 &&
+                    snapshot.explorationObjectivesCleared >= snapshot.explorationObjectivesTotal;
+    drawTextStrong("Dungeon Run", panel.x + 18.0f, panel.y + 12.0f, 28.0f, kParchmentInk);
+    drawTextStrong(fitTextStrong(complete ? "Complete" : TextFormat("Remaining %d", snapshot.explorationRoundsRemaining),
+                                 220.0f,
+                                 24.0f),
+                   panel.x + panel.width - 230.0f, panel.y + 14.0f, 24.0f,
+                   complete ? kWine : kParchmentInk);
+    std::string stats = TextFormat("Objectives %d/%d   Boss %d   Trap %d   Secrets %d   Score %d/%d",
+                                   snapshot.explorationObjectivesCleared,
+                                   snapshot.explorationObjectivesTotal,
+                                   snapshot.bossesCleared,
+                                   snapshot.trapsTriggered,
+                                   snapshot.hiddenEventsClaimed,
+                                   snapshot.explorationScores[0],
+                                   snapshot.explorationScores[1]);
+    drawText(fitText(stats, panel.width - 36.0f, 19.0f),
+             panel.x + 18.0f,
+             panel.y + 45.0f,
+             19.0f,
+             kParchmentMuted);
 
-        const std::array<int, 5> choices = {2, 4, 6, 8, 10};
-        bool enabled = snapshot.phase == Phase::Preparation && snapshot.explorationRound == 0 &&
-                       !snapshot.explorationRoundLimitLocked;
-        bool showChoices = enabled && !roundChoicesDismissed;
-        if (showChoices) {
-            for (int i = 0; i < static_cast<int>(choices.size()); ++i) {
-                Rectangle rect = explorationRoundPanelRect(i);
-                bool selected = snapshot.explorationRoundLimit == choices[static_cast<size_t>(i)];
-                Color fill = selected ? Color{78, 56, 38, 255} : Color{55, 43, 33, 235};
-                if (!enabled && !selected) fill = Color{88, 78, 63, 170};
-                DrawRectangleRounded(rect, 0.10f, 8, fill);
-                DrawRectangleRoundedLines(rect, 0.10f, 8, selected ? 2.4f : 1.4f,
-                                          selected ? kGold : Color{142, 102, 59, 230});
-                drawTextCenteredStrong(std::to_string(choices[static_cast<size_t>(i)]),
-                                       rect,
-                                       22.0f,
-                                       enabled || selected ? kInk : Color{92, 75, 57, 255});
-            }
+    const std::array<int, 5> choices = {2, 4, 6, 8, 10};
+    bool enabled = snapshot.phase == Phase::Preparation && snapshot.explorationRound == 0 &&
+                   !snapshot.explorationRoundLimitLocked;
+    bool showChoices = enabled && !roundChoicesDismissed;
+    if (showChoices) {
+        for (int i = 0; i < static_cast<int>(choices.size()); ++i) {
+            Rectangle rect = explorationRoundPanelRect(i);
+            bool selected = snapshot.explorationRoundLimit == choices[static_cast<size_t>(i)];
+            Color fill = selected ? Color{78, 56, 38, 255} : Color{55, 43, 33, 235};
+            if (!enabled && !selected) fill = Color{88, 78, 63, 170};
+            DrawRectangleRounded(rect, 0.10f, 8, fill);
+            DrawRectangleRoundedLines(rect, 0.10f, 8, selected ? 2.4f : 1.4f,
+                                      selected ? kGold : Color{142, 102, 59, 230});
+            drawTextCenteredStrong(std::to_string(choices[static_cast<size_t>(i)]),
+                                   rect,
+                                   22.0f,
+                                   enabled || selected ? kInk : Color{92, 75, 57, 255});
         }
+    }
 
-        if (!showChoices) {
-            Rectangle progress{panel.x + 18.0f, panel.y + 72.0f, panel.width - 36.0f, 28.0f};
-            DrawRectangleRounded(progress, 0.12f, 6, Color{61, 48, 37, 205});
-            float ratio = complete
-                              ? 1.0f
-                              : (snapshot.explorationRoundLimit > 0
-                                     ? std::clamp(static_cast<float>(snapshot.explorationRound) /
-                                                      static_cast<float>(snapshot.explorationRoundLimit),
-                                                  0.0f,
-                                                  1.0f)
-                                     : 0.0f);
-            DrawRectangleRounded({progress.x + 3.0f, progress.y + 3.0f,
-                                  (progress.width - 6.0f) * ratio, progress.height - 6.0f},
-                                 0.10f, 6, Color{86, 127, 101, 220});
-            DrawRectangleRoundedLines(progress, 0.12f, 6, 1.2f, Color{105, 82, 54, 210});
-            drawTextCenteredStrong(complete ? "Exploration complete"
-                                            : TextFormat("%d / %d Rounds",
-                                                         snapshot.explorationRound,
-                                                         snapshot.explorationRoundLimit),
-                                   progress, 18.0f, kInk);
-        }
-    } else {
-        drawWrappedText("Stage 1 units have been converted into gold. Build a fresh main-lane army here and push through the tower line.",
-                        panel.x + 18.0f, panel.y + 24.0f, panel.width - 36.0f, 22.0f,
-                        Color{76, 47, 32, 255});
+    if (!showChoices) {
+        Rectangle progress{panel.x + 18.0f, panel.y + 72.0f, panel.width - 36.0f, 28.0f};
+        DrawRectangleRounded(progress, 0.12f, 6, Color{61, 48, 37, 205});
+        float ratio = complete
+                          ? 1.0f
+                          : (snapshot.explorationRoundLimit > 0
+                                 ? std::clamp(static_cast<float>(snapshot.explorationRound) /
+                                                  static_cast<float>(snapshot.explorationRoundLimit),
+                                              0.0f,
+                                              1.0f)
+                                 : 0.0f);
+        DrawRectangleRounded({progress.x + 3.0f, progress.y + 3.0f,
+                              (progress.width - 6.0f) * ratio, progress.height - 6.0f},
+                             0.10f, 6, Color{86, 127, 101, 220});
+        DrawRectangleRoundedLines(progress, 0.12f, 6, 1.2f, Color{105, 82, 54, 210});
+        drawTextCenteredStrong(complete ? "Run complete"
+                                        : TextFormat("%d / %d Rounds",
+                                                     snapshot.explorationRound,
+                                                     snapshot.explorationRoundLimit),
+                               progress, 18.0f, kInk);
     }
 }
 
-Color routeFamilyColor(NeutralFamily family) {
+Color relicFamilyColor(NeutralFamily family) {
     switch (family) {
         case NeutralFamily::Swarm: return Color{110, 206, 172, 255};
         case NeutralFamily::Guardian: return Color{112, 161, 220, 255};
@@ -2937,23 +2813,17 @@ Color routeFamilyColor(NeutralFamily family) {
     return kAccent;
 }
 
-Color routeTypeColor(RouteNodeType type) {
-    switch (type) {
-        case RouteNodeType::Combat: return Color{178, 94, 96, 255};
-        case RouteNodeType::Neutral: return Color{112, 206, 172, 255};
-        case RouteNodeType::Elite: return Color{226, 175, 78, 255};
-        case RouteNodeType::Shop: return Color{113, 179, 145, 255};
-        case RouteNodeType::Event: return Color{155, 145, 229, 255};
-        case RouteNodeType::Boss: return Color{225, 190, 106, 255};
+Color relicTierColor(RelicTier tier) {
+    switch (tier) {
+        case RelicTier::Basic: return Color{112, 206, 172, 255};
+        case RelicTier::Build: return Color{113, 179, 145, 255};
+        case RelicTier::Transform: return Color{226, 175, 78, 255};
+        case RelicTier::Unique: return Color{225, 190, 106, 255};
     }
     return kAccent;
 }
 
-bool containsRouteNodeId(const std::vector<int>& ids, int id) {
-    return std::find(ids.begin(), ids.end(), id) != ids.end();
-}
-
-const Texture2D* routeFamilyTexture(NeutralFamily family) {
+const Texture2D* relicFamilyTexture(NeutralFamily family) {
     if (const Texture2D* texture = neutralFamilyTexture(family)) return texture;
     switch (family) {
         case NeutralFamily::Swarm: return unitTexture(UnitType::ImpSwarm);
@@ -2979,167 +2849,18 @@ NeutralFamily relicFamilyHint(const RelicSpec& relic) {
 
 void drawRelicIcon(const RelicSpec& relic, Rectangle rect) {
     DrawRectangleRounded(rect, 0.18f, 8, Color{58, 38, 30, 220});
-    DrawRectangleRoundedLines(rect, 0.18f, 8, 1.4f, routeFamilyColor(relicFamilyHint(relic)));
+    DrawRectangleRoundedLines(rect, 0.18f, 8, 1.4f, relicFamilyColor(relicFamilyHint(relic)));
     Rectangle inner{rect.x + rect.width * 0.10f,
                     rect.y + rect.height * 0.10f,
                     rect.width * 0.80f,
                     rect.height * 0.80f};
     if (const Texture2D* texture = relicTexture(relic)) {
         drawTextureAspectFit(*texture, inner, WHITE);
-    } else if (const Texture2D* texture = routeFamilyTexture(relicFamilyHint(relic))) {
+    } else if (const Texture2D* texture = relicFamilyTexture(relicFamilyHint(relic))) {
         drawTextureAspectFit(*texture, inner, WHITE);
     } else {
         drawTextCentered(relic.name.substr(0, 1), inner, inner.height * 0.50f, kInk);
     }
-}
-
-Rectangle routeNodeRect(const RouteMap& map, const RouteNode& node, Rectangle panel) {
-    float cellW = panel.width / static_cast<float>(map.width);
-    float cellH = panel.height / static_cast<float>(map.height);
-    float size = std::max(18.0f, std::min(cellW, cellH) * 0.90f);
-    float centerX = panel.x + (node.coord.x + 0.5f) * cellW;
-    float centerY = panel.y + (node.coord.y + 0.5f) * cellH;
-    return {centerX - size * 0.5f, centerY - size * 0.5f, size, size};
-}
-
-void drawRouteNodeBadge(Rectangle rect, const RouteNode& node, bool active, bool selected) {
-    Color fill = active ? routeTypeColor(node.type) : Color{56, 44, 44, 220};
-    if (selected) fill = Color{241, 208, 135, 255};
-    DrawCircleV({rect.x + rect.width / 2.0f, rect.y + rect.height / 2.0f},
-                rect.width * 0.52f, Color{0, 0, 0, 130});
-    DrawCircleV({rect.x + rect.width / 2.0f, rect.y + rect.height / 2.0f},
-                rect.width * 0.48f, fill);
-    DrawCircleLines(static_cast<int>(rect.x + rect.width / 2.0f),
-                    static_cast<int>(rect.y + rect.height / 2.0f),
-                    rect.width * 0.48f, selected ? kGold : routeFamilyColor(node.family));
-}
-
-void drawRouteNodeIcon(Rectangle rect, const RouteNode& node, bool active, bool selected) {
-    drawRouteNodeBadge(rect, node, active, selected);
-    Rectangle inner{rect.x + rect.width * 0.12f, rect.y + rect.height * 0.12f,
-                    rect.width * 0.76f, rect.height * 0.76f};
-    if (const Texture2D* texture = routeFamilyTexture(node.family)) {
-        drawTextureAspectFit(*texture, inner, WHITE);
-    } else {
-        drawTextCentered(neutralFamilyLabel(node.family).substr(0, 1), inner, rect.height * 0.44f, kInk);
-    }
-}
-
-Color routeTerrainColor(int x, int y, unsigned seed) {
-    unsigned hash = seed ^ (static_cast<unsigned>(x) * 1103515245u) ^
-                    (static_cast<unsigned>(y) * 2654435761u);
-    hash ^= hash >> 13;
-    hash *= 1274126177u;
-    int roll = static_cast<int>(hash % 100);
-    if (x == 0 || y == 0 || x == 24 || y == 14) return Color{33, 24, 23, 235};
-    if (roll < 10) return Color{30, 48, 43, 235};
-    if (roll < 20) return Color{48, 39, 32, 235};
-    if (roll < 28) return Color{42, 35, 48, 235};
-    return Color{35, 34, 34, 235};
-}
-
-void drawRouteMapPanel(const RouteMap& map,
-                       Rectangle panel,
-                       int currentDepth,
-                       int selectedNodeId,
-                       int sourceNodeId,
-                       const std::vector<int>& availableNodeIds,
-                       const std::vector<int>& routeTrail) {
-    drawPanelFrame(panel, Color{27, 19, 18, 255});
-    drawTextStrong("Campaign Path", panel.x + 14.0f, panel.y + 6.0f, 28.0f, kInk);
-    drawText(TextFormat("Stage %d / %d", currentDepth + 1, map.height),
-             panel.x + 188.0f, panel.y + 12.0f, 18.0f, kMutedInk);
-    drawText(fitText("Pick a highlighted encounter, then open the battle board to recruit.",
-                     panel.width - 390.0f, 16.0f),
-             panel.x + 360.0f, panel.y + 12.0f, 16.0f, kMutedInk);
-
-    Rectangle inner{panel.x + 14.0f, panel.y + 44.0f, panel.width - 28.0f, panel.height - 58.0f};
-    BeginScissorMode(static_cast<int>(inner.x), static_cast<int>(inner.y),
-                     static_cast<int>(inner.width), static_cast<int>(inner.height));
-
-    float cellW = inner.width / static_cast<float>(map.width);
-    float cellH = inner.height / static_cast<float>(map.height);
-    for (int y = 0; y < map.height; ++y) {
-        for (int x = 0; x < map.width; ++x) {
-            Rectangle cell{inner.x + x * cellW, inner.y + y * cellH, cellW, cellH};
-            DrawRectangleRec({cell.x + 1.0f, cell.y + 1.0f, cell.width - 2.0f, cell.height - 2.0f},
-                             routeTerrainColor(x, y, map.seed));
-        }
-    }
-
-    Color grid = Color{108, 78, 53, 100};
-    for (int x = 0; x <= map.width; ++x) {
-        float px = inner.x + x * cellW;
-        DrawLine(static_cast<int>(px), static_cast<int>(inner.y),
-                 static_cast<int>(px), static_cast<int>(inner.y + inner.height), grid);
-    }
-    for (int y = 0; y <= map.height; ++y) {
-        float py = inner.y + y * cellH;
-        DrawLine(static_cast<int>(inner.x), static_cast<int>(py),
-                 static_cast<int>(inner.x + inner.width), static_cast<int>(py), grid);
-    }
-
-    auto nodeCenter = [&](const RouteNode& node) {
-        return Vector2{inner.x + (node.coord.x + 0.5f) * cellW,
-                       inner.y + (node.coord.y + 0.5f) * cellH};
-    };
-
-    for (size_t i = 1; i < routeTrail.size(); ++i) {
-        int fromId = routeTrail[i - 1];
-        int toId = routeTrail[i];
-        if (fromId < 0 || fromId >= static_cast<int>(map.nodes.size()) ||
-            toId < 0 || toId >= static_cast<int>(map.nodes.size())) {
-            continue;
-        }
-        const RouteNode& fromNode = map.nodes[static_cast<size_t>(fromId)];
-        const RouteNode& toNode = map.nodes[static_cast<size_t>(toId)];
-        DrawLineEx(nodeCenter(fromNode), nodeCenter(toNode), 4.0f, Color{222, 174, 83, 176});
-    }
-
-    if (sourceNodeId >= 0 && sourceNodeId < static_cast<int>(map.nodes.size())) {
-        const RouteNode& source = map.nodes[static_cast<size_t>(sourceNodeId)];
-        for (int nextId : availableNodeIds) {
-            if (nextId < 0 || nextId >= static_cast<int>(map.nodes.size()) || nextId == sourceNodeId) continue;
-            const RouteNode& next = map.nodes[static_cast<size_t>(nextId)];
-            Color link = nextId == selectedNodeId ? kGold : routeFamilyColor(next.family);
-            link.a = nextId == selectedNodeId ? 238 : 180;
-            DrawLineEx(nodeCenter(source), nodeCenter(next), nextId == selectedNodeId ? 4.5f : 3.0f, link);
-        }
-    }
-
-    for (const RouteNode& node : map.nodes) {
-        Rectangle nodeRect = routeNodeRect(map, node, inner);
-        bool activeRow = node.depth == currentDepth;
-        bool selected = node.id == selectedNodeId;
-        bool past = node.depth < currentDepth;
-        bool future = node.depth > currentDepth;
-        bool selectable = activeRow && containsRouteNodeId(availableNodeIds, node.id);
-        Color dim = future ? Color{80, 67, 62, 110} : (past ? Color{90, 84, 72, 180} : WHITE);
-        if (past && !selected) dim.a = 150;
-        if (future && !selected) dim.a = 110;
-        if (activeRow && !selectable && !selected) dim.a = 95;
-        drawRouteNodeIcon(nodeRect, node, past || selectable, selected);
-        DrawCircleLines(static_cast<int>(nodeRect.x + nodeRect.width / 2.0f),
-                        static_cast<int>(nodeRect.y + nodeRect.height / 2.0f),
-                        nodeRect.width * 0.56f, dim);
-        if (node.id == sourceNodeId) {
-            DrawCircleLines(static_cast<int>(nodeRect.x + nodeRect.width / 2.0f),
-                            static_cast<int>(nodeRect.y + nodeRect.height / 2.0f),
-                            nodeRect.width * 0.70f, Color{220, 174, 83, 192});
-        }
-        if (selected) {
-            DrawCircleLines(static_cast<int>(nodeRect.x + nodeRect.width / 2.0f),
-                            static_cast<int>(nodeRect.y + nodeRect.height / 2.0f),
-                            nodeRect.width * 0.66f, kGold);
-        }
-        if (activeRow && selectable) {
-            DrawRectangleLinesEx({nodeRect.x - 3.0f, nodeRect.y - 3.0f,
-                                  nodeRect.width + 6.0f, nodeRect.height + 6.0f},
-                                 2.0f, selected ? kGold : routeFamilyColor(node.family));
-        }
-    }
-
-    EndScissorMode();
 }
 
 int draftVisibleStart(int scrollIndex, int count) {
@@ -3147,7 +2868,7 @@ int draftVisibleStart(int scrollIndex, int count) {
     return std::clamp(scrollIndex, 0, count - 2);
 }
 
-Rectangle routeInfoCardRect(Rectangle panel, int visibleIndex, int visibleCount) {
+Rectangle relicInfoCardRect(Rectangle panel, int visibleIndex, int visibleCount) {
     float gap = 14.0f;
     float cardW = (panel.width - 28.0f - gap * (visibleCount - 1)) / std::max(1, visibleCount);
     float cardH = panel.height - 96.0f;
@@ -3166,11 +2887,7 @@ void drawRelicCard(const DraftOffer& offer, Rectangle rect, bool selected) {
     Color fill = selected ? Color{230, 209, 158, 255} : Color{204, 183, 136, 255};
     drawParchmentPanel(rect, fill);
     DrawRectangleRec({rect.x + 4.0f, rect.y + 4.0f, 10.0f, rect.height - 8.0f},
-                     routeTypeColor(offer.relic.tier == RelicTier::Unique
-                                        ? RouteNodeType::Boss
-                                        : (offer.relic.tier == RelicTier::Transform
-                                               ? RouteNodeType::Elite
-                                               : RouteNodeType::Neutral)));
+                     relicTierColor(offer.relic.tier));
     Rectangle chip{rect.x + 14.0f, rect.y + 12.0f, rect.width - 28.0f, 38.0f};
     DrawRectangleRounded(chip, 0.18f, 6, Color{70, 45, 29, 210});
     DrawRectangleRoundedLines(chip, 0.18f, 6, 1.5f, kGold);
@@ -3183,7 +2900,7 @@ void drawRelicCard(const DraftOffer& offer, Rectangle rect, bool selected) {
 
     drawTextCentered(relicTierLabel(offer.relic.tier),
                      {rect.x + 18.0f, rect.y + 190.0f, rect.width - 36.0f, 28.0f},
-                     22.0f, routeFamilyColor(relicFamilyHint(offer.relic)));
+                     22.0f, relicFamilyColor(relicFamilyHint(offer.relic)));
 
     Rectangle reasonChip{rect.x + 18.0f, rect.y + 226.0f, rect.width - 36.0f, 34.0f};
     DrawRectangleRounded(reasonChip, 0.18f, 6, Color{84, 58, 35, 220});
@@ -3200,132 +2917,41 @@ void drawRelicCard(const DraftOffer& offer, Rectangle rect, bool selected) {
                            6);
 }
 
-void drawRouteInfoPanel(const RouteNode* node,
-                        const DraftState* draft,
-                        const RunModifiers& modifiers,
-                        bool routeMapFocused,
-                        int draftScrollIndex = 0) {
-    Rectangle panel = routeInfoPanelRect(routeMapFocused, draft != nullptr);
+void drawRelicDraftPanel(const DraftState& draft,
+                         const RunModifiers& modifiers,
+                         int draftScrollIndex = 0) {
+    Rectangle panel = detailRect();
     drawPanelFrame(panel, Color{29, 21, 19, 255});
-    if (!draft) {
-        Rectangle toggle = routeLayerToggleRect(panel);
-        DrawRectangleRounded(toggle, 0.14f, 6, Color{45, 31, 29, 230});
-        DrawRectangleRoundedLines(toggle, 0.14f, 6, 1.2f, routeMapFocused ? kGold : Color{122, 92, 55, 255});
-        drawTextCentered(routeMapFocused ? "Board View" : "Path View", toggle, 17.0f, kInk);
+    drawTextStrong("Relic Reward", panel.x + 14.0f, panel.y + 12.0f, 26.0f, kInk);
+    if (!draft.fixedDropText.empty()) {
+        drawText(fitText(draft.fixedDropText, panel.width - 220.0f, 18.0f),
+                 panel.x + 14.0f, panel.y + 44.0f, 18.0f, kGold);
     }
-
-    if (draft) {
-        drawTextStrong("Relic Reward", panel.x + 14.0f, panel.y + 12.0f, 26.0f, kInk);
-        if (!draft->fixedDropText.empty()) {
-            drawText(fitText(draft->fixedDropText, panel.width - 220.0f, 18.0f),
-                     panel.x + 14.0f, panel.y + 44.0f, 18.0f, kGold);
+    int offerCount = static_cast<int>(draft.offers.size());
+    int visibleCount = std::min(2, offerCount);
+    int start = draftVisibleStart(draftScrollIndex, offerCount);
+    BeginScissorMode(static_cast<int>(panel.x + 10.0f),
+                     static_cast<int>(panel.y + 66.0f),
+                     static_cast<int>(panel.width - 20.0f),
+                     static_cast<int>(panel.height - 76.0f));
+    for (int i = 0; i < visibleCount; ++i) {
+        int offerIndex = start + i;
+        if (offerIndex < 0 || offerIndex >= offerCount) continue;
+        Rectangle card = relicInfoCardRect(panel, i, visibleCount);
+        drawRelicCard(draft.offers[static_cast<size_t>(offerIndex)], card, false);
+    }
+    EndScissorMode();
+    if (offerCount > visibleCount) {
+        Rectangle left = draftScrollButtonRect(panel, false);
+        Rectangle right = draftScrollButtonRect(panel, true);
+        for (Rectangle button : {left, right}) {
+            DrawRectangleRounded(button, 0.16f, 6, Color{54, 37, 29, 240});
+            DrawRectangleRoundedLines(button, 0.16f, 6, 1.2f, kGold);
         }
-        int offerCount = static_cast<int>(draft->offers.size());
-        int visibleCount = std::min(2, offerCount);
-        int start = draftVisibleStart(draftScrollIndex, offerCount);
-        BeginScissorMode(static_cast<int>(panel.x + 10.0f),
-                         static_cast<int>(panel.y + 66.0f),
-                         static_cast<int>(panel.width - 20.0f),
-                         static_cast<int>(panel.height - 76.0f));
-        for (int i = 0; i < visibleCount; ++i) {
-            int offerIndex = start + i;
-            if (offerIndex < 0 || offerIndex >= offerCount) continue;
-            Rectangle card = routeInfoCardRect(panel, i, visibleCount);
-            drawRelicCard(draft->offers[static_cast<size_t>(offerIndex)], card, false);
-        }
-        EndScissorMode();
-        if (offerCount > visibleCount) {
-            Rectangle left = draftScrollButtonRect(panel, false);
-            Rectangle right = draftScrollButtonRect(panel, true);
-            for (Rectangle button : {left, right}) {
-                DrawRectangleRounded(button, 0.16f, 6, Color{54, 37, 29, 240});
-                DrawRectangleRoundedLines(button, 0.16f, 6, 1.2f, kGold);
-            }
-            drawTextCentered("<", left, 24.0f, kInk);
-            drawTextCentered(">", right, 24.0f, kInk);
-            std::string page = TextFormat("%d-%d / %d", start + 1, std::min(start + visibleCount, offerCount), offerCount);
-            drawTextRight(page, right.x - 10.0f, panel.y + 23.0f, 18.0f, kMutedInk);
-        }
-        return;
-    }
-
-    drawTextStrong("Encounter Preview", panel.x + 14.0f, panel.y + 8.0f, 24.0f, kInk);
-    if (!node) {
-        drawText("Pick a highlighted encounter to inspect its risk, reward, and drop pool.",
-                 panel.x + 14.0f, panel.y + 54.0f, 18.0f, kMutedInk);
-        return;
-    }
-
-    Rectangle chip{panel.x + 14.0f, panel.y + 50.0f, 166.0f, 34.0f};
-    DrawRectangleRounded(chip, 0.16f, 6, Color{68, 41, 31, 220});
-    DrawRectangleRoundedLines(chip, 0.16f, 6, 1.5f, routeTypeColor(node->type));
-    drawTextCentered(routeNodeTypeLabel(node->type), chip, 19.0f, kInk);
-
-    Rectangle familyChip{panel.x + 192.0f, panel.y + 50.0f, 180.0f, 34.0f};
-    DrawRectangleRounded(familyChip, 0.16f, 6, Color{38, 28, 30, 220});
-    DrawRectangleRoundedLines(familyChip, 0.16f, 6, 1.5f, routeFamilyColor(node->family));
-    drawTextCentered(neutralFamilyLabel(node->family) + " Pool", familyChip, 18.0f, kInk);
-
-    const float leftX = panel.x + 14.0f;
-    const float leftW = routeMapFocused ? std::min(398.0f, panel.width - 448.0f) : panel.width - 28.0f;
-    float textY = panel.y + 92.0f;
-    drawText(fitText(routeNodePreviewTitle(*node), leftW, 27.0f),
-             leftX, textY, 27.0f, kParchmentInk);
-    textY += 34.0f;
-    if (!node->encounter.name.empty()) {
-        drawText(fitText(node->encounter.name + " | " + node->encounter.model, leftW, 18.0f),
-                 leftX, textY, 18.0f, kWine);
-        textY += 23.0f;
-        textY = drawWrappedTextLimited(node->encounter.mechanic,
-                                       leftX,
-                                       textY,
-                                       leftW,
-                                       16.0f,
-                                       kParchmentMuted,
-                                       panel.y + 184.0f,
-                                       2);
-        textY = drawWrappedTextLimited("Counter: " + node->encounter.counterHint,
-                                       leftX,
-                                       textY + 2.0f,
-                                       leftW,
-                                       16.0f,
-                                       kAccentAlt,
-                                       panel.y + 212.0f,
-                                       2);
-    } else {
-        textY = drawWrappedTextLimited(routeNodePreviewSubtitle(*node),
-                                       leftX,
-                                       textY + 2.0f,
-                                       leftW,
-                                       17.0f,
-                                       kParchmentMuted,
-                                       panel.y + 188.0f,
-                                       3);
-    }
-    float summaryY = std::max(panel.y + 196.0f, textY + 6.0f);
-    drawText(fitText(routeNodeRiskSummary(*node), leftW, 16.0f), panel.x + 14.0f, summaryY, 16.0f, kWine);
-    drawText(fitText(routeNodeRewardSummary(*node), leftW, 16.0f), panel.x + 14.0f, summaryY + 20.0f, 16.0f, kAccent);
-    if (routeMapFocused) {
-        Rectangle cue{panel.x + 14.0f, panel.y + 232.0f, panel.width - 28.0f, 24.0f};
-        DrawRectangleRounded(cue, 0.12f, 6, Color{61, 39, 29, 230});
-        DrawRectangleRoundedLines(cue, 0.12f, 6, 1.0f, kGold);
-        drawTextCentered("Next: click a highlighted encounter, or press Board View.", cue, 15.0f, kInk);
-    } else {
-        Rectangle cue{panel.x + 14.0f, panel.y + 232.0f, panel.width - 28.0f, 24.0f};
-        DrawRectangleRounded(cue, 0.12f, 6, Color{61, 39, 29, 230});
-        DrawRectangleRoundedLines(cue, 0.12f, 6, 1.0f, kAccentAlt);
-        drawTextCentered("Next: buy units in Recruitment, place them on the board, then press Venture.",
-                         cue, 14.0f, kInk);
-    }
-
-    std::vector<std::string> dropSummary = routeNodeDropSummary(*node);
-    if (!dropSummary.empty()) {
-        drawText("Drop pool", panel.x + 430.0f, panel.y + 94.0f, 18.0f, kInk);
-        float y = panel.y + 118.0f;
-        for (const std::string& line : dropSummary) {
-            drawText(fitText(line, panel.width - 448.0f, 16.0f), panel.x + 430.0f, y, 16.0f, kMutedInk);
-            y += 18.0f;
-        }
+        drawTextCentered("<", left, 24.0f, kInk);
+        drawTextCentered(">", right, 24.0f, kInk);
+        std::string page = TextFormat("%d-%d / %d", start + 1, std::min(start + visibleCount, offerCount), offerCount);
+        drawTextRight(page, right.x - 10.0f, panel.y + 23.0f, 18.0f, kMutedInk);
     }
 
     drawText(TextFormat("Relics %d   Cost -%d   Income +%d   Roster +%d",
@@ -3342,28 +2968,12 @@ void drawRouteInfoPanel(const RouteNode* node,
              panel.x + 14.0f, panel.y + 276.0f, 16.0f, kMutedInk);
 }
 
-const RouteNode* routeNodeAtMouse(const RouteMap& map,
-                                  const std::vector<int>& nodeIds,
-                                  Vector2 mouse,
-                                  Rectangle panel) {
-    Rectangle inner{panel.x + 14.0f, panel.y + 44.0f, panel.width - 28.0f, panel.height - 58.0f};
-    if (!CheckCollisionPointRec(mouse, inner)) return nullptr;
-
-    for (int nodeId : nodeIds) {
-        if (nodeId < 0 || nodeId >= static_cast<int>(map.nodes.size())) continue;
-        const RouteNode& node = map.nodes[static_cast<size_t>(nodeId)];
-        Rectangle rect = routeNodeRect(map, node, inner);
-        if (CheckCollisionPointRec(mouse, rect)) return &node;
-    }
-    return nullptr;
-}
-
 int draftOfferAtMouse(const DraftState& draft, Vector2 mouse, Rectangle panel, int scrollIndex) {
     int count = static_cast<int>(draft.offers.size());
     int visibleCount = std::min(2, count);
     int start = draftVisibleStart(scrollIndex, count);
     for (int i = 0; i < visibleCount; ++i) {
-        if (CheckCollisionPointRec(mouse, routeInfoCardRect(panel, i, visibleCount))) return start + i;
+        if (CheckCollisionPointRec(mouse, relicInfoCardRect(panel, i, visibleCount))) return start + i;
     }
     return -1;
 }
@@ -3845,9 +3455,7 @@ void drawRelicsPanel(const std::vector<std::string>& relicIds, const RunModifier
                            cardH};
             DrawRectangleRounded(card, 0.08f, 6, Color{68, 44, 30, 230});
             DrawRectangleRoundedLines(card, 0.08f, 6, 1.0f,
-                                      relic ? routeTypeColor(relic->tier == RelicTier::Unique
-                                                                 ? RouteNodeType::Boss
-                                                                 : RouteNodeType::Neutral)
+                                      relic ? relicTierColor(relic->tier)
                                              : kGold);
             if (relic) {
                 float iconSize = std::min(48.0f, std::max(34.0f, card.height - 14.0f));
@@ -3909,20 +3517,7 @@ void drawUnit(const UnitView& unit, Rectangle rect, bool ghost = false) {
         drawFactionBands(rect, unit.owner, ghost);
     }
 
-    if (unit.type == UnitType::DefenseTower) {
-        Rectangle body{rect.x + pad, rect.y + pad * 0.9f, rect.width - pad * 2.0f, rect.height - pad * 1.8f};
-        Color stone = unit.owner == PlayerId::One ? Color{76, 86, 104, fill.a} : Color{98, 70, 78, fill.a};
-        DrawRectangleRounded(body, 0.05f, 4, stone);
-        DrawRectangleRoundedLines(body, 0.05f, 4, 2.0f, Color{37, 44, 54, fill.a});
-        float toothW = body.width / 5.0f;
-        for (int i = 0; i < 3; ++i) {
-            DrawRectangleRec({body.x + i * toothW * 2.0f, body.y - pad * 0.45f, toothW, pad * 0.85f},
-                             Color{132, 145, 165, fill.a});
-        }
-        DrawLineEx({body.x + body.width * 0.5f, body.y + 8.0f},
-                   {body.x + body.width * 0.5f, body.y + body.height - 8.0f},
-                   2.0f, Color{38, 45, 55, fill.a});
-    } else if (unit.layer == UnitLayer::Air) {
+    if (unit.layer == UnitLayer::Air) {
         DrawCircleV(center, rect.width * 0.31f, fill);
         DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
                         rect.width * 0.31f, Color{31, 47, 75, 255});
@@ -4164,28 +3759,19 @@ void drawBoard(const GameEngine& engine,
                 DrawLineEx({cell.x + 9.0f, cell.y + cell.height - 10.0f},
                            {cell.x + cell.width - 8.0f, cell.y + 10.0f},
                            1.0f, Color{64, 56, 48, 80});
-            } else if (terrain == TerrainKind::MainRoad) {
-                DrawLineEx({cell.x + 6.0f, cell.y + cell.height * 0.5f},
-                           {cell.x + cell.width - 6.0f, cell.y + cell.height * 0.5f},
-                           1.6f, Color{202, 170, 91, 70});
             } else if (terrain == TerrainKind::SideRoad) {
                 DrawCircleLines(static_cast<int>(cell.x + cell.width * 0.5f),
                                 static_cast<int>(cell.y + cell.height * 0.5f),
                                 cell.width * 0.20f, Color{173, 197, 185, 64});
-            } else if (terrain == TerrainKind::TowerPad) {
-                DrawRectangleRounded({cell.x + 7.0f, cell.y + 7.0f, cell.width - 14.0f, cell.height - 14.0f},
-                                     0.08f, 6, Color{42, 39, 44, 150});
-                DrawRectangleRoundedLines({cell.x + 7.0f, cell.y + 7.0f, cell.width - 14.0f, cell.height - 14.0f},
-                                          0.08f, 6, 1.6f, Color{219, 183, 98, 150});
             } else if (terrain == TerrainKind::NeutralCamp) {
                 NeutralFamily family = campFamilyForCell(coord);
                 DrawCircleV({cell.x + cell.width / 2.0f, cell.y + cell.height / 2.0f},
                             cell.width * 0.36f, Color{19, 14, 11, 150});
                 DrawCircleLines(static_cast<int>(cell.x + cell.width / 2.0f),
                                 static_cast<int>(cell.y + cell.height / 2.0f),
-                                cell.width * 0.36f, routeFamilyColor(family));
+                                cell.width * 0.36f, relicFamilyColor(family));
                 Rectangle iconRect{cell.x + 8.0f, cell.y + 8.0f, cell.width - 16.0f, cell.height - 16.0f};
-                if (const Texture2D* texture = routeFamilyTexture(family)) {
+                if (const Texture2D* texture = relicFamilyTexture(family)) {
                     drawTextureAspectFit(*texture, iconRect, WHITE);
                 } else {
                     drawTextCentered(neutralFamilyLabel(family).substr(0, 1), iconRect, 22.0f, kInk);
@@ -4731,18 +4317,12 @@ int main() {
     gBoldFont = loadBoldUiFont();
     loadUiTextures();
 
-    RouteMap routeMap = generateRouteMap(sessionSeed ^ 0x51f15eedu);
     std::vector<std::string> playerRelics;
     RunModifiers playerModifiers;
-    int selectedRouteNodeId = routeMap.startNodeId;
-    int lastBattleNodeId = selectedRouteNodeId;
-    bool routeMapFocused = false;
-    std::vector<int> routeTrail;
-    if (routeMap.startNodeId >= 0) routeTrail.push_back(routeMap.startNodeId);
     std::optional<DraftState> pendingDraft;
     std::vector<DraftState> queuedNeutralDrafts;
     int draftScrollIndex = 0;
-    unsigned neutralDraftSeed = routeMap.seed ^ 0x6d2b79f5u;
+    unsigned neutralDraftSeed = sessionSeed ^ 0x6d2b79f5u;
     engine.setRunModifiers(PlayerId::One, playerModifiers);
     engine.setRunModifiers(PlayerId::Two, RunModifiers{});
 
@@ -4755,23 +4335,6 @@ int main() {
     std::vector<CombatCue> combatCues;
     std::ofstream eventLog = openFreshEventLog();
     appendEvents(engine, log, &eventLog, &combatCues);
-
-    auto currentRouteNode = [&]() -> const RouteNode* {
-        if (selectedRouteNodeId < 0 || selectedRouteNodeId >= static_cast<int>(routeMap.nodes.size())) return nullptr;
-        return &routeMap.nodes[static_cast<size_t>(selectedRouteNodeId)];
-    };
-
-    auto syncEncounterContext = [&]() {
-        if (const RouteNode* node = currentRouteNode()) {
-            engine.setEncounterContext(encounterContextForNode(*node));
-        } else {
-            engine.setEncounterContext({});
-        }
-        engine.setRunModifiers(PlayerId::One, playerModifiers);
-        engine.setRunModifiers(PlayerId::Two, RunModifiers{});
-    };
-
-    syncEncounterContext();
 
     while (!WindowShouldClose()) {
         float frameTime = std::min(GetFrameTime(), 0.12f);
@@ -4801,26 +4364,10 @@ int main() {
                                pendingDraft, queuedNeutralDrafts);
         if (!hadDraftBeforeQueue && pendingDraft) draftScrollIndex = 0;
 
-        int currentRouteDepth = std::clamp(snapshot.round - 1, 0, routeMap.height - 1);
-        auto syncRouteMapState = [&]() {
-            routeMap.currentDepth = currentRouteDepth;
-            routeMap.currentNodeId = selectedRouteNodeId;
-        };
-        std::vector<int> availableRouteNodes = routeChoicesForDepth(routeMap, currentRouteDepth, lastBattleNodeId);
-        if (snapshot.phase == Phase::Preparation && !pendingDraft) {
-            if (!containsRouteNodeId(availableRouteNodes, selectedRouteNodeId)) {
-                selectedRouteNodeId = defaultRouteNodeForDepth(routeMap, currentRouteDepth, lastBattleNodeId);
-                syncEncounterContext();
-                syncRouteMapState();
-            }
-        }
-
         Vector2 screenMouse = GetMousePosition();
         gMousePosition = screenToCanvasMouse(screenMouse);
         Vector2 mouse = gMousePosition;
-        bool routeMapExpandedForInput = routeMapFocused;
-        Rectangle activeRouteMapPanel = routeMapRect(routeMapExpandedForInput);
-        Rectangle activeRouteInfoPanel = routeInfoPanelRect(routeMapFocused, pendingDraft.has_value());
+        Rectangle activeDraftPanel = detailRect();
         const UnitView* hoveredUnit = unitAtMouse(snapshot, mouse);
         const UnitSpec* hoveredShopSpec = shopSpecAtMouse(engine, mouse, shopScroll);
         if (hoveredUnit) {
@@ -4833,18 +4380,18 @@ int main() {
         if (wheel != 0.0f && CheckCollisionPointRec(mouse, shopViewportRect())) {
             shopScroll = clampShopScroll(engine, shopScroll - wheel * 72.0f);
         }
-        if (pendingDraft && wheel != 0.0f && CheckCollisionPointRec(mouse, activeRouteInfoPanel)) {
+        if (pendingDraft && wheel != 0.0f && CheckCollisionPointRec(mouse, activeDraftPanel)) {
             int count = static_cast<int>(pendingDraft->offers.size());
             draftScrollIndex = draftVisibleStart(draftScrollIndex + (wheel < 0.0f ? 1 : -1), count);
         }
 
         bool handledMouseDown = false;
         if (pendingDraft && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            if (CheckCollisionPointRec(mouse, draftScrollButtonRect(activeRouteInfoPanel, false))) {
+            if (CheckCollisionPointRec(mouse, draftScrollButtonRect(activeDraftPanel, false))) {
                 draftScrollIndex = draftVisibleStart(draftScrollIndex - 1,
                                                      static_cast<int>(pendingDraft->offers.size()));
                 handledMouseDown = true;
-            } else if (CheckCollisionPointRec(mouse, draftScrollButtonRect(activeRouteInfoPanel, true))) {
+            } else if (CheckCollisionPointRec(mouse, draftScrollButtonRect(activeDraftPanel, true))) {
                 draftScrollIndex = draftVisibleStart(draftScrollIndex + 1,
                                                      static_cast<int>(pendingDraft->offers.size()));
                 handledMouseDown = true;
@@ -4852,7 +4399,7 @@ int main() {
             int offerIndex = handledMouseDown ? -1
                                               : draftOfferAtMouse(*pendingDraft,
                                                                   mouse,
-                                                                  activeRouteInfoPanel,
+                                                                  activeDraftPanel,
                                                                   draftScrollIndex);
             if (offerIndex >= 0 && offerIndex < static_cast<int>(pendingDraft->offers.size())) {
                 applyRelicChoice(pendingDraft->offers[static_cast<size_t>(offerIndex)],
@@ -4881,8 +4428,7 @@ int main() {
                         break;
                     }
                 }
-                if (snapshot.stage == GameStage::Exploration && snapshot.explorationRound == 0 &&
-                    !snapshot.explorationRoundLimitLocked) {
+                if (snapshot.explorationRound == 0 && !snapshot.explorationRoundLimitLocked) {
                     const std::array<int, 5> explorationChoices = {2, 4, 6, 8, 10};
                     int choiceIndex = explorationRoundChoiceIndexAt(mouse);
                     if (choiceIndex < 0) choiceIndex = explorationRoundChoiceIndexAt(screenMouse);
@@ -4899,48 +4445,15 @@ int main() {
 
             if (handledDifficulty || handledExplorationRounds) {
                 appendEvents(engine, log, &eventLog, &combatCues);
-            } else if (!pendingDraft && snapshot.stage == GameStage::MainBattle &&
-                       CheckCollisionPointRec(mouse, routeLayerToggleRect(activeRouteInfoPanel))) {
-                routeMapFocused = !routeMapFocused;
-                dragging = kInvalidUnitId;
-                syncEncounterContext();
-                syncRouteMapState();
-                log.push_back(routeMapFocused ? "Path view opened" : "Board view opened");
             } else if (!pendingDraft && CheckCollisionPointRec(mouse, readyRect())) {
-                if (routeMapFocused) {
-                    routeMapFocused = false;
-                    dragging = kInvalidUnitId;
-                    syncEncounterContext();
-                    syncRouteMapState();
-                    if (const RouteNode* node = currentRouteNode()) {
-                        log.push_back("Encounter selected: " + routeNodePreviewTitle(*node));
-                    }
-                } else if (hasPlayerCombatUnit(snapshot)) {
-                    if (snapshot.stage == GameStage::Exploration && !snapshot.explorationRoundLimitLocked) {
-                        engine.lockExplorationRoundLimit();
-                        explorationRoundChoicesDismissed = true;
-                    }
-                    if (routeTrail.empty() || routeTrail.back() != selectedRouteNodeId) {
-                        routeTrail.push_back(selectedRouteNodeId);
-                    }
-                    lastBattleNodeId = selectedRouteNodeId;
+                if (hasPlayerCombatUnit(snapshot)) {
+                    if (!snapshot.explorationRoundLimitLocked) engine.lockExplorationRoundLimit();
+                    explorationRoundChoicesDismissed = true;
                     engine.setReady(PlayerId::One, true);
                 } else {
                     log.push_back("Deploy at least one unit first.");
                 }
-            } else if (!pendingDraft && snapshot.stage == GameStage::MainBattle && routeMapFocused &&
-                       !CheckCollisionPointRec(mouse, activeRouteInfoPanel) &&
-                       (routeNodeAtMouse(routeMap, availableRouteNodes, mouse, activeRouteMapPanel) ||
-                        CheckCollisionPointRec(mouse, activeRouteMapPanel))) {
-                if (const RouteNode* node =
-                        routeNodeAtMouse(routeMap, availableRouteNodes, mouse, activeRouteMapPanel)) {
-                    selectedRouteNodeId = node->id;
-                    routeMapFocused = false;
-                    syncEncounterContext();
-                    syncRouteMapState();
-                    log.push_back(routeNodePreviewTitle(*node));
-                }
-            } else if (!routeMapFocused) {
+            } else {
                 bool bought = false;
                 if (const UnitSpec* spec = shopSpecAtMouse(engine, mouse, shopScroll)) {
                     if (!engine.buyUnit(PlayerId::One, spec->type)) log.push_back("Cannot buy that unit.");
@@ -4956,14 +4469,13 @@ int main() {
                     }
                     if (dragging == kInvalidUnitId) {
                         const UnitView* unit = unitAtBoardMouse(snapshot, mouse, true);
-                        if (unit && unit->type != UnitType::DefenseTower) dragging = unit->id;
+                        if (unit) dragging = unit->id;
                     }
                 }
             }
         }
 
-        if (!routeMapFocused && IsMouseButtonReleased(MOUSE_LEFT_BUTTON) &&
-            dragging != kInvalidUnitId) {
+        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && dragging != kInvalidUnitId) {
             Coord coord;
             if (mouseToCell(mouse, coord)) {
                 if (!engine.deployUnit(PlayerId::One, dragging, coord)) log.push_back("Cannot deploy there.");
@@ -4978,7 +4490,6 @@ int main() {
 
         appendEvents(engine, log, &eventLog, &combatCues);
         snapshot = engine.snapshot();
-        if (snapshot.stage == GameStage::Exploration) routeMapFocused = false;
         const UnitView* postHoverUnit = unitAtMouse(snapshot, mouse);
         const UnitSpec* postHoverShopSpec = shopSpecAtMouse(engine, mouse, shopScroll);
         if (postHoverUnit) {
@@ -4990,9 +4501,6 @@ int main() {
         const UnitView* detailUnit = detail.unit;
         const UnitSpec* detailSpec = detail.spec ? detail.spec : shopSpecAtIndex(engine, 0);
 
-        bool routeMapExpanded = routeMapFocused;
-        Rectangle drawRouteMapPanelRect = routeMapRect(routeMapExpanded);
-
         BeginTextureMode(canvas);
         ClearBackground(Color{13, 10, 9, 255});
         drawSceneBackground();
@@ -5000,11 +4508,11 @@ int main() {
         drawDifficultySelector(engine, snapshot);
         bool canStart = snapshot.phase == Phase::Preparation && hasPlayerCombatUnit(snapshot);
         bool canUsePrimary = pendingDraft.has_value() ||
-                             (snapshot.phase == Phase::Preparation && (routeMapFocused || canStart));
+                             (snapshot.phase == Phase::Preparation && canStart);
         std::string primaryAction = pendingDraft
                                         ? "Pick Relic"
                                         : (snapshot.phase == Phase::Preparation
-                                               ? (routeMapFocused ? "Board View" : (canStart ? "Ready" : "Deploy"))
+                                               ? (canStart ? "Ready" : "Deploy")
                                                : "Fighting");
         DrawRectangleRounded(readyRect(), 0.12f, 8,
                              snapshot.phase == Phase::Preparation
@@ -5014,34 +4522,16 @@ int main() {
                                   canUsePrimary ? kGold : Color{92, 72, 48, 255});
         drawTextCenteredStrong(primaryAction, readyRect(), 30.0f, kInk);
 
-        if (routeMapExpanded && snapshot.stage == GameStage::MainBattle) {
-            drawRouteMapPanel(routeMap, drawRouteMapPanelRect, currentRouteDepth, selectedRouteNodeId,
-                              lastBattleNodeId, availableRouteNodes, routeTrail);
-        } else {
-            drawBoard(engine, snapshot, dragging, combatCues);
-        }
+        drawBoard(engine, snapshot, dragging, combatCues);
         drawRelicsPanel(playerRelics, playerModifiers);
         drawShop(engine, snapshot, shopScroll);
         if (pendingDraft) {
-            drawRouteInfoPanel(currentRouteNode(),
-                               &*pendingDraft,
-                               playerModifiers,
-                               routeMapFocused,
-                               draftScrollIndex);
-        } else if (routeMapExpanded && snapshot.stage == GameStage::MainBattle) {
-            drawRouteInfoPanel(currentRouteNode(),
-                               nullptr,
-                               playerModifiers,
-                               routeMapFocused);
-        } else if (snapshot.stage == GameStage::Exploration) {
-            drawUnitDetails(detailSpec ? *detailSpec : engine.shop().front(),
-                            detailUnit,
-                            stage1UnitDetailRect());
-            drawStageInfoPanel(snapshot, explorationRoundChoicesDismissed);
+            drawRelicDraftPanel(*pendingDraft, playerModifiers, draftScrollIndex);
         } else {
             drawUnitDetails(detailSpec ? *detailSpec : engine.shop().front(),
                             detailUnit,
-                            detailRect());
+                            explorationUnitDetailRect());
+            drawRunInfoPanel(snapshot, explorationRoundChoicesDismissed);
         }
         drawBench(snapshot, dragging, engine.benchLimit(PlayerId::One));
 
