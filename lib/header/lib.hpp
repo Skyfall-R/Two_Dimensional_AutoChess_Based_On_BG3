@@ -854,6 +854,14 @@ private:
     void markCombatProgress();
     bool shouldEndStalledCombat() const;
     bool shouldCastGuardianShield(const Unit& unit) const;
+    bool isMajorObjective(ExplorationObjectiveKind kind) const;
+    Coord majorObjectiveAnchor(const ExplorationObjectiveState& objective) const;
+    std::optional<size_t> majorObjectiveIndexForUnit(UnitId unitId) const;
+    bool isRealFlyingIntruder(const Unit& unit) const;
+    void triggerMajorObjectiveAntiAir(size_t objectiveIndex, UnitId intruderId,
+                                      const std::string& reason);
+    UnitId spawnAntiAirGuardian(size_t objectiveIndex, UnitId intruderId);
+    void updateMajorObjectiveAntiAir(double dt);
     void refreshTarget(Unit& unit, bool force);
     UnitId selectTarget(const Unit& unit) const;
     TargetCandidate evaluateTargetCandidate(const Unit& unit, const Unit& candidate) const;

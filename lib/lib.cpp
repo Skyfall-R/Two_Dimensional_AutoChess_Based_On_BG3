@@ -40,6 +40,11 @@ constexpr int kRedcapAmbushRadius = 5;
 constexpr int kNeutralGuardianLeashRadius = 5;
 constexpr int kNeutralSummonGuardRadius = 4;
 constexpr int kExplorationUnitAggroRadius = 7;
+constexpr int kMajorObjectiveAntiAirRadius = 4;
+constexpr int kMajorObjectiveAntiAirGuardianRadius = 2;
+constexpr double kMajorObjectiveAntiAirCooldown = 1.5;
+constexpr int kEliteAntiAirDamage = 18;
+constexpr int kBossAntiAirDamage = 28;
 constexpr int kRogueAmbushMaxRange = 7;
 constexpr double kRetargetInterval = 0.35;
 constexpr int kBoardFeaturePlanes = 6;
@@ -858,8 +863,8 @@ std::vector<UnitSpec> makeSpecs() {
         {UnitType::ShieldGuardian, "Shield Guardian", "Sg", 14, 1, 190, 13, 1, 1.0, 0.9,
          UnitLayer::Land, true, false, 58, kRoleTank, AbilityKind::GuardianShield,
          4.0, 40, 2, 0.0},
-        {UnitType::Cleric, "Life Cleric", "Cl", 12, 1, 75, 8, 3, 2.0, 0.9,
-         UnitLayer::Land, true, true, 45, kRoleSupport | kRoleRanged, AbilityKind::ClericHeal,
+        {UnitType::Cleric, "Life Cleric", "Cl", 12, 1, 75, 8, 1, 2.0, 0.9,
+         UnitLayer::Land, true, true, 45, kRoleSupport, AbilityKind::ClericHeal,
          1.2, 25, 3, 0.0},
         {UnitType::Evoker, "Arcane Evoker", "Ev", 17, 1, 58, 54, 4, 2.0, 1.0,
          UnitLayer::Land, true, true, 72, kRoleRanged | kRoleAoe,
@@ -3514,6 +3519,7 @@ void GameEngine::clearExplorationObjective(size_t index, PlayerId clearer, UnitI
     ExplorationObjectiveState* objective = exploration_.objective(index);
     if (!objective || objective->cleared) return;
 
+    UnitId antiAirGuardianId = objective->antiAirGuardianId;
     exploration_.markCleared(index);
     applyExplorationObjectiveTerrain();
 
@@ -3549,6 +3555,11 @@ void GameEngine::clearExplorationObjective(size_t index, PlayerId clearer, UnitI
                objective->coord,
                totalRewardGold,
                std::move(text)});
+
+    if (antiAirGuardianId >= 0 && antiAirGuardianId < static_cast<int>(units_.size()) &&
+        unit(antiAirGuardianId).alive) {
+        killUnit(antiAirGuardianId, kInvalidUnitId);
+    }
 }
 
 void GameEngine::updateExplorationObjectiveForDeath(UnitId deadId, UnitId sourceId) {
@@ -4659,6 +4670,181 @@ bool GameEngine::shouldCastGuardianShield(const Unit& u) const {
     return u.shield < kGuardianShieldRefillThreshold || wounded || nearbyPressure || targetedByEnemy;
 }
 
+bool GameEngine::isMajorObjective(ExplorationObjectiveKind kind) const {
+    return kind == ExplorationObjectiveKind::Elite || kind == ExplorationObjectiveKind::Boss;
+}
+
+Coord GameEngine::majorObjectiveAnchor(const ExplorationObjectiveState& objective) const {
+    if (objective.unitId >= 0 && objective.unitId < static_cast<int>(units_.size())) {
+        const Unit& objectiveUnit = unit(objective.unitId);
+        if (objectiveUnit.alive && objectiveUnit.deployed) return objectiveUnit.coord;
+    }
+    return objective.coord;
+}
+
+std::optional<size_t> GameEngine::majorObjectiveIndexForUnit(UnitId unitId) const {
+    std::optional<size_t> index = exploration_.findObjectiveForUnit(unitId);
+    if (!index) return std::nullopt;
+    const ExplorationObjectiveState* objective = exploration_.objective(*index);
+    if (!objective || objective->cleared || !isMajorObjective(objective->kind)) return std::nullopt;
+    return index;
+}
+
+bool GameEngine::isRealFlyingIntruder(const Unit& u) const {
+    return u.alive && u.deployed && u.spec.layer == UnitLayer::Air &&
+           !isNeutralLikeCombatant(u) && !isInternalUnitType(u.spec.type);
+}
+
+UnitId GameEngine::spawnAntiAirGuardian(size_t objectiveIndex, UnitId intruderId) {
+    ExplorationObjectiveState* objective = exploration_.objective(objectiveIndex);
+    if (!objective || objective->cleared || !isMajorObjective(objective->kind)) return kInvalidUnitId;
+    if (objective->antiAirGuardianId >= 0 &&
+        objective->antiAirGuardianId < static_cast<int>(units_.size()) &&
+        unit(objective->antiAirGuardianId).alive) {
+        return objective->antiAirGuardianId;
+    }
+
+    Coord anchor = majorObjectiveAnchor(*objective);
+    Coord intruderCoord = anchor;
+    if (intruderId >= 0 && intruderId < static_cast<int>(units_.size()) &&
+        unit(intruderId).alive) {
+        intruderCoord = unit(intruderId).coord;
+    }
+
+    std::vector<Coord> candidates = cellsInRange(anchor, kMajorObjectiveAntiAirGuardianRadius);
+    std::sort(candidates.begin(), candidates.end(), [&](Coord lhs, Coord rhs) {
+        int lhsScore = manhattan(lhs, intruderCoord) * 10 + manhattan(lhs, anchor);
+        int rhsScore = manhattan(rhs, intruderCoord) * 10 + manhattan(rhs, anchor);
+        return lhsScore < rhsScore;
+    });
+
+    Coord spawn{-1, -1};
+    for (Coord candidate : candidates) {
+        if (board_.blocked(candidate)) continue;
+        bool occupied = false;
+        for (UnitId id : board_.occupants(candidate, UnitLayer::Land)) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& occupant = unit(id);
+            if (occupant.alive && occupant.deployed) {
+                occupied = true;
+                break;
+            }
+        }
+        if (!occupied) {
+            spawn = candidate;
+            break;
+        }
+    }
+    if (!board_.inBounds(spawn)) return kInvalidUnitId;
+
+    UnitId guardianId = createUnit(objective->owner, UnitType::NeutralGuardianOfFaith);
+    Unit& guardian = unit(guardianId);
+    if (!placeUnit(guardianId, spawn)) {
+        guardian.alive = false;
+        guardian.deployed = false;
+        guardian.hp.clear();
+        return kInvalidUnitId;
+    }
+
+    guardian.deployed = true;
+    guardian.homeCoord = anchor;
+    guardian.lastCoord = spawn;
+    guardian.neutralBehavior = NeutralBehavior::PassiveGuardian;
+    guardian.neutralProvoked = true;
+    guardian.neutralReturningHome = false;
+    guardian.provokedBy = intruderId;
+    guardian.target = intruderId;
+    guardian.retargetTimer = 0.0;
+    player(objective->owner).deployed.push_back(guardianId);
+
+    objective->antiAirGuardianId = guardianId;
+    if (std::find(objective->spawnedUnitIds.begin(), objective->spawnedUnitIds.end(), guardianId) ==
+        objective->spawnedUnitIds.end()) {
+        objective->spawnedUnitIds.push_back(guardianId);
+    }
+    pushEvent({EventType::Deployed, objective->owner, guardianId, intruderId, anchor, spawn, 0,
+               eventUnitName(guardian) + " answered the air intrusion"});
+    return guardianId;
+}
+
+void GameEngine::triggerMajorObjectiveAntiAir(size_t objectiveIndex, UnitId intruderId,
+                                              const std::string& reason) {
+    ExplorationObjectiveState* objective = exploration_.objective(objectiveIndex);
+    if (!objective || objective->cleared || !isMajorObjective(objective->kind)) return;
+    if (intruderId < 0 || intruderId >= static_cast<int>(units_.size()) ||
+        !isRealFlyingIntruder(unit(intruderId))) {
+        return;
+    }
+
+    bool firstTrigger = !objective->antiAirTriggered;
+    objective->antiAirTriggered = true;
+    if (objective->unitId >= 0 && objective->unitId < static_cast<int>(units_.size()) &&
+        unit(objective->unitId).alive) {
+        activateNeutral(objective->unitId, intruderId, reason.empty() ? "air intrusion" : reason);
+    }
+    if (firstTrigger) {
+        objective->antiAirCooldown = 0.0;
+        spawnAntiAirGuardian(objectiveIndex, intruderId);
+    }
+}
+
+void GameEngine::updateMajorObjectiveAntiAir(double dt) {
+    std::vector<std::pair<size_t, UnitId>> activeThreats;
+    for (const Unit& intruder : units_) {
+        if (!isRealFlyingIntruder(intruder)) continue;
+
+        std::optional<size_t> bestIndex;
+        int bestDistance = std::numeric_limits<int>::max();
+        for (size_t index = 0; index < exploration_.objectives().size(); ++index) {
+            const ExplorationObjectiveState* objective = exploration_.objective(index);
+            if (!objective || objective->cleared || !isMajorObjective(objective->kind)) continue;
+            int distance = manhattan(intruder.coord, majorObjectiveAnchor(*objective));
+            if (distance > kMajorObjectiveAntiAirRadius) continue;
+            if (!bestIndex || distance < bestDistance) {
+                bestIndex = index;
+                bestDistance = distance;
+            }
+        }
+
+        if (!bestIndex) continue;
+        triggerMajorObjectiveAntiAir(*bestIndex, intruder.id, "air intrusion");
+        activeThreats.push_back({*bestIndex, intruder.id});
+    }
+
+    for (const auto& threat : activeThreats) {
+        size_t index = threat.first;
+        UnitId intruder = threat.second;
+        if (intruder < 0 || intruder >= static_cast<int>(units_.size()) ||
+            !isRealFlyingIntruder(unit(intruder))) {
+            continue;
+        }
+        ExplorationObjectiveState* objective = exploration_.objective(index);
+        if (!objective || !objective->antiAirTriggered || objective->cleared) continue;
+        if (manhattan(unit(intruder).coord, majorObjectiveAnchor(*objective)) >
+            kMajorObjectiveAntiAirRadius) continue;
+
+        objective->antiAirCooldown -= dt;
+        if (objective->antiAirCooldown > 0.0) continue;
+
+        UnitId sourceId = kInvalidUnitId;
+        if (objective->unitId >= 0 && objective->unitId < static_cast<int>(units_.size()) &&
+            unit(objective->unitId).alive) {
+            sourceId = objective->unitId;
+        } else if (objective->antiAirGuardianId >= 0 &&
+                   objective->antiAirGuardianId < static_cast<int>(units_.size()) &&
+                   unit(objective->antiAirGuardianId).alive) {
+            sourceId = objective->antiAirGuardianId;
+        }
+
+        int damage = objective->kind == ExplorationObjectiveKind::Boss
+                         ? kBossAntiAirDamage
+                         : kEliteAntiAirDamage;
+        applyDamage(intruder, damage, DamageType::Radiant, sourceId);
+        objective = exploration_.objective(index);
+        if (objective) objective->antiAirCooldown = kMajorObjectiveAntiAirCooldown;
+    }
+}
+
 void GameEngine::tickAbilities(UnitId id, double dt) {
     Unit& u = unit(id);
     if (!u.alive || !u.deployed) return;
@@ -4792,6 +4978,8 @@ void GameEngine::tickCombat(double dt) {
         if (!unit(id).alive) continue;
         tickAbilities(id, dt);
     }
+
+    updateMajorObjectiveAntiAir(dt);
 
     for (UnitId id : ids) {
         if (!unit(id).alive) continue;
@@ -5375,6 +5563,11 @@ void GameEngine::activateNeutralOnAttackIntent(UnitId attackerId, UnitId targetI
     const Unit& attacker = unit(attackerId);
     const Unit& target = unit(targetId);
     if (!attacker.alive || !target.alive || !target.deployed) return;
+    if (isRealFlyingIntruder(attacker)) {
+        if (std::optional<size_t> objectiveIndex = majorObjectiveIndexForUnit(targetId)) {
+            triggerMajorObjectiveAntiAir(*objectiveIndex, attackerId, "air intrusion");
+        }
+    }
     if (isNeutralLikeCombatant(attacker) || !isNeutralGuardianUnit(target)) return;
     if (!canAttack(attacker, target)) return;
     activateNeutral(targetId, attackerId, "attacked");
@@ -6698,8 +6891,10 @@ std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coo
     bool hasUnitTarget = u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
                          unit(u.target).alive;
     if (u.spec.ability == AbilityKind::ClericHeal) {
+        UnitId healTarget = selectGlobalHealTarget(u);
         if (std::optional<Coord> supportStep = chooseSupportStep(u, reserved)) return supportStep;
-        if (selectGlobalHealTarget(u) != kInvalidUnitId || selectFollowAlly(u) != kInvalidUnitId) {
+        if (healTarget != kInvalidUnitId &&
+            manhattan(u.coord, unit(healTarget).coord) <= u.spec.abilityRange) {
             return std::nullopt;
         }
     }
@@ -6911,6 +7106,18 @@ std::optional<Coord> GameEngine::chooseExplorationGoal(const Unit& u) const {
                 score += 82.0 - (hpRatio < 0.50 ? 28.0 : 0.0);
                 break;
         }
+        if (u.spec.layer == UnitLayer::Air && isMajorObjective(objective.kind)) {
+            bool objectiveActive = objective.antiAirTriggered;
+            if (objective.unitId >= 0 && objective.unitId < static_cast<int>(units_.size())) {
+                const Unit& objectiveUnit = unit(objective.unitId);
+                objectiveActive = objectiveActive ||
+                                  (isNeutralMonsterType(objectiveUnit.spec.type) &&
+                                   objectiveUnit.neutralProvoked);
+            }
+            if (!objectiveActive) {
+                score -= objective.kind == ExplorationObjectiveKind::Boss ? 290.0 : 190.0;
+            }
+        }
 
         if (objective.unitId != kInvalidUnitId) {
             if (objective.unitId < 0 || objective.unitId >= static_cast<int>(units_.size())) continue;
@@ -6939,7 +7146,6 @@ std::optional<Coord> GameEngine::chooseExplorationGoal(const Unit& u) const {
 }
 
 std::optional<Coord> GameEngine::chooseSupportStep(const Unit& u, const std::vector<Coord>& reserved) const {
-    (void)reserved;
     if (!u.alive || !u.deployed || u.spec.ability != AbilityKind::ClericHeal) return std::nullopt;
 
     UnitId healTarget = selectGlobalHealTarget(u);
@@ -6947,21 +7153,13 @@ std::optional<Coord> GameEngine::chooseSupportStep(const Unit& u, const std::vec
         const Unit& target = unit(healTarget);
         if (manhattan(u.coord, target.coord) <= u.spec.abilityRange) return std::nullopt;
 
-        PathResult path = findPathToAttackCell(u, target.coord, u.spec.abilityRange);
-        if (!path.found || path.steps.size() < 2) return std::nullopt;
-        Coord next = path.steps[1];
-        if (!passableForLand(u, next)) return std::nullopt;
-        return next;
+        return chooseLandStepToward(u, target.coord, true, reserved, u.spec.abilityRange);
     }
 
     std::optional<Coord> goal = chooseFollowAllyGoal(u);
     if (!goal || *goal == u.coord) return std::nullopt;
 
-    PathResult path = findPathToGoal(u, *goal);
-    if (!path.found || path.steps.size() < 2) return std::nullopt;
-    Coord next = path.steps[1];
-    if (!passableForLand(u, next)) return std::nullopt;
-    return next;
+    return chooseLandStepToward(u, *goal, false, reserved, 1);
 }
 
 std::optional<Coord> GameEngine::chooseFollowAllyGoal(const Unit& u) const {

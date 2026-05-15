@@ -168,6 +168,29 @@ const UnitView* firstNeutralCampUnit(const GameSnapshot& snapshot, PlayerId side
     return fallback;
 }
 
+const UnitView* firstBossObjectiveUnit(const GameSnapshot& snapshot) {
+    for (const UnitView& unit : snapshot.units) {
+        if (!unit.alive || !unit.deployed || !isNeutralMonster(unit.type) ||
+            unit.type == UnitType::NeutralRedcap) {
+            continue;
+        }
+        if (terrainAtSnapshot(snapshot, unit.coord) == TerrainKind::BossSite) return &unit;
+    }
+    return nullptr;
+}
+
+int neutralGuardiansNear(const GameSnapshot& snapshot, Coord center, int radius) {
+    int count = 0;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.alive && unit.deployed &&
+            unit.type == UnitType::NeutralGuardianOfFaith &&
+            manhattan(unit.coord, center) <= radius) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 std::vector<UnitId> visibleNeutralObjectiveUnits(const GameSnapshot& snapshot) {
     std::vector<UnitId> result;
     for (const UnitView& unit : snapshot.units) {
@@ -2008,7 +2031,7 @@ void test_unit_attack_ranges_match_roles() {
         {UnitType::NeutralDeathKnight, 1},
         {UnitType::NeutralAirMyrmidon, 1},
         {UnitType::ShieldGuardian, 1},
-        {UnitType::Cleric, 3},
+        {UnitType::Cleric, 1},
         {UnitType::Evoker, 4},
         {UnitType::RogueAssassin, 1},
         {UnitType::Druid, 2},
@@ -3094,6 +3117,98 @@ void test_air_targeting_and_damage() {
     assert(!view || view->totalHp < view->maxTotalHp || !view->alive);
 }
 
+void test_major_objective_anti_air_triggers_on_flying_intrusion() {
+    GameEngine engine(741);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    GameSnapshot opening = engine.snapshot();
+    const UnitView* boss = firstBossObjectiveUnit(opening);
+    assert(boss);
+    UnitId bossId = boss->id;
+    Coord bossCoord = boss->coord;
+    int guardiansBefore = neutralGuardiansNear(opening, bossCoord, 2);
+    Coord impCoord = bossCoord;
+    UnitId imp = engine.debugCreateUnit(PlayerId::One, UnitType::ImpSwarm, impCoord);
+    assert(imp != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool sawAirIntrusion = false;
+    bool sawRadiantHit = false;
+    bool sawBossActivated = false;
+    bool sawGuardianSpawned = false;
+    for (int i = 0; i < 30 * 3 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.target == bossId && event.text.find("air intrusion") != std::string::npos) {
+                sawAirIntrusion = true;
+            }
+            if (event.target == imp && event.type == EventType::DamageDealt &&
+                event.amount >= 18 && event.text.find("Radiant") != std::string::npos) {
+                sawRadiantHit = true;
+            }
+        }
+        GameSnapshot snapshot = engine.snapshot();
+        const UnitView* bossView = findUnit(snapshot, bossId);
+        sawBossActivated = sawBossActivated || (bossView && bossView->neutralActivated);
+        sawGuardianSpawned = sawGuardianSpawned ||
+                             neutralGuardiansNear(snapshot, bossCoord, 2) > guardiansBefore;
+        if (sawAirIntrusion && sawRadiantHit && sawBossActivated && sawGuardianSpawned) {
+            return;
+        }
+    }
+
+    assert(sawBossActivated);
+    assert(sawAirIntrusion);
+    assert(sawRadiantHit);
+    assert(sawGuardianSpawned);
+}
+
+void test_major_objective_anti_air_ignores_ground_intrusion() {
+    GameEngine engine(742);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    GameSnapshot opening = engine.snapshot();
+    const UnitView* boss = firstBossObjectiveUnit(opening);
+    assert(boss);
+    UnitId bossId = boss->id;
+    Coord bossCoord = boss->coord;
+    int guardiansBefore = neutralGuardiansNear(opening, bossCoord, 2);
+    Coord groundCoord = openCoordNear(opening, {bossCoord.x - 4, bossCoord.y}, 4);
+    assert(manhattan(groundCoord, bossCoord) <= 4);
+    UnitId skeleton = engine.debugCreateUnit(PlayerId::One, UnitType::Skeleton, groundCoord);
+    assert(skeleton != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool sawAirIntrusion = false;
+    bool skeletonTookRadiant = false;
+    for (int i = 0; i < 30 * 1 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.target == bossId && event.text.find("air intrusion") != std::string::npos) {
+                sawAirIntrusion = true;
+            }
+            if (event.target == skeleton && event.type == EventType::DamageDealt &&
+                event.text.find("Radiant") != std::string::npos) {
+                skeletonTookRadiant = true;
+            }
+        }
+    }
+
+    GameSnapshot snapshot = engine.snapshot();
+    const UnitView* bossView = findUnit(snapshot, bossId);
+    assert(bossView);
+    assert(!bossView->neutralActivated);
+    assert(!sawAirIntrusion);
+    assert(!skeletonTookRadiant);
+    assert(neutralGuardiansNear(snapshot, bossCoord, 2) == guardiansBefore);
+}
+
 void test_melee_switches_to_immediate_threat_instead_of_chasing_far_target() {
     GameEngine engine(701);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -3991,6 +4106,55 @@ void test_cleric_follows_frontline_when_no_one_is_wounded() {
     assert(clericView->coord.x <= fighterView->coord.x);
 }
 
+void test_cleric_is_melee_only_but_keeps_three_tile_heal() {
+    GameEngine engine(12);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    const UnitSpec* clericSpec = engine.specFor(UnitType::Cleric);
+    assert(clericSpec);
+    assert(clericSpec->range == 1);
+    assert(clericSpec->abilityRange == 3);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2}, 5);
+    UnitId cleric = engine.debugCreateUnit(PlayerId::One, UnitType::Cleric, coords[0]);
+    UnitId fighter = engine.debugCreateUnit(PlayerId::One, UnitType::ShieldGuardian, coords[1]);
+    UnitId skeleton = engine.debugCreateUnit(PlayerId::Two, UnitType::Skeleton, coords[3]);
+    assert(cleric != kInvalidUnitId);
+    assert(fighter != kInvalidUnitId);
+    assert(skeleton != kInvalidUnitId);
+    assert(engine.debugApplyDamage(fighter, 20, DamageType::Force));
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool healedAtRange = false;
+    bool attackedFromOldRange = false;
+    for (int i = 0; i < 30 * 2 && engine.snapshot().phase == Phase::Combat; ++i) {
+        GameSnapshot before = engine.snapshot();
+        const UnitView* clericBefore = findUnit(before, cleric);
+        const UnitView* skeletonBefore = findUnit(before, skeleton);
+        int distanceBefore = clericBefore && skeletonBefore
+                                 ? manhattan(clericBefore->coord, skeletonBefore->coord)
+                                 : 99;
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::Healed && event.actor == cleric && event.target == fighter) {
+                healedAtRange = true;
+            }
+            if (event.type == EventType::UnitAttacked && event.actor == cleric &&
+                event.target == skeleton && distanceBefore > 1) {
+                attackedFromOldRange = true;
+            }
+        }
+        if (healedAtRange && attackedFromOldRange) break;
+    }
+
+    assert(healedAtRange);
+    assert(!attackedFromOldRange);
+}
+
 void test_solo_cleric_falls_back_to_attacking() {
     GameEngine engine(11);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -4097,6 +4261,8 @@ int main() {
     RUN_TEST(test_githyanki_opens_with_astral_raid);
     RUN_TEST(test_assassin_uses_limited_range_ambush);
     RUN_TEST(test_air_targeting_and_damage);
+    RUN_TEST(test_major_objective_anti_air_triggers_on_flying_intrusion);
+    RUN_TEST(test_major_objective_anti_air_ignores_ground_intrusion);
     RUN_TEST(test_melee_switches_to_immediate_threat_instead_of_chasing_far_target);
     RUN_TEST(test_ranged_stops_after_entering_attack_range);
     RUN_TEST(test_dynamic_chase_retargets_when_current_target_moves_out_of_reach);
@@ -4127,6 +4293,7 @@ int main() {
     RUN_TEST(test_exploration_complete_tie_has_no_winner);
     RUN_TEST(test_cleric_moves_to_heal_distant_ally);
     RUN_TEST(test_cleric_follows_frontline_when_no_one_is_wounded);
+    RUN_TEST(test_cleric_is_melee_only_but_keeps_three_tile_heal);
     RUN_TEST(test_solo_cleric_falls_back_to_attacking);
 #undef RUN_TEST
 

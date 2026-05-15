@@ -18,6 +18,9 @@ struct ExplorationObjectiveState {
     bool cleared = false;
     bool revealed = false;
     bool triggered = false;
+    bool antiAirTriggered = false;
+    UnitId antiAirGuardianId = kInvalidUnitId;
+    double antiAirCooldown = 0.0;
     int rewardGold = 0;
     int rewardQuality = 0;
 };
