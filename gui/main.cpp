@@ -654,26 +654,22 @@ TerrainKind terrainAt(const GameSnapshot& snapshot, Coord coord) {
 Color terrainColor(TerrainKind terrain, Coord coord, const GameSnapshot& snapshot) {
     switch (terrain) {
         case TerrainKind::Wall:
-            return Color{24, 23, 24, 255};
+            return Color{18, 17, 18, 255};
         case TerrainKind::SideRoad:
-            return coord.y < snapshot.height / 2
-                       ? Color{43, 55, 64, 255}
-                       : Color{59, 50, 45, 255};
+            return Color{50, 46, 42, 255};
         case TerrainKind::NeutralCamp:
-            return coord.y < snapshot.height / 2
-                       ? Color{72, 68, 43, 255}
-                       : Color{70, 60, 50, 255};
+            return Color{58, 52, 45, 255};
         case TerrainKind::Trap:
-            return Color{74, 43, 48, 255};
+            return Color{65, 48, 43, 255};
         case TerrainKind::BossSite:
-            return Color{75, 55, 46, 255};
+            return Color{70, 56, 46, 255};
         case TerrainKind::ClearedObjective:
-            return Color{43, 42, 40, 255};
+            return Color{43, 40, 37, 255};
         case TerrainKind::ClearedBoss:
-            return Color{50, 43, 45, 255};
+            return Color{48, 43, 40, 255};
         case TerrainKind::Open:
         default:
-            return Color{37, 36, 36, 255};
+            return Color{40, 37, 34, 255};
     }
 }
 
@@ -2871,7 +2867,7 @@ int draftVisibleStart(int scrollIndex, int count) {
 Rectangle relicInfoCardRect(Rectangle panel, int visibleIndex, int visibleCount) {
     float gap = 14.0f;
     float cardW = (panel.width - 28.0f - gap * (visibleCount - 1)) / std::max(1, visibleCount);
-    float cardH = panel.height - 96.0f;
+    float cardH = std::max(360.0f, panel.height - 152.0f);
     return {panel.x + 14.0f + visibleIndex * (cardW + gap), panel.y + 72.0f, cardW, cardH};
 }
 
@@ -2941,6 +2937,42 @@ void drawRelicDraftPanel(const DraftState& draft,
         drawRelicCard(draft.offers[static_cast<size_t>(offerIndex)], card, false);
     }
     EndScissorMode();
+
+    Rectangle footerBand{panel.x + 12.0f,
+                         panel.y + panel.height - 64.0f,
+                         panel.width - 24.0f,
+                         52.0f};
+    DrawRectangleRounded(footerBand, 0.08f, 6, Color{46, 34, 28, 214});
+    DrawRectangleRoundedLines(footerBand, 0.08f, 6, 1.0f, Color{123, 90, 52, 200});
+    DrawLineEx({footerBand.x + 10.0f, footerBand.y},
+               {footerBand.x + footerBand.width - 10.0f, footerBand.y},
+               1.0f,
+               Color{145, 107, 58, 110});
+
+    float footerX = footerBand.x + 10.0f;
+    drawText(fitText(TextFormat("Relics %d   Cost -%d   Income +%d   Roster +%d",
+                                static_cast<int>(modifiers.relicIds.size()),
+                                modifiers.costDiscount,
+                                modifiers.roundIncomeBonus,
+                                modifiers.benchBonus),
+                     footerBand.width - 20.0f,
+                     16.0f),
+             footerX,
+             footerBand.y + 7.0f,
+             16.0f,
+             kAccentAlt);
+    drawText(fitText(TextFormat("Interest +%d   Bonus clear gold +%d   Draft +%d   Summon cap +%d",
+                                modifiers.interestBonus,
+                                modifiers.bonusGoldOnClear,
+                                modifiers.extraRelicChoices,
+                                modifiers.summonLimitBonus),
+                     footerBand.width - 20.0f,
+                     16.0f),
+             footerX,
+             footerBand.y + 25.0f,
+             16.0f,
+             kMutedInk);
+
     if (offerCount > visibleCount) {
         Rectangle left = draftScrollButtonRect(panel, false);
         Rectangle right = draftScrollButtonRect(panel, true);
@@ -2953,19 +2985,6 @@ void drawRelicDraftPanel(const DraftState& draft,
         std::string page = TextFormat("%d-%d / %d", start + 1, std::min(start + visibleCount, offerCount), offerCount);
         drawTextRight(page, right.x - 10.0f, panel.y + 23.0f, 18.0f, kMutedInk);
     }
-
-    drawText(TextFormat("Relics %d   Cost -%d   Income +%d   Roster +%d",
-                        static_cast<int>(modifiers.relicIds.size()),
-                        modifiers.costDiscount,
-                        modifiers.roundIncomeBonus,
-                        modifiers.benchBonus),
-             panel.x + 14.0f, panel.y + 258.0f, 16.0f, kAccentAlt);
-    drawText(TextFormat("Interest +%d   Bonus clear gold +%d   Draft +%d   Summon cap +%d",
-                        modifiers.interestBonus,
-                        modifiers.bonusGoldOnClear,
-                        modifiers.extraRelicChoices,
-                        modifiers.summonLimitBonus),
-             panel.x + 14.0f, panel.y + 276.0f, 16.0f, kMutedInk);
 }
 
 int draftOfferAtMouse(const DraftState& draft, Vector2 mouse, Rectangle panel, int scrollIndex) {
@@ -3725,7 +3744,7 @@ void drawBoard(const GameEngine& engine,
                const std::vector<CombatCue>& combatCues) {
     Rectangle rect = boardRect();
     drawPanelFrame({rect.x - 14.0f, rect.y - 14.0f, rect.width + 28.0f, rect.height + 28.0f}, kLeatherDark);
-    DrawRectangleRec(rect, Color{31, 32, 35, 255});
+    DrawRectangleRec(rect, Color{28, 25, 22, 255});
 
     Coord hover;
     bool hasHover = mouseToCell(gMousePosition, hover);
@@ -3745,31 +3764,40 @@ void drawBoard(const GameEngine& engine,
             TerrainKind terrain = terrainAt(snapshot, coord);
             Color fill = terrainColor(terrain, coord, snapshot);
             if ((x + y) % 2 == 1 && terrain != TerrainKind::Wall) {
-                fill.r = static_cast<unsigned char>(std::max(0, fill.r - 5));
-                fill.g = static_cast<unsigned char>(std::max(0, fill.g - 5));
-                fill.b = static_cast<unsigned char>(std::max(0, fill.b - 5));
+                fill.r = static_cast<unsigned char>(std::max(0, fill.r - 4));
+                fill.g = static_cast<unsigned char>(std::max(0, fill.g - 4));
+                fill.b = static_cast<unsigned char>(std::max(0, fill.b - 4));
             }
             DrawRectangleRec({cell.x + 1, cell.y + 1, cell.width - 2, cell.height - 2}, fill);
             DrawRectangleLinesEx(cell, 1.0f,
-                                 terrain == TerrainKind::Wall ? Color{16, 15, 18, 190}
-                                                              : Color{122, 94, 59, 115});
+                                 terrain == TerrainKind::Wall ? Color{16, 14, 15, 180}
+                                                              : Color{106, 85, 61, 88});
             if (terrain == TerrainKind::Wall) {
                 DrawRectangleRec({cell.x + 8.0f, cell.y + 8.0f, cell.width - 16.0f, cell.height - 16.0f},
-                                 Color{18, 17, 20, 130});
+                                 Color{18, 16, 17, 126});
                 DrawLineEx({cell.x + 9.0f, cell.y + cell.height - 10.0f},
                            {cell.x + cell.width - 8.0f, cell.y + 10.0f},
-                           1.0f, Color{64, 56, 48, 80});
+                           1.0f, Color{58, 49, 42, 72});
             } else if (terrain == TerrainKind::SideRoad) {
                 DrawCircleLines(static_cast<int>(cell.x + cell.width * 0.5f),
                                 static_cast<int>(cell.y + cell.height * 0.5f),
-                                cell.width * 0.20f, Color{173, 197, 185, 64});
+                                cell.width * 0.20f, Color{170, 140, 102, 52});
             } else if (terrain == TerrainKind::NeutralCamp) {
                 NeutralFamily family = campFamilyForCell(coord);
                 DrawCircleV({cell.x + cell.width / 2.0f, cell.y + cell.height / 2.0f},
                             cell.width * 0.36f, Color{19, 14, 11, 150});
                 DrawCircleLines(static_cast<int>(cell.x + cell.width / 2.0f),
                                 static_cast<int>(cell.y + cell.height / 2.0f),
-                                cell.width * 0.36f, relicFamilyColor(family));
+                                cell.width * 0.36f,
+                                family == NeutralFamily::Swarm
+                                    ? Color{156, 151, 118, 138}
+                                    : family == NeutralFamily::Guardian
+                                          ? Color{138, 151, 160, 138}
+                                          : family == NeutralFamily::Caster
+                                                ? Color{156, 142, 170, 138}
+                                                : family == NeutralFamily::Assassin
+                                                      ? Color{168, 128, 137, 138}
+                                                      : Color{176, 150, 111, 138});
                 Rectangle iconRect{cell.x + 8.0f, cell.y + 8.0f, cell.width - 16.0f, cell.height - 16.0f};
                 if (const Texture2D* texture = relicFamilyTexture(family)) {
                     drawTextureAspectFit(*texture, iconRect, WHITE);
@@ -3778,54 +3806,54 @@ void drawBoard(const GameEngine& engine,
                 }
             } else if (terrain == TerrainKind::BossSite) {
                 Vector2 c{cell.x + cell.width * 0.5f, cell.y + cell.height * 0.5f};
-                DrawCircleV(c, cell.width * 0.39f, Color{34, 15, 16, 170});
+                DrawCircleV(c, cell.width * 0.39f, Color{33, 18, 14, 166});
                 DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y),
-                                cell.width * 0.38f, Color{238, 196, 103, 215});
+                                cell.width * 0.38f, Color{216, 176, 110, 195});
                 DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y),
-                                cell.width * 0.25f, Color{156, 62, 67, 220});
+                                cell.width * 0.25f, Color{141, 96, 70, 178});
                 DrawTriangle({c.x, c.y - cell.height * 0.20f},
                              {c.x - cell.width * 0.18f, c.y + cell.height * 0.16f},
                              {c.x + cell.width * 0.18f, c.y + cell.height * 0.16f},
-                             Color{235, 196, 104, 235});
-                DrawCircleV(c, cell.width * 0.08f, Color{43, 18, 17, 230});
+                             Color{224, 182, 112, 212});
+                DrawCircleV(c, cell.width * 0.08f, Color{41, 24, 19, 225});
             } else if (terrain == TerrainKind::Trap) {
                 Vector2 c{cell.x + cell.width * 0.5f, cell.y + cell.height * 0.5f};
-                DrawCircleV(c, cell.width * 0.28f, Color{70, 22, 31, 145});
+                DrawCircleV(c, cell.width * 0.28f, Color{62, 33, 25, 126});
                 DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y),
-                                cell.width * 0.28f, Color{224, 166, 89, 185});
+                                cell.width * 0.28f, Color{181, 142, 93, 150});
                 DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y),
-                                cell.width * 0.16f, Color{132, 54, 58, 205});
+                                cell.width * 0.16f, Color{121, 83, 63, 170});
                 DrawLineEx({c.x - cell.width * 0.16f, c.y - cell.height * 0.06f},
                            {c.x + cell.width * 0.16f, c.y + cell.height * 0.06f},
-                           2.2f, Color{235, 188, 112, 190});
+                           2.2f, Color{217, 175, 107, 160});
                 DrawLineEx({c.x - cell.width * 0.12f, c.y + cell.height * 0.12f},
                            {c.x + cell.width * 0.12f, c.y - cell.height * 0.12f},
-                           1.8f, Color{99, 28, 38, 210});
+                           1.8f, Color{124, 92, 68, 160});
             } else if (terrain == TerrainKind::ClearedObjective ||
                        terrain == TerrainKind::ClearedBoss) {
                 Vector2 c{cell.x + cell.width * 0.5f, cell.y + cell.height * 0.52f};
                 Color stone = terrain == TerrainKind::ClearedBoss
-                                  ? Color{94, 80, 88, 230}
-                                  : Color{82, 78, 73, 220};
+                                  ? Color{88, 78, 72, 226}
+                                  : Color{80, 76, 70, 216};
                 Rectangle grave{cell.x + cell.width * 0.28f, cell.y + cell.height * 0.18f,
                                 cell.width * 0.44f, cell.height * 0.58f};
                 DrawRectangleRounded(grave, 0.34f, 10, stone);
-                DrawRectangleRoundedLines(grave, 0.34f, 10, 1.5f, Color{215, 194, 147, 160});
+                DrawRectangleRoundedLines(grave, 0.34f, 10, 1.5f, Color{194, 168, 122, 138});
                 DrawCircleV({c.x - cell.width * 0.08f, c.y - cell.height * 0.04f},
-                            cell.width * 0.035f, Color{25, 22, 24, 210});
+                            cell.width * 0.035f, Color{24, 22, 21, 210});
                 DrawCircleV({c.x + cell.width * 0.08f, c.y - cell.height * 0.04f},
-                            cell.width * 0.035f, Color{25, 22, 24, 210});
+                            cell.width * 0.035f, Color{24, 22, 21, 210});
                 DrawLineEx({c.x - cell.width * 0.09f, c.y + cell.height * 0.10f},
                            {c.x + cell.width * 0.09f, c.y + cell.height * 0.10f},
-                           2.0f, Color{25, 22, 24, 210});
+                           2.0f, Color{24, 22, 21, 210});
             }
             if (engine.isDeploymentCell(PlayerId::One, coord) || engine.isDeploymentCell(PlayerId::Two, coord)) {
                 Color rune = engine.isDeploymentCell(PlayerId::One, coord)
-                                 ? Color{105, 211, 203, 92}
-                                 : Color{225, 95, 107, 92};
+                                 ? Color{160, 145, 110, 58}
+                                 : Color{176, 138, 96, 58};
                 DrawCircleLines(static_cast<int>(cell.x + cell.width / 2.0f),
                                 static_cast<int>(cell.y + cell.height / 2.0f),
-                                23.0f, rune);
+                                21.0f, rune);
                 DrawLineEx({cell.x + 23.0f, cell.y + cell.height / 2.0f},
                            {cell.x + cell.width - 23.0f, cell.y + cell.height / 2.0f},
                            1.0f, rune);
@@ -3835,16 +3863,16 @@ void drawBoard(const GameEngine& engine,
             }
             if ((x == 0 || x == snapshot.width - 1) && y == snapshot.height / 2) {
                 DrawCircleV({cell.x + cell.width / 2.0f, cell.y + cell.height / 2.0f},
-                            25.0f, Color{18, 12, 9, 85});
+                            25.0f, Color{18, 13, 10, 78});
                 DrawCircleLines(static_cast<int>(cell.x + cell.width / 2.0f),
                                 static_cast<int>(cell.y + cell.height / 2.0f),
-                                24.0f, Color{225, 184, 97, 180});
+                                24.0f, Color{187, 154, 96, 128});
             }
 
             if (hasHover && hover == coord && draggingUnit && snapshot.phase == Phase::Preparation) {
                 bool legal = engine.canDeploy(PlayerId::One, coord, draggingUnit->layer);
                 DrawRectangleLinesEx({cell.x + 3, cell.y + 3, cell.width - 6, cell.height - 6},
-                                     3.0f, legal ? Color{95, 200, 105, 255} : Color{205, 62, 54, 255});
+                                     3.0f, legal ? Color{186, 152, 92, 235} : Color{142, 83, 63, 235});
             }
         }
     }
