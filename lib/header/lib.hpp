@@ -528,6 +528,17 @@ private:
         std::vector<Coord> steps;
     };
 
+    struct TargetCandidate {
+        UnitId id = kInvalidUnitId;
+        int distance = 0;
+        int pathCost = std::numeric_limits<int>::max();
+        bool inRange = false;
+        bool reachable = false;
+        bool attacksMe = false;
+        bool forced = false;
+        double score = -std::numeric_limits<double>::infinity();
+    };
+
     struct KnockbackMove {
         UnitId id = kInvalidUnitId;
         Coord from;
@@ -639,11 +650,16 @@ private:
     void tickCombat(double dt);
     void refreshTarget(Unit& unit, bool force);
     UnitId selectTarget(const Unit& unit) const;
+    TargetCandidate evaluateTargetCandidate(const Unit& unit, const Unit& candidate) const;
+    bool targetAllowedByAggro(const Unit& unit, const Unit& candidate) const;
+    bool shouldKeepCurrentTarget(const Unit& unit, const TargetCandidate& current,
+                                 const TargetCandidate& best) const;
+    bool shouldForceRetarget(const Unit& unit) const;
     UnitId selectHealTarget(const Unit& healer) const;
     UnitId selectGlobalHealTarget(const Unit& healer) const;
     UnitId selectFollowAlly(const Unit& unit) const;
-    std::optional<size_t> selectCorpseForSpores(const Unit& unit) const;
-    std::optional<Coord> selectSporeSpawnCell(Coord corpseCoord) const;
+    std::optional<size_t> selectCorpseForSpores(const Unit& unit, Coord guardOrigin) const;
+    std::optional<Coord> selectSporeSpawnCell(Coord corpseCoord, Coord guardOrigin) const;
     bool canAttack(const Unit& attacker, const Unit& target) const;
     bool inAttackRange(const Unit& attacker, const Unit& target) const;
     double effectiveSpeed(const Unit& unit) const;
@@ -660,6 +676,7 @@ private:
     bool isNeutralGuardianUnit(const Unit& unit) const;
     bool isNeutralSpawServant(const Unit& unit) const;
     bool isNeutralLikeCombatant(const Unit& unit) const;
+    Coord neutralLeashOrigin(const Unit& unit) const;
     bool withinNeutralLeash(const Unit& unit, Coord coord) const;
     UnitId selectDominatePersonTarget(const Unit& caster) const;
     void triggerTamiaDominate(UnitId id);
@@ -683,6 +700,12 @@ private:
     double clusterScoreAround(const Unit& attacker, Coord center) const;
 
     void attack(UnitId attackerId, UnitId targetId);
+    bool resolveCounterspellReaction(UnitId attackerId, UnitId targetId);
+    bool tryResolveExtractBrain(UnitId attackerId, UnitId targetId);
+    bool tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetId);
+    void resolveWeaponAttack(UnitId attackerId, UnitId targetId);
+    void applyWeaponStrikes(UnitId attackerId, UnitId targetId,
+                            const DamagePacket& strikeDamage, int strikeCount);
     void applyDamage(UnitId targetId, int amount, UnitId sourceId);
     void applyHeal(UnitId targetId, int amount, UnitId sourceId);
     void addShield(UnitId targetId, int amount, UnitId sourceId);
@@ -693,6 +716,12 @@ private:
 
     void moveUnits(double dt);
     std::optional<Coord> chooseNextStep(UnitId id, const std::vector<Coord>& reserved) const;
+    bool hasImmediateAttackTarget(const Unit& unit) const;
+    std::optional<Coord> chooseLandStepToward(const Unit& unit, Coord target, bool attackTarget,
+                                              const std::vector<Coord>& reserved,
+                                              int attackRange,
+                                              std::optional<Coord> leashCenter = std::nullopt,
+                                              int leashRadius = 0) const;
     bool neutralCanLeaveHome(const Unit& unit) const;
     std::optional<Coord> chooseNeutralGuardianStep(const Unit& unit, const std::vector<Coord>& reserved) const;
     std::optional<Coord> chooseNeutralSummonGuardStep(const Unit& unit, const std::vector<Coord>& reserved) const;

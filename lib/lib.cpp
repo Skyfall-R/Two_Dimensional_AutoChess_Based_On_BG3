@@ -2993,12 +2993,17 @@ void GameEngine::resetCombatantsForPreparation() {
 
         if (!isInternalUnit(u.spec.type) || neutralSporeServant || isNeutralMonsterType(u.spec.type)) {
             Coord stay = board_.inBounds(u.coord) ? u.coord : u.homeCoord;
+            Coord leashOrigin = neutralSporeServant ? neutralLeashOrigin(u) : u.homeCoord;
+            if (neutralSporeServant && manhattan(stay, leashOrigin) > kNeutralSummonGuardRadius) {
+                stay = leashOrigin;
+            }
             bool placed = board_.inBounds(stay) && placeUnit(u.id, stay);
             if (!placed && board_.inBounds(stay)) {
                 int radius = neutralSporeServant ? kNeutralSummonGuardRadius
                              : (u.spec.type == UnitType::NeutralRedcap ? kRedcapAmbushRadius : 2);
                 for (Coord candidate : cellsInRange(stay, radius)) {
-                    if (neutralSporeServant && manhattan(candidate, u.homeCoord) > kNeutralSummonGuardRadius) {
+                    if (neutralSporeServant &&
+                        manhattan(candidate, leashOrigin) > kNeutralSummonGuardRadius) {
                         continue;
                     }
                     if (placeUnit(u.id, candidate)) {
@@ -3752,11 +3757,12 @@ void GameEngine::tickAbilities(UnitId id, double dt) {
             Coord origin = u.coord;
             double lifespan = u.spec.abilityDuration > 0.0 ? u.spec.abilityDuration : 12.0;
             std::string casterName = eventUnitName(u);
-            std::optional<size_t> corpseIndex = selectCorpseForSpores(u);
+            Coord guardOrigin = neutralLeashOrigin(u);
+            std::optional<size_t> corpseIndex = selectCorpseForSpores(u, guardOrigin);
             if (!corpseIndex) break;
 
             CorpseState& corpse = corpses_[*corpseIndex];
-            std::optional<Coord> spot = selectSporeSpawnCell(corpse.coord);
+            std::optional<Coord> spot = selectSporeSpawnCell(corpse.coord, guardOrigin);
             if (!spot) break;
 
             corpse.consumed = true;
@@ -3779,7 +3785,7 @@ void GameEngine::tickAbilities(UnitId id, double dt) {
                 corpse.consumed = false;
                 break;
             }
-            servant.homeCoord = *spot;
+            servant.homeCoord = guardOrigin;
             servant.lastCoord = *spot;
             servant.target = kInvalidUnitId;
             servant.retargetTimer = 0.0;
@@ -3829,27 +3835,7 @@ void GameEngine::tickCombat(double dt) {
         if (hasStatus(u, StatusKind::Stunned) || hasStatus(u, StatusKind::Prone)) continue;
         u.attackTimer += dt;
         u.retargetTimer -= dt;
-        bool force = u.target == kInvalidUnitId ||
-                     u.target >= static_cast<int>(units_.size()) ||
-                     !unit(u.target).alive;
-        if (!force && u.spec.type == UnitType::NeutralRedcap) {
-            Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
-            force = manhattan(unit(u.target).coord, origin) > kRedcapAmbushRadius;
-        }
-        if (!force && isNeutralGuardianUnit(u)) {
-            force = !withinNeutralLeash(u, unit(u.target).coord);
-        }
-        if (!force && isNeutralSpawServant(u)) {
-            force = !withinNeutralLeash(u, unit(u.target).coord);
-        }
-        if (!force && isRoundTransientUnit(u.spec.type)) {
-            force = !isNeutralSpawServant(u);
-        }
-        if (!force && !isNeutralLikeCombatant(u)) {
-            force = manhattan(u.coord, unit(u.target).coord) >
-                    std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
-        }
-        refreshTarget(u, force);
+        refreshTarget(u, shouldForceRetarget(u));
 
         if (u.target != kInvalidUnitId && u.attackTimer >= effectiveAttackCooldown(u) &&
             inAttackRange(u, unit(u.target))) {
@@ -3882,22 +3868,131 @@ void GameEngine::refreshTarget(Unit& u, bool force) {
     u.retargetTimer = kRetargetInterval;
 }
 
+bool GameEngine::targetAllowedByAggro(const Unit& u, const Unit& candidate) const {
+    if (u.spec.type == UnitType::NeutralRedcap) {
+        Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+        if (manhattan(candidate.coord, origin) > kRedcapAmbushRadius) return false;
+    }
+    if ((isNeutralGuardianUnit(u) || isNeutralSpawServant(u)) &&
+        !withinNeutralLeash(u, candidate.coord)) {
+        return false;
+    }
+    if (isNeutralLikeCombatant(u)) return true;
+    if (isRoundTransientUnit(u.spec.type)) return false;
+    return manhattan(u.coord, candidate.coord) <=
+           std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
+}
+
+GameEngine::TargetCandidate GameEngine::evaluateTargetCandidate(const Unit& u,
+                                                                const Unit& candidate) const {
+    TargetCandidate result;
+    result.id = candidate.id;
+    if (!candidate.alive || !candidate.deployed || !canAttack(u, candidate)) return result;
+    if (!targetAllowedByAggro(u, candidate)) return result;
+
+    result.distance = manhattan(u.coord, candidate.coord);
+    result.inRange = inAttackRange(u, candidate);
+    result.reachable = result.inRange || u.spec.layer == UnitLayer::Air;
+    result.pathCost = result.inRange ? 0 : result.distance;
+    if (!result.reachable) {
+        int pathRange = u.spec.ability == AbilityKind::MinotaurCharge ? 1 : u.spec.range;
+        PathResult path = findPathToAttackCell(u, candidate.coord, pathRange);
+        result.reachable = path.found;
+        if (path.found) {
+            result.pathCost = path.steps.empty() ? result.distance
+                                                 : static_cast<int>(path.steps.size()) - 1;
+        }
+    }
+    if (!result.reachable) return result;
+
+    result.attacksMe = candidate.target == u.id && canAttack(candidate, u);
+    int maxHp = std::max(1, candidate.spec.maxHp * candidate.spec.unitCount);
+    int hp = totalHp(candidate);
+    int missingHp = std::max(0, maxHp - hp);
+
+    result.score = candidate.spec.threat;
+    result.score -= result.distance * 10.0;
+    result.score -= result.pathCost * 10.0;
+    if (result.inRange) result.score += 120.0;
+    if (candidate.id == u.target) result.score += 34.0;
+    if (result.attacksMe) {
+        result.score += 180.0;
+        result.forced = true;
+    }
+    if (hasStatus(candidate, StatusKind::Taunt) ||
+        candidate.spec.ability == AbilityKind::GuardianShield) {
+        result.score += result.distance <= 3 ? 220.0 : 90.0;
+        result.forced = true;
+    }
+    if (candidate.spec.type == UnitType::NeutralRedcap &&
+        candidate.neutralBehavior == NeutralBehavior::HostileAmbusher) {
+        result.score += 150.0;
+        result.forced = true;
+    }
+
+    result.score += std::min(36.0, missingHp * 0.12);
+    if (hp < maxHp / 2) result.score += 24.0;
+
+    if (u.spec.roleMask & kRoleAssassin) {
+        if (candidate.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) result.score += 72.0;
+        int backline = candidate.owner == PlayerId::One
+                           ? (board_.width - 1 - candidate.coord.x)
+                           : candidate.coord.x;
+        result.score += backline * 4.5;
+        result.score -= result.pathCost * 1.5;
+    }
+    if (u.spec.roleMask & kRoleAoe) {
+        result.score += clusterScoreAround(u, candidate.coord) * 4.2 + 44.0;
+    }
+    if (u.spec.roleMask & kRoleControl) {
+        if (candidate.spec.roleMask & (kRoleAoe | kRoleSupport | kRoleRanged)) result.score += 22.0;
+    }
+    if (u.spec.roleMask & kRoleRanged) {
+        if (result.inRange) result.score += 44.0;
+        if (result.distance <= 1) result.score -= 28.0;
+        result.score += std::min(18, u.spec.range) * 1.5;
+    }
+    if (u.spec.range <= 1 || (u.spec.roleMask & kRoleMelee)) {
+        result.score += 58.0 - result.distance * 7.0 - result.pathCost * 1.5;
+    }
+    if ((u.spec.canAttackAir || (u.spec.roleMask & kRoleRanged)) &&
+        candidate.spec.layer == UnitLayer::Air) {
+        result.score += 26.0;
+    }
+
+    return result;
+}
+
+bool GameEngine::shouldKeepCurrentTarget(const Unit& u, const TargetCandidate& current,
+                                         const TargetCandidate& best) const {
+    if (current.id == kInvalidUnitId || !current.reachable) return false;
+    if (current.forced) return true;
+    if (best.id == kInvalidUnitId) return true;
+    if (best.forced && best.id != current.id) return false;
+    if (current.inRange && !best.forced) return current.score + 36.0 >= best.score;
+    int aggro = std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
+    if (!isNeutralLikeCombatant(u) && current.distance > aggro) return false;
+    if (current.pathCost > aggro + 5 && best.pathCost <= 2) return false;
+    return current.score + 48.0 >= best.score;
+}
+
+bool GameEngine::shouldForceRetarget(const Unit& u) const {
+    if (u.target == kInvalidUnitId || u.target >= static_cast<int>(units_.size())) return true;
+    const Unit& target = unit(u.target);
+    if (!target.alive || !target.deployed || !canAttack(u, target)) return true;
+    if (!targetAllowedByAggro(u, target)) return true;
+    if (isRoundTransientUnit(u.spec.type) && !isNeutralSpawServant(u)) return true;
+    TargetCandidate current = evaluateTargetCandidate(u, target);
+    if (!current.reachable) return true;
+    if (!current.inRange && hasImmediateAttackTarget(u)) return true;
+    int aggro = std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
+    return !isNeutralLikeCombatant(u) && current.pathCost > aggro + 5;
+}
+
 UnitId GameEngine::selectTarget(const Unit& u) const {
     if (!u.alive || !u.deployed) return kInvalidUnitId;
     if (!canNeutralAct(u)) return kInvalidUnitId;
     if (u.neutralReturningHome) return kInvalidUnitId;
-    Coord redcapOrigin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
-    auto insideRedcapAmbush = [&](const Unit& candidate) {
-        return u.spec.type != UnitType::NeutralRedcap ||
-               manhattan(candidate.coord, redcapOrigin) <= kRedcapAmbushRadius;
-    };
-    auto insideExplorationAggro = [&](const Unit& candidate) {
-        if (isNeutralLikeCombatant(u)) return true;
-        if (isNeutralSpawServant(u)) return withinNeutralLeash(u, candidate.coord);
-        if (isRoundTransientUnit(u.spec.type)) return false;
-        return manhattan(u.coord, candidate.coord) <=
-               std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
-    };
     if (u.spec.ability == AbilityKind::ClericHeal) {
         if (selectGlobalHealTarget(u) != kInvalidUnitId) return kInvalidUnitId;
         if (selectFollowAlly(u) != kInvalidUnitId) {
@@ -3905,6 +4000,7 @@ UnitId GameEngine::selectTarget(const Unit& u) const {
             int bestDist = std::numeric_limits<int>::max();
             for (const Unit& candidate : units_) {
                 if (!candidate.alive || !candidate.deployed || !inAttackRange(u, candidate)) continue;
+                if (!targetAllowedByAggro(u, candidate)) continue;
                 int dist = manhattan(u.coord, candidate.coord);
                 if (dist < bestDist) {
                     bestDist = dist;
@@ -3915,113 +4011,35 @@ UnitId GameEngine::selectTarget(const Unit& u) const {
         }
     }
 
-    if (!isNeutralLikeCombatant(u)) {
-        UnitId bestImmediate = kInvalidUnitId;
-        int bestTier = -1;
-        double bestImmediateScore = -std::numeric_limits<double>::infinity();
-        for (const Unit& candidate : units_) {
-            if (!candidate.alive || !candidate.deployed || !canAttack(u, candidate)) continue;
-            if (!insideExplorationAggro(candidate)) continue;
-            int tier = -1;
-            bool candidateTargetsMe = candidate.target == u.id && canAttack(candidate, u);
-            if (candidateTargetsMe) {
-                tier = 4;
-            } else if (candidate.spec.type == UnitType::NeutralRedcap &&
-                       candidate.neutralBehavior == NeutralBehavior::HostileAmbusher) {
-                tier = 3;
-            } else if (inAttackRange(u, candidate)) {
-                tier = 2;
-            } else if (manhattan(u.coord, candidate.coord) <= 1) {
-                tier = 1;
-            }
-            if (tier < 0) continue;
-            if (!inAttackRange(u, candidate) && u.spec.layer != UnitLayer::Air &&
-                !findPathToAttackCell(u, candidate.coord, u.spec.range).found) {
-                continue;
-            }
-            double score = tier * 10000.0 + candidate.spec.threat - manhattan(u.coord, candidate.coord) * 8.0;
-            if (candidate.id == u.target) score += 250.0;
-            if (score > bestImmediateScore) {
-                bestImmediateScore = score;
-                bestTier = tier;
-                bestImmediate = candidate.id;
-            }
-        }
-        if (bestTier >= 0) return bestImmediate;
-    }
-
     if (u.neutralBehavior == NeutralBehavior::HostileAmbusher &&
         u.provokedBy >= 0 && u.provokedBy < static_cast<int>(units_.size())) {
         const Unit& triggered = unit(u.provokedBy);
-        if (triggered.alive && triggered.deployed && canAttack(u, triggered) &&
-            insideRedcapAmbush(triggered) &&
-            (inAttackRange(u, triggered) ||
-             u.spec.layer == UnitLayer::Air ||
-             findPathToAttackCell(u, triggered.coord, u.spec.range).found)) {
+        TargetCandidate triggeredCandidate = evaluateTargetCandidate(u, triggered);
+        if (triggeredCandidate.reachable) {
             return triggered.id;
         }
     }
 
     if (isNeutralGuardianUnit(u) && u.provokedBy >= 0 && u.provokedBy < static_cast<int>(units_.size())) {
         const Unit& provoker = unit(u.provokedBy);
-        if (provoker.alive && provoker.deployed && canAttack(u, provoker) &&
-            withinNeutralLeash(u, provoker.coord) &&
-            (inAttackRange(u, provoker) ||
-             u.spec.layer == UnitLayer::Air ||
-             findPathToAttackCell(u, provoker.coord, u.spec.range).found)) {
+        TargetCandidate provokerCandidate = evaluateTargetCandidate(u, provoker);
+        if (provokerCandidate.reachable) {
             return provoker.id;
         }
     }
 
-    UnitId best = kInvalidUnitId;
-    double bestScore = -std::numeric_limits<double>::infinity();
+    TargetCandidate best;
+    TargetCandidate current;
 
     for (const Unit& candidate : units_) {
-        if (!candidate.alive || !candidate.deployed || !canAttack(u, candidate)) continue;
-        if (!insideRedcapAmbush(candidate) || !insideExplorationAggro(candidate)) continue;
-        if ((isNeutralGuardianUnit(u) || isNeutralSpawServant(u)) && !withinNeutralLeash(u, candidate.coord)) {
-            continue;
-        }
-
-        int dist = manhattan(u.coord, candidate.coord);
-        double score = candidate.spec.threat - dist * 8.0;
-        if (candidate.id == u.target) score += 18.0;
-        if (candidate.hp.size() < static_cast<size_t>(candidate.spec.unitCount)) score += 10.0;
-        int candidateMaxHp = std::max(1, candidate.spec.maxHp * candidate.spec.unitCount);
-        int missingHp = std::max(0, candidateMaxHp - totalHp(candidate));
-        score += std::min(35.0, missingHp * 0.12);
-        if (totalHp(candidate) < candidateMaxHp / 2) score += 18.0;
-        if (hasStatus(candidate, StatusKind::Taunt) || candidate.spec.ability == AbilityKind::GuardianShield) {
-            score += dist <= 3 ? 80.0 : 25.0;
-        }
-        if (u.spec.roleMask & kRoleAssassin) {
-            if (candidate.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) score += 60.0;
-            int backline = candidate.owner == PlayerId::One
-                               ? (board_.width - 1 - candidate.coord.x)
-                               : candidate.coord.x;
-            score += backline * 4.0;
-        }
-        if (u.spec.roleMask & kRoleAoe) {
-            score += clusterScoreAround(u, candidate.coord) * 4.0;
-            score += 55.0;
-        }
-        if (u.spec.roleMask & kRoleRanged) {
-            if (dist <= u.spec.range) score += 20.0;
-        }
-        if (u.spec.range <= 1 || (u.spec.roleMask & kRoleMelee)) {
-            score += 60.0 - dist * 6.0;
-        }
-        if (!inAttackRange(u, candidate) && u.spec.layer != UnitLayer::Air &&
-            !findPathToAttackCell(u, candidate.coord, u.spec.range).found) {
-            continue;
-        }
-        if (score > bestScore) {
-            bestScore = score;
-            best = candidate.id;
-        }
+        TargetCandidate evaluated = evaluateTargetCandidate(u, candidate);
+        if (!evaluated.reachable) continue;
+        if (candidate.id == u.target) current = evaluated;
+        if (evaluated.score > best.score) best = evaluated;
     }
 
-    return best;
+    if (shouldKeepCurrentTarget(u, current, best)) return current.id;
+    return best.id;
 }
 
 UnitId GameEngine::selectDominatePersonTarget(const Unit& caster) const {
@@ -4155,7 +4173,7 @@ UnitId GameEngine::selectFollowAlly(const Unit& u) const {
     return best;
 }
 
-std::optional<size_t> GameEngine::selectCorpseForSpores(const Unit& caster) const {
+std::optional<size_t> GameEngine::selectCorpseForSpores(const Unit& caster, Coord guardOrigin) const {
     size_t bestIndex = corpses_.size();
     int bestScore = std::numeric_limits<int>::min();
     int range = std::max(1, caster.spec.abilityRange);
@@ -4163,6 +4181,7 @@ std::optional<size_t> GameEngine::selectCorpseForSpores(const Unit& caster) cons
         const CorpseState& corpse = corpses_[i];
         if (corpse.consumed || corpse.round != round_) continue;
         if (!board_.inBounds(corpse.coord)) continue;
+        if (manhattan(corpse.coord, guardOrigin) > kNeutralSummonGuardRadius) continue;
         int dist = manhattan(caster.coord, corpse.coord);
         if (dist > range) continue;
         int score = 100 - dist * 8;
@@ -4176,9 +4195,10 @@ std::optional<size_t> GameEngine::selectCorpseForSpores(const Unit& caster) cons
     return bestIndex;
 }
 
-std::optional<Coord> GameEngine::selectSporeSpawnCell(Coord corpseCoord) const {
+std::optional<Coord> GameEngine::selectSporeSpawnCell(Coord corpseCoord, Coord guardOrigin) const {
     auto isLandable = [&](Coord coord) {
         if (!board_.inBounds(coord) || board_.blocked(coord)) return false;
+        if (manhattan(coord, guardOrigin) > kNeutralSummonGuardRadius) return false;
         for (UnitId other : board_.occupants(coord, UnitLayer::Land)) {
             if (other < 0 || other >= static_cast<int>(units_.size())) continue;
             const Unit& u = unit(other);
@@ -4329,26 +4349,31 @@ bool GameEngine::isNeutralGuardianUnit(const Unit& u) const {
 }
 
 bool GameEngine::isNeutralSpawServant(const Unit& u) const {
-    if (u.spec.type != UnitType::SporeServant) return false;
-    for (const StatusEffect& status : u.statuses) {
-        if (status.kind != StatusKind::Summoned ||
-            status.source < 0 || status.source >= static_cast<int>(units_.size())) {
-            continue;
-        }
-        const Unit& source = unit(status.source);
-        if (source.spec.type == UnitType::NeutralSovereignSpaw && isNeutralMonsterType(source.spec.type)) {
-            return true;
-        }
-    }
-    return false;
+    return u.spec.type == UnitType::SporeServant;
 }
 
 bool GameEngine::isNeutralLikeCombatant(const Unit& u) const {
     return isNeutralMonsterType(u.spec.type) || isNeutralSpawServant(u) || u.neutralControlled;
 }
 
+Coord GameEngine::neutralLeashOrigin(const Unit& u) const {
+    if (u.spec.type == UnitType::SporeServant) {
+        for (const StatusEffect& status : u.statuses) {
+            if (status.kind != StatusKind::Summoned ||
+                status.source < 0 || status.source >= static_cast<int>(units_.size())) {
+                continue;
+            }
+            const Unit& source = unit(status.source);
+            if (source.spec.type == UnitType::NeutralSovereignSpaw) {
+                return board_.inBounds(source.homeCoord) ? source.homeCoord : source.coord;
+            }
+        }
+    }
+    return board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+}
+
 bool GameEngine::withinNeutralLeash(const Unit& u, Coord coord) const {
-    Coord origin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+    Coord origin = neutralLeashOrigin(u);
     int radius = isNeutralSpawServant(u) ? kNeutralSummonGuardRadius : kNeutralGuardianLeashRadius;
     if (u.spec.type == UnitType::NeutralRedcap) radius = kRedcapAmbushRadius;
     return manhattan(coord, origin) <= radius;
@@ -4711,6 +4736,66 @@ void GameEngine::addStatus(UnitId id, StatusEffect status) {
                eventUnitName(u) + " became " + statusName(status.kind)});
 }
 
+void GameEngine::applyWeaponStrikes(UnitId attackerId, UnitId targetId,
+                                    const DamagePacket& strikeDamage, int strikeCount) {
+    for (int i = 0; i < strikeCount; ++i) {
+        if (targetId < 0 || targetId >= static_cast<int>(units_.size()) ||
+            !unit(targetId).alive) {
+            break;
+        }
+        applyDamage(targetId, strikeDamage, attackerId);
+    }
+}
+
+bool GameEngine::resolveCounterspellReaction(UnitId attackerId, UnitId targetId) {
+    Unit& attacker = unit(attackerId);
+    Unit& target = unit(targetId);
+    if (target.spec.type != UnitType::NeutralMindFlayer || target.counterspellUsed) return false;
+    if (!isSpellLikeAbility(attacker.spec.ability) ||
+        attacker.spec.ability == AbilityKind::Counterspell) {
+        return false;
+    }
+
+    target.counterspellUsed = true;
+    pushEvent({EventType::StatusApplied, target.owner, targetId, attackerId, target.coord,
+               attacker.coord, 0,
+               eventUnitName(target) + " cast Counterspell and stopped " +
+                   eventUnitName(attacker)});
+    return true;
+}
+
+bool GameEngine::tryResolveExtractBrain(UnitId attackerId, UnitId targetId) {
+    Unit& attacker = unit(attackerId);
+    if (attacker.spec.type != UnitType::NeutralMindFlayer || attacker.oneShotAbilityUsed) return false;
+
+    UnitId extractTarget = kInvalidUnitId;
+    double bestExtractScore = -std::numeric_limits<double>::infinity();
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed || !hasStatus(candidate, StatusKind::Stunned)) continue;
+        if (!canAttack(attacker, candidate)) continue;
+        if (manhattan(attacker.coord, candidate.coord) > 1) continue;
+        double score = candidate.spec.threat + totalHp(candidate) * 0.35;
+        if (candidate.id == targetId) score += 40.0;
+        if (score > bestExtractScore) {
+            bestExtractScore = score;
+            extractTarget = candidate.id;
+        }
+    }
+    if (extractTarget == kInvalidUnitId) return false;
+
+    attacker.oneShotAbilityUsed = true;
+    Coord victimCoord = unit(extractTarget).coord;
+    pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, extractTarget, attacker.coord,
+               victimCoord, 0,
+               eventUnitName(attacker) + " used Extract Brain on " +
+                   eventUnitName(unit(extractTarget))});
+    killUnit(extractTarget, attackerId);
+    if (attackerId >= 0 && attackerId < static_cast<int>(units_.size()) && unit(attackerId).alive) {
+        applyHeal(attackerId, rollDice(6, 6), attackerId);
+    }
+    return true;
+}
+
 void GameEngine::attack(UnitId attackerId, UnitId targetId) {
     if (attackerId < 0 || targetId < 0 || attackerId >= static_cast<int>(units_.size()) ||
         targetId >= static_cast<int>(units_.size())) {
@@ -4720,53 +4805,15 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
     Unit& target = unit(targetId);
     if (!attacker.alive || !target.alive) return;
     if (!canNeutralAct(attacker)) return;
-    if (target.spec.type == UnitType::NeutralMindFlayer && !target.counterspellUsed &&
-        isSpellLikeAbility(attacker.spec.ability) && attacker.spec.ability != AbilityKind::Counterspell) {
-        target.counterspellUsed = true;
-        pushEvent({EventType::StatusApplied, target.owner, targetId, attackerId, target.coord,
-                   attacker.coord, 0,
-                   eventUnitName(target) + " cast Counterspell and stopped " +
-                       eventUnitName(attacker)});
-        return;
-    }
+    if (resolveCounterspellReaction(attackerId, targetId)) return;
+    if (tryResolveExtractBrain(attackerId, targetId)) return;
+    if (tryResolveActiveAbilityAttack(attackerId, targetId)) return;
+    resolveWeaponAttack(attackerId, targetId);
+}
 
-    if (attacker.spec.type == UnitType::NeutralMindFlayer && !attacker.oneShotAbilityUsed) {
-        UnitId extractTarget = kInvalidUnitId;
-        double bestExtractScore = -std::numeric_limits<double>::infinity();
-        for (const Unit& candidate : units_) {
-            if (!candidate.alive || !candidate.deployed || !hasStatus(candidate, StatusKind::Stunned)) continue;
-            if (!canAttack(attacker, candidate)) continue;
-            if (manhattan(attacker.coord, candidate.coord) > 1) continue;
-            double score = candidate.spec.threat + totalHp(candidate) * 0.35;
-            if (candidate.id == targetId) score += 40.0;
-            if (score > bestExtractScore) {
-                bestExtractScore = score;
-                extractTarget = candidate.id;
-            }
-        }
-        if (extractTarget != kInvalidUnitId) {
-            attacker.oneShotAbilityUsed = true;
-            Coord victimCoord = unit(extractTarget).coord;
-            pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, extractTarget, attacker.coord,
-                       victimCoord, 0,
-                       eventUnitName(attacker) + " used Extract Brain on " +
-                           eventUnitName(unit(extractTarget))});
-            killUnit(extractTarget, attackerId);
-            if (attackerId >= 0 && attackerId < static_cast<int>(units_.size()) && unit(attackerId).alive) {
-                applyHeal(attackerId, rollDice(6, 6), attackerId);
-            }
-            return;
-        }
-    }
-
-    int baseStrikeCount = std::max(1, static_cast<int>(attacker.hp.size()));
-    int damage = attacker.spec.attack;
-    auto applyStrikes = [this, attackerId](UnitId target, const DamagePacket& strikeDamage, int strikeCount) {
-        for (int i = 0; i < strikeCount; ++i) {
-            if (target < 0 || target >= static_cast<int>(units_.size()) || !unit(target).alive) break;
-            applyDamage(target, strikeDamage, attackerId);
-        }
-    };
+bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetId) {
+    Unit& attacker = unit(attackerId);
+    Unit& target = unit(targetId);
 
     if (attacker.spec.ability == AbilityKind::DragonBreath) {
         pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
@@ -4783,7 +4830,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
             applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
                         DamageType::Fire, attackerId);
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::MephitDeathBurst) {
@@ -4802,7 +4849,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
             applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
                         DamageType::Fire, attackerId);
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::FrostNova) {
@@ -4824,7 +4871,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                 addStatus(id, {StatusKind::Slow, attacker.spec.abilityDuration, attacker.spec.abilityValue, attackerId});
             }
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::SpectatorWoundingRay) {
@@ -4834,7 +4881,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
         bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
         applyDamage(targetId, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
                     DamageType::Necrotic, attackerId);
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::MindBlast) {
@@ -4861,7 +4908,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                                attackerId});
             }
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::DiabolicChains) {
@@ -4889,7 +4936,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                 }
             }
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::SelunesIre) {
@@ -4906,7 +4953,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                                  0,
                                  attackerId});
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::Blight) {
@@ -4918,7 +4965,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                    target.coord, finalDamage,
                    eventUnitName(attacker) + " cast Blight"});
         applyDamage(targetId, finalDamage, DamageType::Necrotic, attackerId);
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::EvokerMagicMissile) {
@@ -4941,7 +4988,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                 applyDamage(id, missileDamage, DamageType::Force, attackerId);
             }
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::StrikeOfTheGuardian) {
@@ -4972,7 +5019,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                             attackerId);
             }
         }
-        return;
+        return true;
     }
 
     if (attacker.spec.ability == AbilityKind::MinotaurCharge) {
@@ -5018,9 +5065,18 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
                 knockbackUnit(id, attacker.coord, 1, attackerId);
             }
         }
-        return;
+        return true;
     }
 
+    return false;
+}
+
+void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
+    Unit& attacker = unit(attackerId);
+    Unit& target = unit(targetId);
+
+    int baseStrikeCount = std::max(1, static_cast<int>(attacker.hp.size()));
+    int damage = attacker.spec.attack;
     bool berserkerRage = attacker.spec.ability == AbilityKind::BarbarianHeavySwing;
     if (berserkerRage) ++attacker.specialCounter;
     bool hiemalStrike = attacker.spec.ability == AbilityKind::HiemalStrike;
@@ -5148,7 +5204,8 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
     }
 
     if (cruelSting) {
-        applyStrikes(targetId, scaledDamagePacket(strikePacket, 1, 2), baseStrikeCount * 3);
+        applyWeaponStrikes(attackerId, targetId, scaledDamagePacket(strikePacket, 1, 2),
+                           baseStrikeCount * 3);
         return;
     }
 
@@ -5168,7 +5225,7 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
         return;
     }
 
-    applyStrikes(targetId, strikePacket, baseStrikeCount);
+    applyWeaponStrikes(attackerId, targetId, strikePacket, baseStrikeCount);
     if (hiemalStrike && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
         addStatus(targetId, {StatusKind::Chilled,
                              std::max(1.0, attacker.spec.abilityDuration),
@@ -5479,6 +5536,10 @@ void GameEngine::moveUnits(double dt) {
         Unit& u = unit(id);
         if (!u.alive || !u.deployed || u.spec.speed <= 0.0) continue;
         if (hasStatus(u, StatusKind::Stunned) || hasStatus(u, StatusKind::Prone)) continue;
+        if (shouldForceRetarget(u)) {
+            u.target = selectTarget(u);
+            u.retargetTimer = kRetargetInterval;
+        }
         if (!hasStatus(u, StatusKind::Frightened) &&
             u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
             unit(u.target).alive && inAttackRange(u, unit(u.target))) {
@@ -5540,6 +5601,68 @@ void GameEngine::moveUnits(double dt) {
     }
 }
 
+bool GameEngine::hasImmediateAttackTarget(const Unit& u) const {
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed) continue;
+        if (!targetAllowedByAggro(u, candidate)) continue;
+        if (inAttackRange(u, candidate)) return true;
+    }
+    return false;
+}
+
+std::optional<Coord> GameEngine::chooseLandStepToward(const Unit& u, Coord target, bool attackTarget,
+                                                      const std::vector<Coord>& reserved,
+                                                      int attackRange,
+                                                      std::optional<Coord> leashCenter,
+                                                      int leashRadius) const {
+    PathResult directPath = attackTarget ? findPathToAttackCell(u, target, attackRange)
+                                         : findPathToGoal(u, target);
+    if (!directPath.found || directPath.steps.size() < 2) return std::nullopt;
+
+    Coord best = directPath.steps[1];
+    double bestScore = -std::numeric_limits<double>::infinity();
+    auto reservedCell = [&](Coord coord) {
+        return std::find(reserved.begin(), reserved.end(), coord) != reserved.end();
+    };
+    auto consider = [&](Coord candidate, bool direct) {
+        if (reservedCell(candidate) || !passableForLand(u, candidate)) return;
+        if (leashCenter && manhattan(candidate, *leashCenter) > leashRadius) return;
+        Unit probe = u;
+        probe.coord = candidate;
+        PathResult path = attackTarget ? findPathToAttackCell(probe, target, attackRange)
+                                       : findPathToGoal(probe, target);
+        if (!path.found) return;
+        int cost = path.steps.empty() ? manhattan(candidate, target)
+                                      : static_cast<int>(path.steps.size()) - 1;
+        int currentDistance = manhattan(u.coord, target);
+        int candidateDistance = manhattan(candidate, target);
+        double score = -cost * 20.0 + (currentDistance - candidateDistance) * 7.0;
+        if (direct) score += 18.0;
+        if (candidate == u.lastCoord) score -= u.stuckTicks >= 6 ? 18.0 : 75.0;
+        if (u.spec.range > 1 && attackTarget && candidateDistance <= 1) score -= 45.0;
+        if (u.spec.range > 1 && attackTarget && candidateDistance <= attackRange) {
+            score += 28.0 - std::abs(candidateDistance - attackRange) * 5.0;
+        }
+        if (u.spec.range <= 1 || (u.spec.roleMask & kRoleMelee)) {
+            score += candidateDistance <= 1 ? 18.0 : 0.0;
+        }
+        int forwardDepth = u.owner == PlayerId::One ? candidate.x : (board_.width - 1 - candidate.x);
+        score += forwardDepth * 0.2;
+        if (score > bestScore) {
+            bestScore = score;
+            best = candidate;
+        }
+    };
+
+    consider(directPath.steps[1], true);
+    for (Coord candidate : neighbors4(u.coord)) {
+        consider(candidate, candidate == directPath.steps[1]);
+    }
+
+    if (bestScore == -std::numeric_limits<double>::infinity()) return std::nullopt;
+    return best;
+}
+
 std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coord>& reserved) const {
     const Unit& u = unit(id);
     if (isNeutralMonsterType(u.spec.type) && !neutralCanLeaveHome(u)) return std::nullopt;
@@ -5549,24 +5672,6 @@ std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coo
     Coord target = u.coord;
     bool hasUnitTarget = u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
                          unit(u.target).alive;
-    auto hasAttackableHostile = [&]() {
-        Coord redcapOrigin = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
-        for (const Unit& candidate : units_) {
-            if (!candidate.alive || !candidate.deployed) continue;
-            if (u.spec.type == UnitType::NeutralRedcap &&
-                manhattan(candidate.coord, redcapOrigin) > kRedcapAmbushRadius) {
-                continue;
-            }
-            if (!isNeutralLikeCombatant(u) &&
-            manhattan(u.coord, candidate.coord) >
-                std::max(kExplorationUnitAggroRadius, u.spec.range + 3)) {
-                continue;
-            }
-            if (inAttackRange(u, candidate)) return true;
-        }
-        return false;
-    };
-
     if (u.spec.ability == AbilityKind::ClericHeal) {
         if (std::optional<Coord> supportStep = chooseSupportStep(u, reserved)) return supportStep;
         if (selectGlobalHealTarget(u) != kInvalidUnitId || selectFollowAlly(u) != kInvalidUnitId) {
@@ -5607,17 +5712,16 @@ std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coo
     if (hasUnitTarget) {
         target = unit(u.target).coord;
         if (inAttackRange(u, unit(u.target))) return std::nullopt;
-    } else if (hasAttackableHostile()) {
+    } else if (hasImmediateAttackTarget(u)) {
         return std::nullopt;
     }
 
     if (u.spec.layer == UnitLayer::Air) return chooseAirStep(u, target, reserved);
 
     int attackPathRange = u.spec.ability == AbilityKind::MinotaurCharge ? 1 : u.spec.range;
-    PathResult path = hasUnitTarget ? findPathToAttackCell(u, target, attackPathRange)
-                                    : findPathToGoal(u, target);
-    if (!path.found || path.steps.size() < 2) return std::nullopt;
-    Coord next = path.steps[1];
+    std::optional<Coord> chosen = chooseLandStepToward(u, target, hasUnitTarget, reserved, attackPathRange);
+    if (!chosen) return std::nullopt;
+    Coord next = *chosen;
     if (!hasUnitTarget && explorationGoal && next == u.lastCoord) {
         Coord bestAlternate = next;
         int bestScore = std::numeric_limits<int>::min();
@@ -5690,9 +5794,12 @@ std::optional<Coord> GameEngine::chooseNeutralGuardianStep(const Unit& u,
         if (next && withinNeutralLeash(u, *next)) return next;
         return std::nullopt;
     }
-    PathResult path = findPathToAttackCell(u, target.coord, u.spec.range);
-    if (!path.found || path.steps.size() < 2) return std::nullopt;
-    Coord next = path.steps[1];
+    Coord home = neutralLeashOrigin(u);
+    std::optional<Coord> chosen =
+        chooseLandStepToward(u, target.coord, true, reserved, u.spec.range,
+                             home, kNeutralGuardianLeashRadius);
+    if (!chosen) return std::nullopt;
+    Coord next = *chosen;
     if (std::find(reserved.begin(), reserved.end(), next) != reserved.end()) return std::nullopt;
     if (!withinNeutralLeash(u, next)) return std::nullopt;
     if (!passableForLand(u, next)) return std::nullopt;
@@ -5701,13 +5808,15 @@ std::optional<Coord> GameEngine::chooseNeutralGuardianStep(const Unit& u,
 
 std::optional<Coord> GameEngine::chooseNeutralSummonGuardStep(const Unit& u,
                                                               const std::vector<Coord>& reserved) const {
-    Coord home = board_.inBounds(u.homeCoord) ? u.homeCoord : u.coord;
+    Coord home = neutralLeashOrigin(u);
     if (u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
         unit(u.target).alive && unit(u.target).deployed && withinNeutralLeash(u, unit(u.target).coord)) {
         if (inAttackRange(u, unit(u.target))) return std::nullopt;
-        PathResult path = findPathToAttackCell(u, unit(u.target).coord, u.spec.range);
-        if (path.found && path.steps.size() >= 2) {
-            Coord next = path.steps[1];
+        std::optional<Coord> chosen =
+            chooseLandStepToward(u, unit(u.target).coord, true, reserved, u.spec.range,
+                                 home, kNeutralSummonGuardRadius);
+        if (chosen) {
+            Coord next = *chosen;
             if (manhattan(next, home) <= kNeutralSummonGuardRadius &&
                 std::find(reserved.begin(), reserved.end(), next) == reserved.end() &&
                 passableForLand(u, next)) {

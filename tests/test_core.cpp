@@ -1268,15 +1268,27 @@ void test_neutral_spaw_caps_servants_and_servants_guard_locally() {
     }
 
     GameSnapshot snapshot = engine.snapshot();
-    int servants = 0;
+    std::vector<Coord> spawOrigins{spawCoord};
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.type != UnitType::NeutralSovereignSpaw || !unit.deployed) continue;
+        if (std::find(spawOrigins.begin(), spawOrigins.end(), unit.coord) == spawOrigins.end()) {
+            spawOrigins.push_back(unit.coord);
+        }
+    }
+
+    int localServants = 0;
     for (const UnitView& unit : snapshot.units) {
         if (unit.type != UnitType::SporeServant || !unit.alive || !unit.deployed) continue;
-        ++servants;
         assert(unit.owner == PlayerId::Two);
-        assert(manhattan(unit.coord, spawCoord) <= 4);
+        bool guardedBySpaw = false;
+        for (Coord origin : spawOrigins) {
+            if (manhattan(unit.coord, origin) <= 4) guardedBySpaw = true;
+        }
+        if (manhattan(unit.coord, spawCoord) <= 4) ++localServants;
+        assert(guardedBySpaw);
     }
-    assert(servants <= 2);
-    assert(servants > 0);
+    assert(localServants <= 2);
+    assert(localServants > 0);
 }
 
 void test_side_neutral_camps_do_not_respawn_after_death() {
@@ -1868,8 +1880,10 @@ void test_berserker_no_longer_skips_first_swing() {
     engine.startNewGame(GameMode::TwoPlayer);
     setupExplorationCombat(engine);
 
-    UnitId berserker = buyAndDeploy(engine, PlayerId::One, UnitType::Barbarian, p1MainDeploy());
-    buyAndDeploy(engine, PlayerId::Two, UnitType::ShieldGuardian, p2MainDeploy());
+    std::array<Coord, 2> coords = adjacentOpenCoords(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2});
+    UnitId berserker = engine.debugCreateUnit(PlayerId::One, UnitType::Barbarian, coords[0]);
+    assert(berserker != kInvalidUnitId);
+    assert(engine.debugCreateUnit(PlayerId::Two, UnitType::ShieldGuardian, coords[1]) != kInvalidUnitId);
 
     engine.setReady(PlayerId::One, true);
     engine.setReady(PlayerId::Two, true);
@@ -2778,6 +2792,103 @@ void test_air_targeting_and_damage() {
     assert(!view || view->totalHp < view->maxTotalHp || !view->alive);
 }
 
+void test_melee_switches_to_immediate_threat_instead_of_chasing_far_target() {
+    GameEngine engine(701);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2}, 9);
+    UnitId guardian = engine.debugCreateUnit(PlayerId::One, UnitType::ShieldGuardian, coords[0]);
+    UnitId farCleric = engine.debugCreateUnit(PlayerId::Two, UnitType::Cleric, coords[6]);
+    UnitId closeSkeleton = engine.debugCreateUnit(PlayerId::Two, UnitType::Skeleton, coords[1]);
+    assert(guardian != kInvalidUnitId);
+    assert(farCleric != kInvalidUnitId);
+    assert(closeSkeleton != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool attackedClose = false;
+    bool attackedFarFirst = false;
+    for (int i = 0; i < 30 * 4 && !attackedClose && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type != EventType::UnitAttacked || event.actor != guardian) continue;
+            if (event.target == farCleric) attackedFarFirst = true;
+            if (event.target == closeSkeleton) attackedClose = true;
+        }
+    }
+
+    assert(attackedClose);
+    assert(!attackedFarFirst);
+}
+
+void test_ranged_stops_after_entering_attack_range() {
+    GameEngine engine(702);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2}, 9);
+    UnitId ranger = engine.debugCreateUnit(PlayerId::One, UnitType::Ranger, coords[0]);
+    UnitId target = engine.debugCreateUnit(PlayerId::Two, UnitType::Ranger, coords[4]);
+    assert(ranger != kInvalidUnitId);
+    assert(target != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    int attackDistance = -1;
+    for (int i = 0; i < 30 * 8 && attackDistance < 0 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        GameSnapshot snapshot = engine.snapshot();
+        const UnitView* rangerView = findUnit(snapshot, ranger);
+        if (!rangerView || !rangerView->alive) break;
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::UnitAttacked && event.actor == ranger) {
+                attackDistance = manhattan(event.from, event.to);
+            }
+        }
+    }
+
+    assert(attackDistance >= 2);
+    assert(attackDistance <= 3);
+}
+
+void test_dynamic_chase_retargets_when_current_target_moves_out_of_reach() {
+    GameEngine engine(703);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2}, 9);
+    UnitId guardian = engine.debugCreateUnit(PlayerId::One, UnitType::ShieldGuardian, coords[0]);
+    UnitId farCleric = engine.debugCreateUnit(PlayerId::Two, UnitType::Cleric, coords[4]);
+    UnitId closeSkeleton = engine.debugCreateUnit(PlayerId::Two, UnitType::Skeleton, coords[1]);
+    assert(guardian != kInvalidUnitId);
+    assert(farCleric != kInvalidUnitId);
+    assert(closeSkeleton != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    assert(engine.debugKnockback(farCleric, coords[0], 3, guardian));
+
+    bool attackedClose = false;
+    for (int i = 0; i < 30 * 4 && !attackedClose && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::UnitAttacked && event.actor == guardian &&
+                event.target == closeSkeleton) {
+                attackedClose = true;
+            }
+        }
+    }
+
+    assert(attackedClose);
+}
+
 void test_druid_summons_treant() {
     GameEngine engine(4);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -3520,6 +3631,9 @@ int main() {
     RUN_TEST(test_githyanki_opens_with_astral_raid);
     RUN_TEST(test_assassin_uses_limited_range_ambush);
     RUN_TEST(test_air_targeting_and_damage);
+    RUN_TEST(test_melee_switches_to_immediate_threat_instead_of_chasing_far_target);
+    RUN_TEST(test_ranged_stops_after_entering_attack_range);
+    RUN_TEST(test_dynamic_chase_retargets_when_current_target_moves_out_of_reach);
     RUN_TEST(test_druid_summons_treant);
     RUN_TEST(test_summoners_respect_per_caster_summon_limits_and_relic_bonus);
     RUN_TEST(test_land_units_cannot_stack_but_air_units_can);
