@@ -777,8 +777,8 @@ void test_random_gold_bricks_are_hidden_and_once_only() {
     assert(engine.debugTriggerRandomGold(PlayerId::One, coords.front()));
     GameSnapshot claimed = engine.snapshot();
     int reward = claimed.players[0].money - moneyBefore;
-    assert(reward >= 4);
-    assert(reward <= 8);
+    assert(reward >= 3);
+    assert(reward <= 6);
     assert(claimed.explorationScores[0] == scoreBefore + reward);
     assert(claimed.hiddenEventsClaimedByPlayer[0] == opening.hiddenEventsClaimedByPlayer[0] + 1);
     assert(claimed.randomGoldEventsClaimed == 1);
@@ -3012,8 +3012,8 @@ void test_round_income_grows_and_uses_interest() {
     GameSnapshot snapshot = engine.snapshot();
     assert(snapshot.phase == Phase::Preparation);
     assert(snapshot.round >= 2);
-    assert(snapshot.players[0].money == opening.players[0].money + 18);
-    assert(snapshot.players[1].money == opening.players[1].money + 18);
+    assert(snapshot.players[0].money == opening.players[0].money + 14);
+    assert(snapshot.players[1].money == opening.players[1].money + 14);
 }
 
 void test_kill_bounty_adds_combat_economy() {

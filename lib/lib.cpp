@@ -25,11 +25,11 @@ constexpr int kRoleSummoner = 1 << 6;
 constexpr int kRoleAssassin = 1 << 7;
 constexpr int kRoleAoe = 1 << 8;
 constexpr int kStartingGold = 48;
-constexpr int kBaseRoundIncome = 14;
-constexpr int kRoundIncomeGrowth = 2;
-constexpr int kMaxRoundIncomeGrowth = 6;
-constexpr int kInterestGoldStep = 24;
-constexpr int kMaxInterestIncome = 3;
+constexpr int kBaseRoundIncome = 12;
+constexpr int kRoundIncomeGrowth = 1;
+constexpr int kMaxRoundIncomeGrowth = 4;
+constexpr int kInterestGoldStep = 32;
+constexpr int kMaxInterestIncome = 2;
 constexpr int kKillBountyDivisor = 4;
 constexpr int kMinimumKillBounty = 1;
 constexpr int kDefaultExplorationRoundLimit = 8;
@@ -234,6 +234,11 @@ int totalHp(const Unit& unit) {
     return total;
 }
 
+int economyPayout(int amount) {
+    if (amount <= 0) return 0;
+    return std::max(1, amount * 3 / 4);
+}
+
 int roundIncomeFor(const PlayerState& player, int round, const RunModifiers& modifiers) {
     int growth = std::min(std::max(0, round - 1) * kRoundIncomeGrowth, kMaxRoundIncomeGrowth);
     int interestCap = kMaxInterestIncome + std::max(0, modifiers.interestBonus);
@@ -243,10 +248,10 @@ int roundIncomeFor(const PlayerState& player, int round, const RunModifiers& mod
 
 int killBountyFor(const Unit& dead) {
     if (isNeutralMonsterType(dead.spec.type)) {
-        return std::max(kMinimumKillBounty, dead.spec.threat / 8);
+        return economyPayout(std::max(kMinimumKillBounty, dead.spec.threat / 8));
     }
     if (dead.spec.cost <= 0 || isRoundTransientUnit(dead.spec.type)) return 0;
-    return std::max(kMinimumKillBounty, dead.spec.cost / kKillBountyDivisor);
+    return economyPayout(std::max(kMinimumKillBounty, dead.spec.cost / kKillBountyDivisor));
 }
 
 int upgradeCostFor(const UnitSpec& spec) {
@@ -2469,12 +2474,13 @@ bool GameEngine::triggerRandomGoldEventAt(PlayerId triggeringPlayer, Coord coord
         exploration_.claimRandomGold(triggeringPlayer, coord, triggerUnitId);
     if (!event) return false;
 
-    player(triggeringPlayer).money += event->amount;
-    addExplorationScore(triggeringPlayer, event->amount);
+    int payout = economyPayout(event->amount);
+    player(triggeringPlayer).money += payout;
+    addExplorationScore(triggeringPlayer, payout);
     ++hiddenEventsClaimedByPlayer_[playerIndex(triggeringPlayer)];
     pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
-               coord, coord, event->amount,
-               "Hidden cache found: +" + std::to_string(event->amount) + " gp"});
+               coord, coord, payout,
+               "Hidden cache found: +" + std::to_string(payout) + " gp"});
     return true;
 }
 
@@ -2498,12 +2504,13 @@ bool GameEngine::triggerHiddenEventAt(PlayerId triggeringPlayer, Coord coord, Un
     if (!event) return false;
 
     if (event->kind == HiddenExplorationEventKind::GoldCache) {
-        player(triggeringPlayer).money += event->amount;
-        addExplorationScore(triggeringPlayer, event->amount);
+        int payout = economyPayout(event->amount);
+        player(triggeringPlayer).money += payout;
+        addExplorationScore(triggeringPlayer, payout);
         ++hiddenEventsClaimedByPlayer_[playerIndex(triggeringPlayer)];
         pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
-                   coord, coord, event->amount,
-                   "Hidden cache found: +" + std::to_string(event->amount) + " gp"});
+                   coord, coord, payout,
+                   "Hidden cache found: +" + std::to_string(payout) + " gp"});
         return true;
     }
 
@@ -2584,7 +2591,7 @@ void GameEngine::clearExplorationObjective(size_t index, PlayerId clearer, UnitI
                      objective->kind == ExplorationObjectiveKind::Boss)
                         ? std::max(0, runModifiers_[playerIndex(clearer)].bonusGoldOnClear)
                         : 0;
-    int totalRewardGold = objective->rewardGold + bonusGold;
+    int totalRewardGold = economyPayout(objective->rewardGold + bonusGold);
     if (totalRewardGold > 0) {
         clearerState.money += totalRewardGold;
     }
