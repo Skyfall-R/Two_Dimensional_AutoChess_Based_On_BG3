@@ -33,7 +33,9 @@ constexpr int kMaxInterestIncome = 2;
 constexpr int kKillBountyDivisor = 4;
 constexpr int kMinimumKillBounty = 1;
 constexpr int kDefaultExplorationRoundLimit = 8;
-constexpr double kExplorationCombatRoundCap = 45.0;
+constexpr double kCombatStallTimeout = 18.0;
+constexpr int kGuardianShieldCap = 120;
+constexpr int kGuardianShieldRefillThreshold = 80;
 constexpr int kRedcapAmbushRadius = 5;
 constexpr int kNeutralGuardianLeashRadius = 5;
 constexpr int kNeutralSummonGuardRadius = 4;
@@ -347,6 +349,439 @@ double familyCounterBonus(const UnitSpec& spec, NeutralFamily family) {
     return 0.0;
 }
 
+AbilityScores scores(int str, int dex, int con, int intel, int wis, int cha) {
+    return AbilityScores{str, dex, con, intel, wis, cha};
+}
+
+UnitProfile baseProfile(ProfileKind kind,
+                        int level,
+                        AbilityScores abilityScores,
+                        AbilityScoreKind attackAbility) {
+    UnitProfile profile;
+    profile.kind = kind;
+    profile.level = std::max(1, level);
+    profile.tier = profile.level;
+    profile.abilityScores = abilityScores;
+    profile.attackAbility = attackAbility;
+    profile.castingAbility = AbilityScoreKind::Intelligence;
+    profile.hitDice = profile.level;
+    return profile;
+}
+
+int rawHitDieHp(const UnitProfile& profile) {
+    int con = abilityModifier(abilityScore(profile, AbilityScoreKind::Constitution));
+    int perDie = std::max(1, profile.hitDie / 2 + 1 + con);
+    return std::max(1, perDie * std::max(1, profile.hitDice));
+}
+
+int rawArmorClass(const UnitSpec& spec) {
+    int dexMod = abilityModifier(abilityScore(spec.profile, AbilityScoreKind::Dexterity));
+    int cappedDex = std::min(dexMod, spec.profile.armorDexCap);
+    return spec.profile.armorBase + cappedDex + spec.profile.shieldBonus +
+           spec.profile.naturalArmorBonus;
+}
+
+int rawAttackBonus(const UnitSpec& spec) {
+    return proficiencyBonusForLevel(spec.profile.level) +
+           abilityModifier(abilityScore(spec.profile, spec.profile.attackAbility));
+}
+
+int rawSpellSaveDc(const UnitSpec& spec) {
+    return 8 + proficiencyBonusForLevel(spec.profile.level) +
+           abilityModifier(abilityScore(spec.profile, spec.profile.castingAbility));
+}
+
+int rawDamage(const UnitSpec& spec) {
+    int ability = abilityModifier(abilityScore(spec.profile, spec.profile.attackAbility));
+    int base = std::max(1, spec.profile.weaponDamageAverage + ability);
+    return std::max(1, static_cast<int>(std::round(base * spec.damageScale)));
+}
+
+double rawSpeed(const UnitSpec& spec) {
+    return std::max(0.0, spec.profile.movementMeters / 3.0);
+}
+
+void applyDerivedCombatStats(UnitSpec& spec) {
+    spec.maxHp = std::max(
+        1, static_cast<int>(std::round(rawHitDieHp(spec.profile) * spec.hpScale)) + spec.flatHpBonus);
+    spec.attack = std::max(1, rawDamage(spec) + spec.damageTuning);
+    spec.attackBonus = std::max(0, rawAttackBonus(spec) + spec.attackTuning);
+    spec.armorClass = std::max(1, rawArmorClass(spec) + spec.acTuning);
+    spec.spellSaveDc = std::max(1, rawSpellSaveDc(spec) + spec.dcTuning);
+    spec.speed = std::max(0.0, rawSpeed(spec) + spec.speedTuning);
+    int bestSave = std::numeric_limits<int>::min();
+    for (AbilityScoreKind ability : {AbilityScoreKind::Strength,
+                                     AbilityScoreKind::Dexterity,
+                                     AbilityScoreKind::Constitution,
+                                     AbilityScoreKind::Intelligence,
+                                     AbilityScoreKind::Wisdom,
+                                     AbilityScoreKind::Charisma}) {
+        bestSave = std::max(bestSave, savingThrowBonusFor(spec, ability));
+    }
+    spec.savingThrowBonus = bestSave == std::numeric_limits<int>::min() ? 0 : bestSave;
+}
+
+void calibrateFromCurrentTargets(UnitSpec& spec,
+                                 int targetHp,
+                                 int targetAttack,
+                                 int targetArmorClass,
+                                 int targetAttackBonus,
+                                 int targetSpellSaveDc,
+                                 double targetSpeed) {
+    if (spec.profile.weaponDamageAverage <= 0) spec.profile.weaponDamageAverage = std::max(1, targetAttack);
+    spec.flatHpBonus = targetHp -
+                       static_cast<int>(std::round(rawHitDieHp(spec.profile) * spec.hpScale));
+    spec.damageTuning = targetAttack - rawDamage(spec);
+    spec.attackTuning = targetAttackBonus - rawAttackBonus(spec);
+    spec.acTuning = targetArmorClass - rawArmorClass(spec);
+    spec.dcTuning = targetSpellSaveDc - rawSpellSaveDc(spec);
+    spec.speedTuning = targetSpeed - rawSpeed(spec);
+    applyDerivedCombatStats(spec);
+}
+
+void assignProfile(UnitSpec& spec) {
+    auto character = [&](Race race,
+                         Subrace subrace,
+                         CharacterClass characterClass,
+                         Background background,
+                         int level,
+                         AbilityScores abilityScores,
+                         AbilityScoreKind attackAbility,
+                         AbilityScoreKind castingAbility,
+                         std::vector<SkillTag> skills,
+                         std::vector<AbilityScoreKind> saves,
+                         ArmorTraining armor,
+                         int armorBase,
+                         int dexCap,
+                         int shieldBonus,
+                         int hitDie,
+                         int weaponAverage,
+                         double movementMeters) {
+        UnitProfile profile = baseProfile(ProfileKind::PlayableCharacter, level, abilityScores, attackAbility);
+        profile.race = race;
+        profile.subrace = subrace;
+        profile.characterClass = characterClass;
+        profile.background = background;
+        profile.creatureType = CreatureType::Humanoid;
+        profile.castingAbility = castingAbility;
+        profile.skills = std::move(skills);
+        profile.savingThrowProficiencies = std::move(saves);
+        profile.armorTraining = armor;
+        profile.weaponTraining = WeaponTraining::Martial;
+        profile.armorBase = armorBase;
+        profile.armorDexCap = dexCap;
+        profile.shieldBonus = shieldBonus;
+        profile.hitDie = hitDie;
+        profile.hitDice = level;
+        profile.weaponDamageAverage = weaponAverage;
+        profile.movementMeters = movementMeters;
+        spec.profile = std::move(profile);
+    };
+
+    auto monster = [&](ProfileKind kind,
+                       CreatureType creatureType,
+                       const std::string& archetype,
+                       int tier,
+                       AbilityScores abilityScores,
+                       AbilityScoreKind attackAbility,
+                       AbilityScoreKind castingAbility,
+                       std::vector<SkillTag> skills,
+                       std::vector<AbilityScoreKind> saves,
+                       int armorBase,
+                       int naturalArmor,
+                       int hitDie,
+                       int weaponAverage,
+                       double movementMeters,
+                       std::vector<TraitTag> traits) {
+        UnitProfile profile = baseProfile(kind, tier, abilityScores, attackAbility);
+        profile.creatureType = creatureType;
+        profile.archetype = archetype;
+        profile.castingAbility = castingAbility;
+        profile.skills = std::move(skills);
+        profile.savingThrowProficiencies = std::move(saves);
+        profile.armorTraining = naturalArmor > 0 ? ArmorTraining::None : ArmorTraining::Light;
+        profile.weaponTraining = WeaponTraining::Natural;
+        profile.armorBase = armorBase;
+        profile.armorDexCap = 99;
+        profile.naturalArmorBonus = naturalArmor;
+        profile.hitDie = hitDie;
+        profile.hitDice = tier;
+        profile.weaponDamageAverage = weaponAverage;
+        profile.movementMeters = movementMeters;
+        profile.traits = std::move(traits);
+        spec.profile = std::move(profile);
+    };
+
+    auto summon = [&](CreatureType creatureType,
+                      const std::string& archetype,
+                      int tier,
+                      AbilityScores abilityScores,
+                      AbilityScoreKind attackAbility,
+                      int armorBase,
+                      int naturalArmor,
+                      int hitDie,
+                      int weaponAverage,
+                      double movementMeters,
+                      std::vector<TraitTag> traits) {
+        monster(ProfileKind::Summon,
+                creatureType,
+                archetype,
+                tier,
+                abilityScores,
+                attackAbility,
+                AbilityScoreKind::Wisdom,
+                {},
+                {},
+                armorBase,
+                naturalArmor,
+                hitDie,
+                weaponAverage,
+                movementMeters,
+                std::move(traits));
+        spec.profile.traits.push_back(TraitTag::Summoned);
+    };
+
+    switch (spec.type) {
+        case UnitType::Skeleton:
+            summon(CreatureType::Undead, "Undead Skirmisher", 2, scores(10, 14, 12, 6, 8, 5),
+                   AbilityScoreKind::Dexterity, 11, 0, 8, 5, 9.0,
+                   {TraitTag::Darkvision, TraitTag::UndeadFortitude});
+            break;
+        case UnitType::SkeletonByNecromancer:
+            summon(CreatureType::Undead, "Raised Archer", 2, scores(10, 14, 12, 6, 8, 5),
+                   AbilityScoreKind::Dexterity, 11, 0, 8, 4, 9.0,
+                   {TraitTag::Darkvision, TraitTag::UndeadFortitude});
+            break;
+        case UnitType::GithyankiWarrior:
+            character(Race::Githyanki, Subrace::None, CharacterClass::Fighter, Background::Soldier,
+                      5, scores(17, 13, 15, 12, 10, 10), AbilityScoreKind::Strength,
+                      AbilityScoreKind::Intelligence, {SkillTag::Athletics, SkillTag::Intimidation},
+                      {AbilityScoreKind::Strength, AbilityScoreKind::Constitution},
+                      ArmorTraining::Medium, 15, 2, 0, 10, 12, 9.0);
+            spec.profile.traits = {TraitTag::MartialTraining, TraitTag::Psionics};
+            break;
+        case UnitType::Ranger:
+            character(Race::Elf, Subrace::WoodElf, CharacterClass::Ranger, Background::Outlander,
+                      4, scores(10, 17, 14, 10, 14, 8), AbilityScoreKind::Dexterity,
+                      AbilityScoreKind::Wisdom, {SkillTag::Perception, SkillTag::Survival, SkillTag::Stealth},
+                      {AbilityScoreKind::Strength, AbilityScoreKind::Dexterity},
+                      ArmorTraining::Light, 11, 99, 0, 10, 6, 10.5);
+            spec.profile.traits = {TraitTag::Darkvision, TraitTag::FeyAncestry};
+            break;
+        case UnitType::Barbarian:
+            character(Race::Human, Subrace::None, CharacterClass::Barbarian, Background::Outlander,
+                      7, scores(18, 12, 16, 8, 12, 10), AbilityScoreKind::Strength,
+                      AbilityScoreKind::Strength, {SkillTag::Athletics, SkillTag::Survival, SkillTag::Intimidation},
+                      {AbilityScoreKind::Strength, AbilityScoreKind::Constitution},
+                      ArmorTraining::None, 10, 99, 0, 12, 20, 9.0);
+            break;
+        case UnitType::Necromancer:
+            character(Race::Human, Subrace::None, CharacterClass::Wizard, Background::Sage,
+                      5, scores(8, 14, 13, 17, 12, 10), AbilityScoreKind::Intelligence,
+                      AbilityScoreKind::Intelligence, {SkillTag::Arcana, SkillTag::History, SkillTag::Religion},
+                      {AbilityScoreKind::Intelligence, AbilityScoreKind::Wisdom},
+                      ArmorTraining::None, 10, 99, 0, 6, 7, 9.0);
+            spec.profile.traits = {TraitTag::Spellcasting};
+            break;
+        case UnitType::FireMephit:
+            monster(ProfileKind::PureMonster, CreatureType::Elemental, "Flying Elemental", 4,
+                    scores(6, 14, 12, 8, 10, 11), AbilityScoreKind::Dexterity,
+                    AbilityScoreKind::Charisma, {}, {AbilityScoreKind::Dexterity},
+                    10, 0, 8, 8, 9.0, {TraitTag::Flying, TraitTag::FireAffinity});
+            break;
+        case UnitType::ImpSwarm:
+            monster(ProfileKind::PureMonster, CreatureType::Fiend, "Fiend Skirmisher", 3,
+                    scores(6, 17, 13, 11, 12, 14), AbilityScoreKind::Dexterity,
+                    AbilityScoreKind::Charisma, {SkillTag::Stealth}, {AbilityScoreKind::Dexterity},
+                    10, 0, 8, 5, 9.0, {TraitTag::Flying, TraitTag::Darkvision, TraitTag::PackTactics});
+            break;
+        case UnitType::GoblinSkirmisher:
+            character(Race::Goblin, Subrace::None, CharacterClass::Rogue, Background::Criminal,
+                      3, scores(8, 16, 12, 10, 10, 8), AbilityScoreKind::Dexterity,
+                      AbilityScoreKind::Intelligence, {SkillTag::Stealth, SkillTag::SleightOfHand},
+                      {AbilityScoreKind::Dexterity, AbilityScoreKind::Intelligence},
+                      ArmorTraining::Light, 12, 99, 0, 8, 5, 12.0);
+            spec.profile.traits = {TraitTag::Darkvision, TraitTag::Ambusher};
+            break;
+        case UnitType::Paladin:
+            character(Race::Human, Subrace::None, CharacterClass::Paladin, Background::Noble,
+                      6, scores(17, 10, 15, 10, 12, 16), AbilityScoreKind::Strength,
+                      AbilityScoreKind::Charisma, {SkillTag::Persuasion, SkillTag::Religion, SkillTag::Athletics},
+                      {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                      ArmorTraining::Heavy, 16, 0, 2, 10, 10, 9.0);
+            spec.profile.traits = {TraitTag::MartialTraining, TraitTag::Spellcasting, TraitTag::Charge};
+            break;
+        case UnitType::DragonWyrmling:
+            monster(ProfileKind::PureMonster, CreatureType::Dragon, "Flying AOE", 5,
+                    scores(17, 14, 15, 10, 12, 15), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Charisma, {SkillTag::Perception}, {AbilityScoreKind::Dexterity, AbilityScoreKind::Charisma},
+                    10, 3, 10, 10, 9.0, {TraitTag::Flying, TraitTag::FireAffinity, TraitTag::Darkvision});
+            break;
+        case UnitType::NeutralSpectator:
+            monster(ProfileKind::PureMonster, CreatureType::Aberration, "Raycaster", 5,
+                    scores(8, 14, 16, 13, 14, 11), AbilityScoreKind::Dexterity,
+                    AbilityScoreKind::Wisdom, {SkillTag::Perception}, {AbilityScoreKind::Wisdom},
+                    10, 2, 10, 11, 9.0, {TraitTag::Darkvision, TraitTag::Psionics});
+            break;
+        case UnitType::NeutralOwlbear:
+            monster(ProfileKind::PureMonster, CreatureType::Monstrosity, "Brute", 5,
+                    scores(20, 12, 17, 3, 12, 7), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {SkillTag::Perception}, {AbilityScoreKind::Strength},
+                    10, 2, 12, 14, 9.0, {TraitTag::NaturalArmor, TraitTag::Charge});
+            break;
+        case UnitType::NeutralMindFlayer:
+            monster(ProfileKind::PureMonster, CreatureType::Aberration, "Illithid Arcanist", 8,
+                    scores(11, 14, 14, 19, 17, 17), AbilityScoreKind::Intelligence,
+                    AbilityScoreKind::Intelligence, {SkillTag::Arcana, SkillTag::Insight, SkillTag::Perception},
+                    {AbilityScoreKind::Intelligence, AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                    12, 0, 8, 16, 9.0, {TraitTag::Darkvision, TraitTag::Psionics, TraitTag::Spellcasting});
+            break;
+        case UnitType::NeutralSovereignSpaw:
+            monster(ProfileKind::NamedActor, CreatureType::Plant, "Myconid Sovereign", 7,
+                    scores(12, 10, 16, 13, 18, 14), AbilityScoreKind::Wisdom,
+                    AbilityScoreKind::Wisdom, {SkillTag::Nature, SkillTag::Medicine, SkillTag::Perception},
+                    {AbilityScoreKind::Constitution, AbilityScoreKind::Wisdom},
+                    10, 1, 10, 8, 6.0, {TraitTag::Regeneration, TraitTag::Spellcasting});
+            spec.profile.race = Race::Myconid;
+            break;
+        case UnitType::NeutralKarniss:
+            monster(ProfileKind::NamedActor, CreatureType::Monstrosity, "Drider Zealot", 7,
+                    scores(18, 16, 16, 11, 14, 12), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {SkillTag::Perception, SkillTag::Intimidation},
+                    {AbilityScoreKind::Strength, AbilityScoreKind::Constitution},
+                    13, 1, 10, 14, 10.5, {TraitTag::Darkvision, TraitTag::Poison, TraitTag::Ambusher});
+            break;
+        case UnitType::NeutralRedcap:
+            monster(ProfileKind::PureMonster, CreatureType::Fey, "Ambusher", 3,
+                    scores(16, 13, 14, 10, 9, 9), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {SkillTag::Athletics, SkillTag::Stealth},
+                    {AbilityScoreKind::Strength}, 10, 1, 8, 6, 9.0,
+                    {TraitTag::Darkvision, TraitTag::Ambusher});
+            break;
+        case UnitType::NeutralWaterMyrmidon:
+            monster(ProfileKind::PureMonster, CreatureType::Elemental, "Elemental Controller", 7,
+                    scores(18, 14, 16, 10, 12, 10), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {}, {AbilityScoreKind::Strength, AbilityScoreKind::Constitution},
+                    13, 2, 10, 16, 9.0, {TraitTag::NaturalArmor});
+            break;
+        case UnitType::NeutralPhaseSpiderMatriarch:
+            monster(ProfileKind::PureMonster, CreatureType::Monstrosity, "Phase Predator", 7,
+                    scores(16, 17, 14, 6, 12, 8), AbilityScoreKind::Dexterity,
+                    AbilityScoreKind::Wisdom, {SkillTag::Stealth, SkillTag::Perception},
+                    {AbilityScoreKind::Dexterity, AbilityScoreKind::Constitution},
+                    10, 3, 10, 13, 12.0, {TraitTag::Darkvision, TraitTag::Poison, TraitTag::Ambusher});
+            break;
+        case UnitType::NeutralRaphael:
+            monster(ProfileKind::NamedActor, CreatureType::Fiend, "Fiend Noble", 10,
+                    scores(18, 16, 18, 16, 14, 20), AbilityScoreKind::Charisma,
+                    AbilityScoreKind::Charisma, {SkillTag::Deception, SkillTag::Persuasion, SkillTag::Arcana},
+                    {AbilityScoreKind::Dexterity, AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                    13, 1, 10, 12, 9.0, {TraitTag::Darkvision, TraitTag::Spellcasting, TraitTag::FireAffinity});
+            spec.profile.background = Background::Noble;
+            break;
+        case UnitType::NeutralKethericThorm:
+            monster(ProfileKind::NamedActor, CreatureType::Undead, "Undead Paladin", 10,
+                    scores(20, 10, 18, 12, 16, 18), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Charisma, {SkillTag::Religion, SkillTag::Intimidation},
+                    {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma, AbilityScoreKind::Constitution},
+                    16, 0, 10, 16, 9.0, {TraitTag::UndeadFortitude, TraitTag::Spellcasting});
+            spec.profile.race = Race::Human;
+            spec.profile.characterClass = CharacterClass::Paladin;
+            spec.profile.background = Background::Soldier;
+            break;
+        case UnitType::NeutralMoonlightSliver:
+            monster(ProfileKind::PureMonster, CreatureType::Celestial, "Radiant Artillery", 8,
+                    scores(12, 16, 14, 12, 18, 16), AbilityScoreKind::Wisdom,
+                    AbilityScoreKind::Wisdom, {SkillTag::Perception, SkillTag::Religion},
+                    {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                    12, 1, 8, 13, 9.0, {TraitTag::RadiantAura, TraitTag::Spellcasting});
+            break;
+        case UnitType::NeutralGuardianOfFaith:
+            monster(ProfileKind::PureMonster, CreatureType::Celestial, "Radiant Guardian", 8,
+                    scores(18, 10, 16, 10, 18, 14), AbilityScoreKind::Wisdom,
+                    AbilityScoreKind::Wisdom, {}, {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                    16, 0, 10, 14, 0.0, {TraitTag::RadiantAura, TraitTag::Taunt, TraitTag::Spellcasting});
+            break;
+        case UnitType::NeutralMinotaur:
+            monster(ProfileKind::PureMonster, CreatureType::Monstrosity, "Brute Charger", 6,
+                    scores(19, 11, 16, 6, 16, 9), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {SkillTag::Perception}, {AbilityScoreKind::Strength},
+                    10, 2, 10, 12, 12.0, {TraitTag::Charge, TraitTag::NaturalArmor});
+            break;
+        case UnitType::NeutralDeathKnight:
+            monster(ProfileKind::PureMonster, CreatureType::Undead, "Undead Commander", 7,
+                    scores(18, 11, 16, 12, 14, 18), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Charisma, {SkillTag::Intimidation, SkillTag::Religion},
+                    {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                    16, 0, 10, 10, 9.0, {TraitTag::UndeadFortitude, TraitTag::Spellcasting});
+            break;
+        case UnitType::NeutralAirMyrmidon:
+            monster(ProfileKind::PureMonster, CreatureType::Elemental, "Flying Elemental", 6,
+                    scores(18, 14, 14, 10, 10, 11), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {}, {AbilityScoreKind::Strength, AbilityScoreKind::Dexterity},
+                    12, 1, 10, 9, 12.0, {TraitTag::Flying, TraitTag::NaturalArmor});
+            break;
+        case UnitType::NeutralTamiaHolzt:
+            monster(ProfileKind::NamedActor, CreatureType::Humanoid, "Warlock Duelist", 9,
+                    scores(9, 16, 14, 14, 12, 18), AbilityScoreKind::Charisma,
+                    AbilityScoreKind::Charisma, {SkillTag::Deception, SkillTag::Arcana, SkillTag::Stealth},
+                    {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                    13, 0, 8, 12, 9.0, {TraitTag::Spellcasting, TraitTag::Darkvision});
+            spec.profile.race = Race::Tiefling;
+            spec.profile.characterClass = CharacterClass::Warlock;
+            spec.profile.background = Background::Charlatan;
+            break;
+        case UnitType::ShieldGuardian:
+            monster(ProfileKind::PureMonster, CreatureType::Construct, "Construct Defender", 6,
+                    scores(18, 8, 18, 7, 10, 3), AbilityScoreKind::Strength,
+                    AbilityScoreKind::Wisdom, {}, {AbilityScoreKind::Constitution},
+                    10, 6, 10, 8, 6.0, {TraitTag::Constructed, TraitTag::Taunt, TraitTag::NaturalArmor});
+            break;
+        case UnitType::Cleric:
+            character(Race::Human, Subrace::None, CharacterClass::Cleric, Background::Acolyte,
+                      4, scores(10, 12, 14, 10, 17, 12), AbilityScoreKind::Wisdom,
+                      AbilityScoreKind::Wisdom, {SkillTag::Medicine, SkillTag::Religion, SkillTag::Insight},
+                      {AbilityScoreKind::Wisdom, AbilityScoreKind::Charisma},
+                      ArmorTraining::Medium, 14, 2, 0, 8, 4, 9.0);
+            spec.profile.traits = {TraitTag::Spellcasting};
+            break;
+        case UnitType::Evoker:
+            character(Race::Elf, Subrace::HighElf, CharacterClass::Wizard, Background::Sage,
+                      5, scores(8, 14, 13, 18, 12, 10), AbilityScoreKind::Intelligence,
+                      AbilityScoreKind::Intelligence, {SkillTag::Arcana, SkillTag::History},
+                      {AbilityScoreKind::Intelligence, AbilityScoreKind::Wisdom},
+                      ArmorTraining::None, 10, 99, 0, 6, 16, 9.0);
+            spec.profile.traits = {TraitTag::Darkvision, TraitTag::FeyAncestry, TraitTag::Spellcasting};
+            break;
+        case UnitType::RogueAssassin:
+            character(Race::Tiefling, Subrace::None, CharacterClass::Rogue, Background::Urchin,
+                      5, scores(8, 18, 14, 12, 12, 14), AbilityScoreKind::Dexterity,
+                      AbilityScoreKind::Charisma, {SkillTag::Stealth, SkillTag::SleightOfHand, SkillTag::Deception},
+                      {AbilityScoreKind::Dexterity, AbilityScoreKind::Intelligence},
+                      ArmorTraining::Light, 11, 99, 0, 8, 8, 12.0);
+            spec.profile.traits = {TraitTag::Darkvision, TraitTag::Ambusher};
+            break;
+        case UnitType::Druid:
+            character(Race::Elf, Subrace::WoodElf, CharacterClass::Druid, Background::FolkHero,
+                      4, scores(10, 14, 14, 10, 17, 10), AbilityScoreKind::Wisdom,
+                      AbilityScoreKind::Wisdom, {SkillTag::Nature, SkillTag::Perception, SkillTag::Medicine},
+                      {AbilityScoreKind::Intelligence, AbilityScoreKind::Wisdom},
+                      ArmorTraining::Light, 11, 99, 0, 8, 5, 10.5);
+            spec.profile.traits = {TraitTag::Darkvision, TraitTag::FeyAncestry, TraitTag::Spellcasting, TraitTag::Shapeshift};
+            break;
+        case UnitType::Treant:
+            summon(CreatureType::Plant, "Summoned Brute", 3, scores(17, 8, 15, 6, 10, 7),
+                   AbilityScoreKind::Strength, 10, 2, 10, 7, 6.0,
+                   {TraitTag::NaturalArmor});
+            break;
+        case UnitType::SporeServant:
+            summon(CreatureType::Plant, "Spore Servant", 3, scores(14, 8, 16, 6, 10, 6),
+                   AbilityScoreKind::Strength, 10, 1, 10, 8, 6.0,
+                   {TraitTag::Regeneration});
+            break;
+    }
+}
+
 std::vector<UnitSpec> makeSpecs() {
     std::vector<UnitSpec> specs = {
         {UnitType::Skeleton, "Skeleton Mob", "Sk", 4, 3, 15, 10, 1, 3.0, 0.8,
@@ -441,6 +876,9 @@ std::vector<UnitSpec> makeSpecs() {
     };
 
     for (UnitSpec& spec : specs) {
+        int targetHp = spec.maxHp;
+        int targetAttack = spec.attack;
+        double targetSpeed = spec.speed;
         switch (spec.type) {
             case UnitType::Skeleton:
                 spec.armorClass = 13;
@@ -635,6 +1073,17 @@ std::vector<UnitSpec> makeSpecs() {
                 spec.savingThrowBonus = 2;
                 break;
         }
+        int targetArmorClass = spec.armorClass;
+        int targetAttackBonus = spec.attackBonus;
+        int targetSpellSaveDc = spec.spellSaveDc;
+        assignProfile(spec);
+        calibrateFromCurrentTargets(spec,
+                                    targetHp,
+                                    targetAttack,
+                                    targetArmorClass,
+                                    targetAttackBonus,
+                                    targetSpellSaveDc,
+                                    targetSpeed);
     }
 
     return specs;
@@ -875,6 +1324,301 @@ bool isInternalUnit(UnitType type) {
 
 bool isNeutralMonster(UnitType type) {
     return isNeutralMonsterType(type);
+}
+
+std::string toString(ProfileKind kind) {
+    switch (kind) {
+        case ProfileKind::PlayableCharacter: return "Playable";
+        case ProfileKind::NamedActor: return "Named Actor";
+        case ProfileKind::PureMonster: return "Monster";
+        case ProfileKind::Summon: return "Summon";
+    }
+    return "Monster";
+}
+
+std::string toString(AbilityScoreKind ability) {
+    switch (ability) {
+        case AbilityScoreKind::Strength: return "STR";
+        case AbilityScoreKind::Dexterity: return "DEX";
+        case AbilityScoreKind::Constitution: return "CON";
+        case AbilityScoreKind::Intelligence: return "INT";
+        case AbilityScoreKind::Wisdom: return "WIS";
+        case AbilityScoreKind::Charisma: return "CHA";
+    }
+    return "STR";
+}
+
+std::string toString(Race race) {
+    switch (race) {
+        case Race::None: return "";
+        case Race::Human: return "Human";
+        case Race::Elf: return "Elf";
+        case Race::Dwarf: return "Dwarf";
+        case Race::Tiefling: return "Tiefling";
+        case Race::Githyanki: return "Githyanki";
+        case Race::Goblin: return "Goblin";
+        case Race::Myconid: return "Myconid";
+    }
+    return "";
+}
+
+std::string toString(Subrace subrace) {
+    switch (subrace) {
+        case Subrace::None: return "";
+        case Subrace::HighElf: return "High Elf";
+        case Subrace::WoodElf: return "Wood Elf";
+        case Subrace::ShieldDwarf: return "Shield Dwarf";
+        case Subrace::GoldDwarf: return "Gold Dwarf";
+        case Subrace::Drow: return "Drow";
+    }
+    return "";
+}
+
+std::string toString(CharacterClass characterClass) {
+    switch (characterClass) {
+        case CharacterClass::None: return "";
+        case CharacterClass::Barbarian: return "Barbarian";
+        case CharacterClass::Bard: return "Bard";
+        case CharacterClass::Cleric: return "Cleric";
+        case CharacterClass::Druid: return "Druid";
+        case CharacterClass::Fighter: return "Fighter";
+        case CharacterClass::Monk: return "Monk";
+        case CharacterClass::Paladin: return "Paladin";
+        case CharacterClass::Ranger: return "Ranger";
+        case CharacterClass::Rogue: return "Rogue";
+        case CharacterClass::Sorcerer: return "Sorcerer";
+        case CharacterClass::Warlock: return "Warlock";
+        case CharacterClass::Wizard: return "Wizard";
+    }
+    return "";
+}
+
+std::string toString(Background background) {
+    switch (background) {
+        case Background::None: return "";
+        case Background::Acolyte: return "Acolyte";
+        case Background::Charlatan: return "Charlatan";
+        case Background::Criminal: return "Criminal";
+        case Background::FolkHero: return "Folk Hero";
+        case Background::Noble: return "Noble";
+        case Background::Outlander: return "Outlander";
+        case Background::Sage: return "Sage";
+        case Background::Soldier: return "Soldier";
+        case Background::Urchin: return "Urchin";
+    }
+    return "";
+}
+
+std::string toString(CreatureType creatureType) {
+    switch (creatureType) {
+        case CreatureType::None: return "";
+        case CreatureType::Humanoid: return "Humanoid";
+        case CreatureType::Undead: return "Undead";
+        case CreatureType::Fiend: return "Fiend";
+        case CreatureType::Construct: return "Construct";
+        case CreatureType::Monstrosity: return "Monstrosity";
+        case CreatureType::Aberration: return "Aberration";
+        case CreatureType::Plant: return "Plant";
+        case CreatureType::Fey: return "Fey";
+        case CreatureType::Elemental: return "Elemental";
+        case CreatureType::Celestial: return "Celestial";
+        case CreatureType::Dragon: return "Dragon";
+        case CreatureType::Beast: return "Beast";
+    }
+    return "";
+}
+
+std::string toString(SkillTag skill) {
+    switch (skill) {
+        case SkillTag::None: return "";
+        case SkillTag::Perception: return "Perception";
+        case SkillTag::Deception: return "Deception";
+        case SkillTag::Stealth: return "Stealth";
+        case SkillTag::SleightOfHand: return "Sleight";
+        case SkillTag::Persuasion: return "Persuasion";
+        case SkillTag::Intimidation: return "Intimidation";
+        case SkillTag::Arcana: return "Arcana";
+        case SkillTag::Religion: return "Religion";
+        case SkillTag::Nature: return "Nature";
+        case SkillTag::Survival: return "Survival";
+        case SkillTag::Athletics: return "Athletics";
+        case SkillTag::Acrobatics: return "Acrobatics";
+        case SkillTag::Medicine: return "Medicine";
+        case SkillTag::Insight: return "Insight";
+        case SkillTag::History: return "History";
+    }
+    return "";
+}
+
+std::string toString(TraitTag trait) {
+    switch (trait) {
+        case TraitTag::None: return "";
+        case TraitTag::Darkvision: return "Darkvision";
+        case TraitTag::FeyAncestry: return "Fey Ancestry";
+        case TraitTag::MartialTraining: return "Martial";
+        case TraitTag::Spellcasting: return "Spellcasting";
+        case TraitTag::NaturalArmor: return "Natural Armor";
+        case TraitTag::Charge: return "Charge";
+        case TraitTag::Flying: return "Flying";
+        case TraitTag::Summoned: return "Summoned";
+        case TraitTag::Constructed: return "Construct";
+        case TraitTag::UndeadFortitude: return "Undead Fortitude";
+        case TraitTag::Psionics: return "Psionics";
+        case TraitTag::Regeneration: return "Regeneration";
+        case TraitTag::Taunt: return "Taunt";
+        case TraitTag::PackTactics: return "Pack Tactics";
+        case TraitTag::FireAffinity: return "Fire";
+        case TraitTag::Poison: return "Poison";
+        case TraitTag::RadiantAura: return "Radiant Aura";
+        case TraitTag::Shapeshift: return "Shapeshift";
+        case TraitTag::Ambusher: return "Ambusher";
+    }
+    return "";
+}
+
+int abilityModifier(int score) {
+    return static_cast<int>(std::floor((static_cast<double>(score) - 10.0) / 2.0));
+}
+
+int proficiencyBonusForLevel(int levelOrTier) {
+    if (levelOrTier >= 9) return 4;
+    if (levelOrTier >= 5) return 3;
+    return 2;
+}
+
+int abilityScore(const AbilityScores& scores, AbilityScoreKind ability) {
+    switch (ability) {
+        case AbilityScoreKind::Strength: return scores.strength;
+        case AbilityScoreKind::Dexterity: return scores.dexterity;
+        case AbilityScoreKind::Constitution: return scores.constitution;
+        case AbilityScoreKind::Intelligence: return scores.intelligence;
+        case AbilityScoreKind::Wisdom: return scores.wisdom;
+        case AbilityScoreKind::Charisma: return scores.charisma;
+    }
+    return scores.strength;
+}
+
+int abilityScore(const UnitProfile& profile, AbilityScoreKind ability) {
+    return abilityScore(profile.abilityScores, ability);
+}
+
+bool hasSkillProficiency(const UnitProfile& profile, SkillTag skill) {
+    if (skill == SkillTag::None) return false;
+    return std::find(profile.skills.begin(), profile.skills.end(), skill) != profile.skills.end();
+}
+
+int savingThrowBonusFor(const UnitSpec& spec, AbilityScoreKind ability) {
+    int bonus = abilityModifier(abilityScore(spec.profile, ability));
+    if (std::find(spec.profile.savingThrowProficiencies.begin(),
+                  spec.profile.savingThrowProficiencies.end(),
+                  ability) != spec.profile.savingThrowProficiencies.end()) {
+        bonus += proficiencyBonusForLevel(spec.profile.level);
+    }
+    return bonus;
+}
+
+int skillBonusFor(const UnitSpec& spec, SkillTag skill) {
+    AbilityScoreKind ability = AbilityScoreKind::Wisdom;
+    switch (skill) {
+        case SkillTag::Stealth:
+        case SkillTag::SleightOfHand:
+        case SkillTag::Acrobatics:
+            ability = AbilityScoreKind::Dexterity;
+            break;
+        case SkillTag::Athletics:
+            ability = AbilityScoreKind::Strength;
+            break;
+        case SkillTag::Arcana:
+        case SkillTag::History:
+        case SkillTag::Nature:
+        case SkillTag::Religion:
+            ability = AbilityScoreKind::Intelligence;
+            break;
+        case SkillTag::Deception:
+        case SkillTag::Intimidation:
+        case SkillTag::Persuasion:
+            ability = AbilityScoreKind::Charisma;
+            break;
+        case SkillTag::Perception:
+        case SkillTag::Medicine:
+        case SkillTag::Insight:
+        case SkillTag::Survival:
+        case SkillTag::None:
+            ability = AbilityScoreKind::Wisdom;
+            break;
+    }
+    int bonus = abilityModifier(abilityScore(spec.profile, ability));
+    if (hasSkillProficiency(spec.profile, skill)) {
+        bonus += proficiencyBonusForLevel(spec.profile.level);
+    }
+    return bonus;
+}
+
+std::string abilityScoreSummary(const AbilityScores& scores) {
+    return "STR " + std::to_string(scores.strength) +
+           "  DEX " + std::to_string(scores.dexterity) +
+           "  CON " + std::to_string(scores.constitution) +
+           "  INT " + std::to_string(scores.intelligence) +
+           "  WIS " + std::to_string(scores.wisdom) +
+           "  CHA " + std::to_string(scores.charisma);
+}
+
+std::string profileSummary(const UnitProfile& profile) {
+    auto joinFeature = [](const UnitProfile& p) {
+        std::vector<std::string> parts;
+        for (SkillTag skill : p.skills) {
+            std::string label = toString(skill);
+            if (!label.empty()) parts.push_back(label);
+            if (parts.size() >= 2) break;
+        }
+        for (TraitTag trait : p.traits) {
+            std::string label = toString(trait);
+            if (!label.empty() && std::find(parts.begin(), parts.end(), label) == parts.end()) {
+                parts.push_back(label);
+            }
+            if (parts.size() >= 2) break;
+        }
+        if (parts.empty()) return std::string("Core Traits");
+        std::ostringstream out;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << parts[i];
+        }
+        return out.str();
+    };
+
+    auto abilityPair = [](const UnitProfile& p) {
+        AbilityScoreKind first = p.attackAbility;
+        AbilityScoreKind second = p.castingAbility;
+        if (second == first) second = AbilityScoreKind::Constitution;
+        return toString(first) + " " + std::to_string(abilityScore(p, first)) + " " +
+               toString(second) + " " + std::to_string(abilityScore(p, second));
+    };
+
+    std::string identity;
+    if (profile.kind == ProfileKind::PlayableCharacter) {
+        identity = !toString(profile.subrace).empty() ? toString(profile.subrace) : toString(profile.race);
+        std::string klass = toString(profile.characterClass);
+        if (!identity.empty() && !klass.empty()) identity += " ";
+        identity += klass;
+        if (identity.empty()) identity = "Adventurer";
+        return identity + " | L" + std::to_string(profile.level) + " | " +
+               abilityPair(profile) + " | " + joinFeature(profile);
+    }
+
+    identity = toString(profile.creatureType);
+    if (!profile.archetype.empty()) {
+        if (!identity.empty()) identity += " ";
+        identity += profile.archetype;
+    }
+    if (identity.empty()) identity = toString(profile.kind);
+    std::string middle = profile.kind == ProfileKind::NamedActor
+                             ? "Named Actor"
+                             : (profile.kind == ProfileKind::Summon
+                                    ? "Summon"
+                                    : "Tier " + std::to_string(profile.tier));
+    return identity + " | " + middle + " | " + abilityPair(profile) + " | " +
+           joinFeature(profile);
 }
 
 class HeuristicAiPlanner : public AiPlanner {
@@ -1411,6 +2155,7 @@ GameEngine::GameEngine(const GameEngine& other)
       round_(other.round_),
       time_(other.time_),
       combatTime_(other.combatTime_),
+      lastCombatProgressTime_(other.lastCombatProgressTime_),
       explorationRound_(other.explorationRound_),
       explorationRoundLimit_(other.explorationRoundLimit_),
       explorationRoundLimitLocked_(other.explorationRoundLimitLocked_),
@@ -1442,6 +2187,7 @@ GameEngine& GameEngine::operator=(const GameEngine& other) {
     round_ = other.round_;
     time_ = other.time_;
     combatTime_ = other.combatTime_;
+    lastCombatProgressTime_ = other.lastCombatProgressTime_;
     explorationRound_ = other.explorationRound_;
     explorationRoundLimit_ = other.explorationRoundLimit_;
     explorationRoundLimitLocked_ = other.explorationRoundLimitLocked_;
@@ -1472,6 +2218,7 @@ void GameEngine::startNewGame(const GameConfig& config) {
     round_ = 1;
     time_ = 0.0;
     combatTime_ = 0.0;
+    lastCombatProgressTime_ = 0.0;
     explorationRound_ = 0;
     explorationRoundLimit_ = configuredExplorationLimit;
     explorationRoundLimitLocked_ = false;
@@ -1714,7 +2461,17 @@ GameSnapshot GameEngine::snapshot() const {
         view.armorClass = effectiveArmorClass(u);
         view.attackBonus = effectiveAttackBonus(u);
         view.savingThrowBonus = u.spec.savingThrowBonus;
+        view.savingThrowBonuses = {
+            savingThrowBonusFor(u.spec, AbilityScoreKind::Strength),
+            savingThrowBonusFor(u.spec, AbilityScoreKind::Dexterity),
+            savingThrowBonusFor(u.spec, AbilityScoreKind::Constitution),
+            savingThrowBonusFor(u.spec, AbilityScoreKind::Intelligence),
+            savingThrowBonusFor(u.spec, AbilityScoreKind::Wisdom),
+            savingThrowBonusFor(u.spec, AbilityScoreKind::Charisma)
+        };
         view.spellSaveDc = u.spec.spellSaveDc;
+        view.profile = u.spec.profile;
+        view.profileSummary = profileSummary(u.spec.profile);
         view.slowed = hasStatus(u, StatusKind::Slow) || hasStatus(u, StatusKind::Chilled);
         view.taunting = hasStatus(u, StatusKind::Taunt) || u.spec.ability == AbilityKind::GuardianShield;
         snapshot.units.push_back(view);
@@ -1917,6 +2674,8 @@ std::string GameEngine::rulesFingerprint() const {
     hashAppend(hash, std::to_string(kBoardWidth));
     hashAppend(hash, std::to_string(kBoardHeight));
     hashAppend(hash, "dungeon-run-exploration-score-v1");
+    hashAppend(hash, "bg3-unit-profile-derived-stats-v1");
+    hashAppend(hash, "attribute-exploration-events-v1");
     hashAppend(hash, std::to_string(kStartingGold));
     hashAppend(hash, std::to_string(kBaseRoundIncome));
     hashAppend(hash, std::to_string(kRoundIncomeGrowth));
@@ -1948,12 +2707,49 @@ std::string GameEngine::rulesFingerprint() const {
         hashAppend(hash, std::to_string(spec.attackBonus));
         hashAppend(hash, std::to_string(spec.savingThrowBonus));
         hashAppend(hash, std::to_string(spec.spellSaveDc));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.kind)));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.race)));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.subrace)));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.characterClass)));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.background)));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.creatureType)));
+        hashAppend(hash, spec.profile.archetype);
+        hashAppend(hash, std::to_string(spec.profile.level));
+        hashAppend(hash, std::to_string(spec.profile.tier));
+        hashAppend(hash, abilityScoreSummary(spec.profile.abilityScores));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.attackAbility)));
+        hashAppend(hash, std::to_string(static_cast<int>(spec.profile.castingAbility)));
+        hashAppend(hash, std::to_string(spec.profile.armorBase));
+        hashAppend(hash, std::to_string(spec.profile.armorDexCap));
+        hashAppend(hash, std::to_string(spec.profile.shieldBonus));
+        hashAppend(hash, std::to_string(spec.profile.naturalArmorBonus));
+        hashAppend(hash, std::to_string(spec.profile.hitDie));
+        hashAppend(hash, std::to_string(spec.profile.hitDice));
+        hashAppend(hash, std::to_string(spec.profile.weaponDamageAverage));
+        hashAppend(hash, std::to_string(spec.profile.movementMeters));
+        for (AbilityScoreKind save : spec.profile.savingThrowProficiencies) {
+            hashAppend(hash, "save:" + std::to_string(static_cast<int>(save)));
+        }
+        for (SkillTag skill : spec.profile.skills) {
+            hashAppend(hash, "skill:" + std::to_string(static_cast<int>(skill)));
+        }
+        for (TraitTag trait : spec.profile.traits) {
+            hashAppend(hash, "trait:" + std::to_string(static_cast<int>(trait)));
+        }
+        hashAppend(hash, std::to_string(spec.hpScale));
+        hashAppend(hash, std::to_string(spec.damageScale));
+        hashAppend(hash, std::to_string(spec.flatHpBonus));
+        hashAppend(hash, std::to_string(spec.attackTuning));
+        hashAppend(hash, std::to_string(spec.damageTuning));
+        hashAppend(hash, std::to_string(spec.acTuning));
+        hashAppend(hash, std::to_string(spec.dcTuning));
+        hashAppend(hash, std::to_string(spec.speedTuning));
     }
     return hashToHex(hash);
 }
 
-bool GameEngine::debugTriggerTrap(PlayerId triggeringPlayer, Coord coord) {
-    return triggerTrapAt(triggeringPlayer, coord);
+bool GameEngine::debugTriggerTrap(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId) {
+    return triggerTrapAt(triggeringPlayer, coord, triggerUnitId);
 }
 
 bool GameEngine::debugTriggerRandomGold(PlayerId triggeringPlayer, Coord coord) {
@@ -2015,6 +2811,71 @@ UnitId GameEngine::debugCreateUnit(PlayerId owner, UnitType type, Coord coord) {
     }
     player(owner).deployed.push_back(id);
     return id;
+}
+
+bool GameEngine::debugSetUnitArmorClass(UnitId unitId, int armorClass) {
+    if (unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    if (!u.alive) return false;
+    u.spec.armorClass = std::max(1, armorClass);
+    return true;
+}
+
+bool GameEngine::debugSetUnitSpeed(UnitId unitId, double speed) {
+    if (unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    if (!u.alive) return false;
+    u.spec.speed = std::max(0.0, speed);
+    u.moveProgress = 0.0;
+    return true;
+}
+
+bool GameEngine::debugSetUnitAbilityScore(UnitId unitId, AbilityScoreKind ability, int score) {
+    if (unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    if (!u.alive) return false;
+    score = std::max(1, score);
+    switch (ability) {
+        case AbilityScoreKind::Strength:
+            u.spec.profile.abilityScores.strength = score;
+            break;
+        case AbilityScoreKind::Dexterity:
+            u.spec.profile.abilityScores.dexterity = score;
+            break;
+        case AbilityScoreKind::Constitution:
+            u.spec.profile.abilityScores.constitution = score;
+            break;
+        case AbilityScoreKind::Intelligence:
+            u.spec.profile.abilityScores.intelligence = score;
+            break;
+        case AbilityScoreKind::Wisdom:
+            u.spec.profile.abilityScores.wisdom = score;
+            break;
+        case AbilityScoreKind::Charisma:
+            u.spec.profile.abilityScores.charisma = score;
+            break;
+    }
+    applyDerivedCombatStats(u.spec);
+    for (int& hp : u.hp) hp = std::min(hp, u.spec.maxHp);
+    return true;
+}
+
+bool GameEngine::debugSetUnitSkillProficiency(UnitId unitId, SkillTag skill, bool proficient) {
+    if (unitId < 0 || unitId >= static_cast<int>(units_.size())) return false;
+    Unit& u = unit(unitId);
+    if (!u.alive || skill == SkillTag::None) return false;
+    auto& skills = u.spec.profile.skills;
+    auto it = std::find(skills.begin(), skills.end(), skill);
+    if (proficient) {
+        if (it == skills.end()) skills.push_back(skill);
+    } else if (it != skills.end()) {
+        skills.erase(it);
+    }
+    return true;
+}
+
+bool GameEngine::debugDetectHiddenEvent(PlayerId triggeringPlayer, Coord movedCoord, UnitId triggerUnitId) {
+    return tryDetectHiddenEvent(triggeringPlayer, movedCoord, triggerUnitId);
 }
 
 bool GameEngine::debugKnockback(UnitId targetId, Coord source, int distance, UnitId sourceId) {
@@ -2454,6 +3315,22 @@ bool GameEngine::triggerTrapAt(PlayerId triggeringPlayer, Coord coord, UnitId tr
     std::optional<size_t> objectiveIndex = exploration_.findTriggerableTrap(coord);
     if (!objectiveIndex) return false;
 
+    if (triggerUnitId != kInvalidUnitId) {
+        if (triggerUnitId < 0 || triggerUnitId >= static_cast<int>(units_.size())) return false;
+        const Unit& trigger = unit(triggerUnitId);
+        if (trigger.owner != triggeringPlayer || !canTriggerHiddenEvent(trigger)) return false;
+        const ExplorationObjectiveState* objective = exploration_.objective(*objectiveIndex);
+        int rewardQuality = objective ? objective->rewardQuality : 0;
+        int dc = 13 + rewardQuality;
+        if (explorationCheckSucceeds(trigger, AbilityScoreKind::Dexterity, dc)) {
+            pushEvent({EventType::StatusApplied, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, 0,
+                       "Trap avoided"});
+            clearExplorationObjective(*objectiveIndex, triggeringPlayer, triggerUnitId);
+            return true;
+        }
+    }
+
     exploration_.markTriggered(*objectiveIndex);
     board_.setTerrain(coord, TerrainKind::Trap);
     int spawned = spawnRedcapAmbush(triggeringPlayer, coord, triggerUnitId);
@@ -2490,6 +3367,50 @@ bool GameEngine::canTriggerHiddenEvent(const Unit& trigger) const {
     if (isInternalUnitType(trigger.spec.type)) return false;
     if (isNeutralMonsterType(trigger.spec.type)) return false;
     return true;
+}
+
+bool GameEngine::tryDetectHiddenEvent(PlayerId triggeringPlayer, Coord movedCoord, UnitId triggerUnitId) {
+    if (triggerUnitId < 0 || triggerUnitId >= static_cast<int>(units_.size())) return false;
+    Unit& trigger = unit(triggerUnitId);
+    if (trigger.owner != triggeringPlayer || !canTriggerHiddenEvent(trigger)) return false;
+
+    struct Candidate {
+        Coord coord;
+        HiddenExplorationEventKind kind = HiddenExplorationEventKind::GoldCache;
+        int dc = 12;
+    };
+    std::vector<Candidate> candidates;
+    for (Coord coord : exploration_.randomGoldCoords()) {
+        if (manhattan(coord, movedCoord) <= 1) {
+            candidates.push_back({coord, HiddenExplorationEventKind::GoldCache, 12});
+        }
+    }
+    for (Coord coord : exploration_.hiddenHealingCoords()) {
+        if (manhattan(coord, movedCoord) <= 1) {
+            candidates.push_back({coord, HiddenExplorationEventKind::HealingSpring, 13});
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [movedCoord](const Candidate& lhs, const Candidate& rhs) {
+        int lhsDistance = manhattan(lhs.coord, movedCoord);
+        int rhsDistance = manhattan(rhs.coord, movedCoord);
+        if (lhsDistance != rhsDistance) return lhsDistance < rhsDistance;
+        if (lhs.coord.y != rhs.coord.y) return lhs.coord.y < rhs.coord.y;
+        return lhs.coord.x < rhs.coord.x;
+    });
+
+    for (const Candidate& candidate : candidates) {
+        int extra = candidate.coord == movedCoord ? 4 : 0;
+        if (!explorationCheckSucceeds(trigger, AbilityScoreKind::Wisdom, candidate.dc,
+                                      SkillTag::Perception, extra)) {
+            continue;
+        }
+        if (candidate.kind == HiddenExplorationEventKind::GoldCache) {
+            if (triggerRandomGoldEventAt(triggeringPlayer, candidate.coord, triggerUnitId)) return true;
+        } else {
+            if (triggerHiddenEventAt(triggeringPlayer, candidate.coord, triggerUnitId)) return true;
+        }
+    }
+    return false;
 }
 
 bool GameEngine::triggerHiddenEventAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId) {
@@ -2531,6 +3452,16 @@ bool GameEngine::triggerHiddenEventAt(PlayerId triggeringPlayer, Coord coord, Un
                coord, coord, healedTotal,
                "Hidden healing spring restored the party"});
     return true;
+}
+
+bool GameEngine::explorationCheckSucceeds(const Unit& trigger, AbilityScoreKind ability, int dc,
+                                          SkillTag skill, int extraBonus) {
+    int bonus = abilityModifier(abilityScore(trigger.spec.profile, ability)) + extraBonus;
+    if (skill != SkillTag::None) {
+        bonus = skillBonusFor(trigger.spec, skill) + extraBonus;
+    }
+    int roll = rollD20(0);
+    return roll + bonus >= dc;
 }
 
 int GameEngine::spawnRedcapAmbush(PlayerId triggeringPlayer, Coord origin, UnitId triggerUnitId) {
@@ -2788,6 +3719,7 @@ void GameEngine::startCombatIfReady() {
 void GameEngine::startCombat() {
     phase_ = Phase::Combat;
     combatTime_ = 0.0;
+    lastCombatProgressTime_ = 0.0;
     for (Unit& u : units_) {
         if (!u.alive || !u.deployed) continue;
         u.target = kInvalidUnitId;
@@ -2849,6 +3781,7 @@ void GameEngine::startNextRound(const std::string& reason) {
     ++explorationRound_;
     ++round_;
     combatTime_ = 0.0;
+    lastCombatProgressTime_ = 0.0;
 
     std::array<int, 2> incomes{};
     for (PlayerState& p : players_) {
@@ -3695,6 +4628,37 @@ void GameEngine::tickStatuses(Unit& u, double dt) {
     if (u.lifespan > 0.0) u.lifespan -= dt;
 }
 
+void GameEngine::markCombatProgress() {
+    if (phase_ == Phase::Combat) lastCombatProgressTime_ = combatTime_;
+}
+
+bool GameEngine::shouldEndStalledCombat() const {
+    if (phase_ != Phase::Combat) return false;
+    if (combatTime_ < kCombatStallTimeout) return false;
+    return combatTime_ - lastCombatProgressTime_ >= kCombatStallTimeout;
+}
+
+bool GameEngine::shouldCastGuardianShield(const Unit& u) const {
+    if (!u.alive || !u.deployed || u.spec.ability != AbilityKind::GuardianShield) return false;
+    if (u.shield >= kGuardianShieldCap) return false;
+
+    bool nearbyPressure = false;
+    bool targetedByEnemy = false;
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed || candidate.id == u.id) continue;
+        if (!isHostileCombatTarget(candidate, u) && !isHostileCombatTarget(u, candidate)) continue;
+        if (manhattan(candidate.coord, u.coord) <= 2) nearbyPressure = true;
+        if (candidate.target == u.id && canAttack(candidate, u)) targetedByEnemy = true;
+        if (nearbyPressure && targetedByEnemy) break;
+    }
+
+    if (!nearbyPressure && !targetedByEnemy) return false;
+
+    int maxHp = std::max(1, u.spec.maxHp * u.spec.unitCount);
+    bool wounded = totalHp(u) * 100 < maxHp * 85;
+    return u.shield < kGuardianShieldRefillThreshold || wounded || nearbyPressure || targetedByEnemy;
+}
+
 void GameEngine::tickAbilities(UnitId id, double dt) {
     Unit& u = unit(id);
     if (!u.alive || !u.deployed) return;
@@ -3706,8 +4670,9 @@ void GameEngine::tickAbilities(UnitId id, double dt) {
 
     switch (u.spec.ability) {
         case AbilityKind::GuardianShield:
-            addShield(id, u.spec.abilityValue, id);
-            u.abilityTimer = 0.0;
+            if (shouldCastGuardianShield(u) && addShield(id, u.spec.abilityValue, id) > 0) {
+                u.abilityTimer = 0.0;
+            }
             break;
         case AbilityKind::ClericHeal: {
             UnitId target = selectHealTarget(u);
@@ -3857,8 +4822,8 @@ void GameEngine::tickCombat(double dt) {
     }
     resolveVictory();
 
-    if (phase_ == Phase::Combat && combatTime_ >= kExplorationCombatRoundCap) {
-        startNextRound("combat time cap");
+    if (phase_ == Phase::Combat && shouldEndStalledCombat()) {
+        startNextRound("combat stalled");
     }
 }
 
@@ -4401,6 +5366,20 @@ void GameEngine::activateNeutral(UnitId neutralId, UnitId sourceId, const std::s
     }
 }
 
+void GameEngine::activateNeutralOnAttackIntent(UnitId attackerId, UnitId targetId) {
+    if (attackerId < 0 || targetId < 0 ||
+        attackerId >= static_cast<int>(units_.size()) ||
+        targetId >= static_cast<int>(units_.size())) {
+        return;
+    }
+    const Unit& attacker = unit(attackerId);
+    const Unit& target = unit(targetId);
+    if (!attacker.alive || !target.alive || !target.deployed) return;
+    if (isNeutralLikeCombatant(attacker) || !isNeutralGuardianUnit(target)) return;
+    if (!canAttack(attacker, target)) return;
+    activateNeutral(targetId, attackerId, "attacked");
+}
+
 void GameEngine::provokeNeutral(UnitId neutralId, UnitId sourceId) {
     activateNeutral(neutralId, sourceId, "provoked");
 }
@@ -4494,7 +5473,16 @@ bool GameEngine::savingThrowSucceeds(UnitId targetId, UnitId sourceId, const std
     }
 
     int selectedRoll = rollD20(advantageScore);
-    int bonus = target.spec.savingThrowBonus;
+    std::string saveKey = lowerCopy(saveName);
+    std::optional<AbilityScoreKind> saveAbility;
+    if (saveKey == "str" || saveKey == "strength") saveAbility = AbilityScoreKind::Strength;
+    if (saveKey == "dex" || saveKey == "dexterity") saveAbility = AbilityScoreKind::Dexterity;
+    if (saveKey == "con" || saveKey == "constitution") saveAbility = AbilityScoreKind::Constitution;
+    if (saveKey == "int" || saveKey == "intelligence") saveAbility = AbilityScoreKind::Intelligence;
+    if (saveKey == "wis" || saveKey == "wisdom") saveAbility = AbilityScoreKind::Wisdom;
+    if (saveKey == "cha" || saveKey == "charisma") saveAbility = AbilityScoreKind::Charisma;
+    int bonus = saveAbility ? savingThrowBonusFor(target.spec, *saveAbility)
+                            : target.spec.savingThrowBonus;
     int total = selectedRoll + bonus;
     bool success = selectedRoll == 20 || (selectedRoll != 1 && total >= dc);
 
@@ -4805,6 +5793,9 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
     Unit& target = unit(targetId);
     if (!attacker.alive || !target.alive) return;
     if (!canNeutralAct(attacker)) return;
+    if (!canAttack(attacker, target)) return;
+    activateNeutralOnAttackIntent(attackerId, targetId);
+    markCombatProgress();
     if (resolveCounterspellReaction(attackerId, targetId)) return;
     if (tryResolveExtractBrain(attackerId, targetId)) return;
     if (tryResolveActiveAbilityAttack(attackerId, targetId)) return;
@@ -5328,6 +6319,7 @@ void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId
     }
 
     activateNeutral(targetId, sourceId, "struck");
+    markCombatProgress();
 
     if (target.spec.ability == AbilityKind::BarbarianHeavySwing) {
         int maxHp = target.spec.maxHp * target.spec.unitCount;
@@ -5400,18 +6392,24 @@ void GameEngine::applyHeal(UnitId targetId, int amount, UnitId sourceId) {
     *it = std::min(target.spec.maxHp, *it + amount);
     int healed = *it - before;
     if (healed > 0) {
+        markCombatProgress();
         pushEvent({EventType::Healed, target.owner, sourceId, targetId, {}, target.coord, healed,
                    eventUnitName(target) + " healed " + std::to_string(healed)});
     }
 }
 
-void GameEngine::addShield(UnitId targetId, int amount, UnitId sourceId) {
-    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return;
+int GameEngine::addShield(UnitId targetId, int amount, UnitId sourceId) {
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size()) || amount <= 0) return 0;
     Unit& target = unit(targetId);
-    if (!target.alive) return;
-    target.shield = std::min(120, target.shield + amount);
-    pushEvent({EventType::Shielded, target.owner, sourceId, targetId, {}, target.coord, amount,
+    if (!target.alive) return 0;
+    int before = target.shield;
+    target.shield = std::min(kGuardianShieldCap, target.shield + amount);
+    int gained = target.shield - before;
+    if (gained <= 0) return 0;
+    markCombatProgress();
+    pushEvent({EventType::Shielded, target.owner, sourceId, targetId, {}, target.coord, gained,
                eventUnitName(target) + " gained shield"});
+    return gained;
 }
 
 void GameEngine::killUnit(UnitId id, UnitId sourceId) {
@@ -5512,6 +6510,32 @@ bool GameEngine::hasActiveCombatUnit(PlayerId playerId) const {
     return false;
 }
 
+bool GameEngine::isEffectiveCombatMove(const Unit& u, Coord from, Coord to) const {
+    if (phase_ != Phase::Combat || from == to) return false;
+
+    if (u.target != kInvalidUnitId && u.target < static_cast<int>(units_.size()) &&
+        unit(u.target).alive && unit(u.target).deployed) {
+        const Unit& target = unit(u.target);
+        Unit probe = u;
+        probe.coord = to;
+        if (inAttackRange(probe, target)) return true;
+        return manhattan(to, target.coord) < manhattan(from, target.coord);
+    }
+
+    if (u.neutralReturningHome && board_.inBounds(u.homeCoord)) {
+        return manhattan(to, u.homeCoord) < manhattan(from, u.homeCoord);
+    }
+
+    if (!isNeutralLikeCombatant(u) && !isRoundTransientUnit(u.spec.type)) {
+        Unit probe = u;
+        probe.coord = from;
+        std::optional<Coord> goal = chooseExplorationGoal(probe);
+        if (goal) return to == *goal || manhattan(to, *goal) < manhattan(from, *goal);
+    }
+
+    return false;
+}
+
 void GameEngine::moveUnits(double dt) {
     std::vector<UnitId> ids;
     for (const PlayerState& p : players_) {
@@ -5593,9 +6617,10 @@ void GameEngine::moveUnits(double dt) {
             pushEvent({EventType::UnitMoved, u.owner, id, kInvalidUnitId, from, *next, 0,
                        eventUnitName(u) + " moved"});
         }
+        if (isEffectiveCombatMove(u, from, *next)) markCombatProgress();
         if (u.spec.layer == UnitLayer::Land) reserved.push_back(*next);
         if (canTriggerHiddenEvent(u)) {
-            triggerHiddenEventAt(u.owner, *next, id);
+            tryDetectHiddenEvent(u.owner, *next, id);
             triggerTrapAt(u.owner, *next, id);
         }
     }

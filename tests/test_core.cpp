@@ -823,6 +823,85 @@ void test_hidden_healing_spring_is_hidden_and_once_only() {
     assert(!engine.debugTriggerHiddenEvent(PlayerId::One, heals.front(), trigger));
 }
 
+void test_high_wis_perception_detects_hidden_gold_and_healing() {
+    GameEngine engine(733);
+    engine.startNewGame(GameMode::TwoPlayer);
+
+    std::vector<Coord> gold = engine.debugRandomGoldCoords();
+    std::vector<Coord> healing = engine.debugHiddenHealingCoords();
+    assert(!gold.empty());
+    assert(!healing.empty());
+
+    UnitId scout = buyAndDeployNear(engine, PlayerId::One, UnitType::Druid, Coord{2, 9});
+    assert(scout != kInvalidUnitId);
+    assert(engine.debugSetUnitAbilityScore(scout, AbilityScoreKind::Wisdom, 50));
+    assert(engine.debugSetUnitSkillProficiency(scout, SkillTag::Perception, true));
+
+    GameSnapshot before = engine.snapshot();
+    assert(engine.debugDetectHiddenEvent(PlayerId::One, gold.front(), scout));
+    GameSnapshot afterGold = engine.snapshot();
+    assert(afterGold.hiddenEventsClaimed == before.hiddenEventsClaimed + 1);
+    assert(afterGold.hiddenEventsClaimedByPlayer[0] == before.hiddenEventsClaimedByPlayer[0] + 1);
+    assert(afterGold.players[0].money > before.players[0].money);
+    assert(afterGold.explorationScores[0] > before.explorationScores[0]);
+
+    assert(engine.debugApplyDamage(scout, 12, DamageType::Slashing));
+    GameSnapshot beforeHeal = engine.snapshot();
+    const UnitView* wounded = findUnit(beforeHeal, scout);
+    assert(wounded);
+    int hpBefore = wounded->totalHp;
+    assert(engine.debugDetectHiddenEvent(PlayerId::One, healing.front(), scout));
+    GameSnapshot afterHeal = engine.snapshot();
+    const UnitView* healed = findUnit(afterHeal, scout);
+    assert(healed);
+    assert(healed->totalHp > hpBefore);
+    assert(afterHeal.hiddenEventsClaimed == beforeHeal.hiddenEventsClaimed + 1);
+}
+
+void test_low_wis_unit_can_miss_hidden_detection() {
+    bool sawMiss = false;
+    for (unsigned seed = 734; seed < 770 && !sawMiss; ++seed) {
+        GameEngine engine(seed);
+        engine.startNewGame(GameMode::TwoPlayer);
+        std::vector<Coord> gold = engine.debugRandomGoldCoords();
+        assert(!gold.empty());
+
+        UnitId scout = buyAndDeployNear(engine, PlayerId::One, UnitType::Ranger, Coord{2, 9});
+        assert(scout != kInvalidUnitId);
+        assert(engine.debugSetUnitAbilityScore(scout, AbilityScoreKind::Wisdom, 1));
+        assert(engine.debugSetUnitSkillProficiency(scout, SkillTag::Perception, false));
+
+        Coord probe = gold.front();
+        probe.x = probe.x + 1 < kBoardWidth ? probe.x + 1 : probe.x - 1;
+        GameSnapshot before = engine.snapshot();
+        bool detected = engine.debugDetectHiddenEvent(PlayerId::One, probe, scout);
+        GameSnapshot after = engine.snapshot();
+        if (!detected && after.hiddenEventsClaimed == before.hiddenEventsClaimed) {
+            sawMiss = true;
+        }
+    }
+    assert(sawMiss);
+}
+
+void test_internal_units_cannot_detect_hidden_events() {
+    GameEngine engine(771);
+    engine.startNewGame(GameMode::TwoPlayer);
+    std::vector<Coord> gold = engine.debugRandomGoldCoords();
+    assert(!gold.empty());
+
+    Coord coord = openCoordNear(engine.snapshot(), Coord{2, 9});
+    UnitId internal = engine.debugCreateUnit(PlayerId::One, UnitType::SkeletonByNecromancer, coord);
+    assert(internal != kInvalidUnitId);
+    assert(engine.debugSetUnitAbilityScore(internal, AbilityScoreKind::Wisdom, 50));
+    assert(engine.debugSetUnitSkillProficiency(internal, SkillTag::Perception, true));
+
+    GameSnapshot before = engine.snapshot();
+    assert(!engine.debugDetectHiddenEvent(PlayerId::One, gold.front(), internal));
+    GameSnapshot after = engine.snapshot();
+    assert(after.hiddenEventsClaimed == before.hiddenEventsClaimed);
+    assert(after.players[0].money == before.players[0].money);
+}
+
 void test_neutral_camps_hold_their_guard_posts() {
     GameEngine engine(65);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -924,7 +1003,7 @@ void test_neutral_activation_ignores_proximity_hidden_events_and_sourceless_dama
     engine.setReady(PlayerId::Two, true);
 
     bool neutralMovedOrAttacked = false;
-    for (int i = 0; i < 30 * 2 && engine.snapshot().phase == Phase::Combat; ++i) {
+    for (int i = 0; i < 30 / 2 && engine.snapshot().phase == Phase::Combat; ++i) {
         engine.tick(1.0 / 30.0);
         for (const Event& event : engine.consumeEvents()) {
             if (event.actor == camp &&
@@ -1416,6 +1495,85 @@ void test_side_trap_spawns_redcap_ambush_once() {
     assert(testedActiveAmbush);
 }
 
+void test_high_dex_unit_avoids_redcap_trap_and_clears_it() {
+    const std::array<Coord, 10> candidates = {
+        Coord{7, 5}, Coord{25, 5}, Coord{7, 13}, Coord{25, 13}, Coord{16, 6},
+        Coord{11, 5}, Coord{21, 5}, Coord{11, 13}, Coord{21, 13}, Coord{16, 11}
+    };
+
+    GameEngine engine(772);
+    engine.startNewGame(GameMode::TwoPlayer);
+    UnitId scout = buyAndDeployNear(engine, PlayerId::One, UnitType::Ranger, Coord{2, 9});
+    assert(scout != kInvalidUnitId);
+    assert(engine.debugSetUnitAbilityScore(scout, AbilityScoreKind::Dexterity, 50));
+
+    GameSnapshot before = engine.snapshot();
+    Coord triggered{-1, -1};
+    for (Coord coord : candidates) {
+        if (engine.debugTriggerTrap(PlayerId::One, coord, scout)) {
+            triggered = coord;
+            break;
+        }
+    }
+    assert(triggered.x >= 0);
+
+    bool sawAvoided = false;
+    bool sawAmbush = false;
+    for (const Event& event : engine.consumeEvents()) {
+        if (event.text.find("Trap avoided") != std::string::npos) sawAvoided = true;
+        if (event.text.find("Redcap ambush triggered") != std::string::npos) sawAmbush = true;
+    }
+    GameSnapshot after = engine.snapshot();
+    int redcaps = 0;
+    for (const UnitView& unit : after.units) {
+        if (unit.type == UnitType::NeutralRedcap && unit.alive && unit.deployed) ++redcaps;
+    }
+    assert(sawAvoided);
+    assert(!sawAmbush);
+    assert(redcaps == 0);
+    assert(after.trapsTriggered == before.trapsTriggered);
+    assert(after.explorationObjectivesCleared == before.explorationObjectivesCleared + 1);
+    assert(after.explorationScores[0] > before.explorationScores[0]);
+}
+
+void test_low_dex_unit_can_fail_redcap_trap_save() {
+    const std::array<Coord, 10> candidates = {
+        Coord{7, 5}, Coord{25, 5}, Coord{7, 13}, Coord{25, 13}, Coord{16, 6},
+        Coord{11, 5}, Coord{21, 5}, Coord{11, 13}, Coord{21, 13}, Coord{16, 11}
+    };
+
+    bool sawFailure = false;
+    for (unsigned seed = 773; seed < 820 && !sawFailure; ++seed) {
+        GameEngine engine(seed);
+        engine.startNewGame(GameMode::TwoPlayer);
+        UnitId scout = buyAndDeployNear(engine, PlayerId::One, UnitType::ShieldGuardian, Coord{2, 9});
+        assert(scout != kInvalidUnitId);
+        assert(engine.debugSetUnitAbilityScore(scout, AbilityScoreKind::Dexterity, 1));
+
+        Coord triggered{-1, -1};
+        for (Coord coord : candidates) {
+            if (engine.debugTriggerTrap(PlayerId::One, coord, scout)) {
+                triggered = coord;
+                break;
+            }
+        }
+        if (triggered.x < 0) continue;
+
+        int ambushEvents = 0;
+        int spawnedRedcaps = 0;
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.text.find("Redcap ambush triggered") != std::string::npos) {
+                ++ambushEvents;
+                spawnedRedcaps += event.amount;
+            }
+        }
+        if (ambushEvents == 1 && spawnedRedcaps == 3 && engine.snapshot().trapsTriggered == 1) {
+            sawFailure = true;
+        }
+    }
+    assert(sawFailure);
+}
+
 void test_redcap_ambush_persists_next_round_until_killed() {
     GameEngine engine(52);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -1668,6 +1826,150 @@ void test_shop_units_expose_dnd_combat_stats() {
     assert(evoker->maxHp < 70);
     assert(evoker->attack >= 50);
     assert(rogue->abilityValue > 0);
+}
+
+void test_unit_profiles_cover_every_unit_type() {
+    GameEngine engine(730);
+    engine.startNewGame(GameMode::TwoPlayer);
+
+    const std::vector<UnitType> allTypes = {
+        UnitType::Skeleton,
+        UnitType::SkeletonByNecromancer,
+        UnitType::GithyankiWarrior,
+        UnitType::Ranger,
+        UnitType::Barbarian,
+        UnitType::Necromancer,
+        UnitType::FireMephit,
+        UnitType::ImpSwarm,
+        UnitType::GoblinSkirmisher,
+        UnitType::Paladin,
+        UnitType::DragonWyrmling,
+        UnitType::NeutralSpectator,
+        UnitType::NeutralOwlbear,
+        UnitType::NeutralMindFlayer,
+        UnitType::NeutralSovereignSpaw,
+        UnitType::NeutralKarniss,
+        UnitType::NeutralRedcap,
+        UnitType::NeutralWaterMyrmidon,
+        UnitType::NeutralPhaseSpiderMatriarch,
+        UnitType::NeutralRaphael,
+        UnitType::NeutralKethericThorm,
+        UnitType::NeutralMoonlightSliver,
+        UnitType::NeutralGuardianOfFaith,
+        UnitType::NeutralMinotaur,
+        UnitType::NeutralDeathKnight,
+        UnitType::NeutralAirMyrmidon,
+        UnitType::ShieldGuardian,
+        UnitType::Cleric,
+        UnitType::Evoker,
+        UnitType::RogueAssassin,
+        UnitType::Druid,
+        UnitType::Treant,
+        UnitType::SporeServant,
+        UnitType::NeutralTamiaHolzt
+    };
+
+    for (UnitType type : allTypes) {
+        const UnitSpec* spec = engine.specFor(type);
+        assert(spec);
+        const UnitProfile& profile = spec->profile;
+        assert(profile.level >= 1);
+        assert(profile.tier >= 1);
+        assert(profile.abilityScores.strength >= 1);
+        assert(profile.abilityScores.dexterity >= 1);
+        assert(profile.abilityScores.constitution >= 1);
+        assert(profile.abilityScores.intelligence >= 1);
+        assert(profile.abilityScores.wisdom >= 1);
+        assert(profile.abilityScores.charisma >= 1);
+        assert(!profileSummary(profile).empty());
+
+        if (profile.kind == ProfileKind::PlayableCharacter) {
+            assert(profile.race != Race::None);
+            assert(profile.characterClass != CharacterClass::None);
+            assert(profile.creatureType == CreatureType::Humanoid);
+        } else if (profile.kind == ProfileKind::PureMonster || profile.kind == ProfileKind::Summon ||
+                   profile.kind == ProfileKind::NamedActor) {
+            assert(profile.creatureType != CreatureType::None);
+            assert(!profile.archetype.empty());
+        }
+    }
+
+    for (UnitType named : {UnitType::NeutralRaphael,
+                           UnitType::NeutralKethericThorm,
+                           UnitType::NeutralKarniss,
+                           UnitType::NeutralTamiaHolzt,
+                           UnitType::NeutralSovereignSpaw}) {
+        assert(engine.specFor(named)->profile.kind == ProfileKind::NamedActor);
+    }
+
+    for (UnitType monster : {UnitType::NeutralOwlbear,
+                             UnitType::NeutralMinotaur,
+                             UnitType::NeutralRedcap,
+                             UnitType::NeutralSpectator,
+                             UnitType::NeutralWaterMyrmidon,
+                             UnitType::NeutralPhaseSpiderMatriarch}) {
+        assert(engine.specFor(monster)->profile.kind == ProfileKind::PureMonster);
+    }
+
+    assert(engine.specFor(UnitType::Skeleton)->profile.kind == ProfileKind::Summon);
+    assert(engine.specFor(UnitType::Treant)->profile.kind == ProfileKind::Summon);
+    assert(engine.specFor(UnitType::SporeServant)->profile.kind == ProfileKind::Summon);
+}
+
+void test_derived_combat_stats_use_bg3_profile_abilities() {
+    GameEngine engine(731);
+    engine.startNewGame(GameMode::TwoPlayer);
+
+    auto expectedHit = [](const UnitSpec& spec) {
+        return proficiencyBonusForLevel(spec.profile.level) +
+               abilityModifier(abilityScore(spec.profile, spec.profile.attackAbility)) +
+               spec.attackTuning;
+    };
+    auto expectedDc = [](const UnitSpec& spec) {
+        return 8 + proficiencyBonusForLevel(spec.profile.level) +
+               abilityModifier(abilityScore(spec.profile, spec.profile.castingAbility)) +
+               spec.dcTuning;
+    };
+    auto expectedAc = [](const UnitSpec& spec) {
+        int dexMod = abilityModifier(abilityScore(spec.profile, AbilityScoreKind::Dexterity));
+        return spec.profile.armorBase + std::min(dexMod, spec.profile.armorDexCap) +
+               spec.profile.shieldBonus + spec.profile.naturalArmorBonus + spec.acTuning;
+    };
+
+    const UnitSpec* ranger = engine.specFor(UnitType::Ranger);
+    const UnitSpec* evoker = engine.specFor(UnitType::Evoker);
+    const UnitSpec* cleric = engine.specFor(UnitType::Cleric);
+    const UnitSpec* druid = engine.specFor(UnitType::Druid);
+    const UnitSpec* raphael = engine.specFor(UnitType::NeutralRaphael);
+    const UnitSpec* paladin = engine.specFor(UnitType::Paladin);
+    const UnitSpec* guardian = engine.specFor(UnitType::ShieldGuardian);
+    assert(ranger && evoker && cleric && druid && raphael && paladin && guardian);
+
+    assert(ranger->profile.attackAbility == AbilityScoreKind::Dexterity);
+    assert(ranger->attackBonus == expectedHit(*ranger));
+    assert(evoker->profile.castingAbility == AbilityScoreKind::Intelligence);
+    assert(evoker->spellSaveDc == expectedDc(*evoker));
+    assert(cleric->profile.castingAbility == AbilityScoreKind::Wisdom);
+    assert(cleric->spellSaveDc == expectedDc(*cleric));
+    assert(druid->profile.castingAbility == AbilityScoreKind::Wisdom);
+    assert(druid->spellSaveDc == expectedDc(*druid));
+    assert(raphael->profile.castingAbility == AbilityScoreKind::Charisma);
+    assert(raphael->spellSaveDc == expectedDc(*raphael));
+    assert(paladin->armorClass == expectedAc(*paladin));
+    assert(guardian->armorClass == expectedAc(*guardian));
+}
+
+void test_saving_throws_use_specific_ability_scores() {
+    GameEngine engine(732);
+    engine.startNewGame(GameMode::TwoPlayer);
+
+    const UnitSpec* ranger = engine.specFor(UnitType::Ranger);
+    const UnitSpec* shieldGuardian = engine.specFor(UnitType::ShieldGuardian);
+    assert(ranger && shieldGuardian);
+    assert(savingThrowBonusFor(*ranger, AbilityScoreKind::Dexterity) >
+           savingThrowBonusFor(*ranger, AbilityScoreKind::Wisdom));
+    assert(savingThrowBonusFor(*shieldGuardian, AbilityScoreKind::Constitution) >
+           savingThrowBonusFor(*shieldGuardian, AbilityScoreKind::Dexterity));
 }
 
 void test_unit_attack_ranges_match_roles() {
@@ -2889,6 +3191,162 @@ void test_dynamic_chase_retargets_when_current_target_moves_out_of_reach() {
     assert(attackedClose);
 }
 
+Coord openCoordFarthestFromNeutral(const GameSnapshot& snapshot) {
+    Coord best{-1, -1};
+    int bestDistance = -1;
+    for (int y = 0; y < snapshot.height; ++y) {
+        for (int x = 0; x < snapshot.width; ++x) {
+            Coord coord{x, y};
+            if (terrainAtSnapshot(snapshot, coord) == TerrainKind::Wall || hasAliveUnitAt(snapshot, coord)) continue;
+            int nearestNeutral = std::numeric_limits<int>::max();
+            for (const UnitView& unit : snapshot.units) {
+                if (!unit.alive || !unit.deployed || !isNeutralMonster(unit.type)) continue;
+                nearestNeutral = std::min(nearestNeutral, manhattan(coord, unit.coord));
+            }
+            if (nearestNeutral > bestDistance) {
+                bestDistance = nearestNeutral;
+                best = coord;
+            }
+        }
+    }
+    assert(best.x >= 0);
+    return best;
+}
+
+void test_ranged_attack_intent_awakens_minotaur_even_on_miss() {
+    bool sawMissScenario = false;
+    for (unsigned seed = 720; seed < 730 && !sawMissScenario; ++seed) {
+        GameEngine engine(seed);
+        engine.startNewGame(GameMode::TwoPlayer);
+        setupExplorationCombat(engine);
+
+        std::vector<Coord> coords =
+            horizontalOpenRun(engine.snapshot(), openCoordFarthestFromNeutral(engine.snapshot()), 4);
+        UnitId ranger = engine.debugCreateUnit(PlayerId::One, UnitType::Ranger, coords[0]);
+        UnitId minotaur = engine.debugCreateUnit(PlayerId::Two, UnitType::NeutralMinotaur, coords[3]);
+        assert(ranger != kInvalidUnitId);
+        assert(minotaur != kInvalidUnitId);
+        assert(engine.debugSetUnitArmorClass(minotaur, 40));
+
+        engine.setReady(PlayerId::One, true);
+        engine.setReady(PlayerId::Two, true);
+        bool firstRangerAttackResolved = false;
+        for (int i = 0; i < 30 * 4 && !firstRangerAttackResolved && engine.snapshot().phase == Phase::Combat; ++i) {
+            engine.tick(1.0 / 30.0);
+            for (const Event& event : engine.consumeEvents()) {
+                if (event.type != EventType::UnitAttacked || event.actor != ranger ||
+                    event.target != minotaur) {
+                    continue;
+                }
+                firstRangerAttackResolved = true;
+                if (event.amount == 0) {
+                    GameSnapshot snapshot = engine.snapshot();
+                    const UnitView* minotaurView = findUnit(snapshot, minotaur);
+                    assert(minotaurView);
+                    assert(minotaurView->neutralActivated);
+                    sawMissScenario = true;
+                }
+                break;
+            }
+        }
+    }
+    assert(sawMissScenario);
+}
+
+void test_shield_guardian_does_not_refresh_shield_without_pressure() {
+    GameEngine engine(704);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    Coord safeCoord = openCoordFarthestFromNeutral(engine.snapshot());
+    UnitId guardian = engine.debugCreateUnit(PlayerId::One, UnitType::ShieldGuardian, safeCoord);
+    assert(guardian != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool sawShield = false;
+    for (int i = 0; i < 30 * 6 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::Shielded && event.actor == guardian &&
+                event.target == guardian && event.text.find("gained shield") != std::string::npos) {
+                sawShield = true;
+            }
+        }
+    }
+
+    GameSnapshot snapshot = engine.snapshot();
+    const UnitView* guardianView = findUnit(snapshot, guardian);
+    assert(guardianView);
+    assert(!sawShield);
+    assert(guardianView->shield == 0);
+}
+
+void test_continuing_combat_is_not_cut_off_at_forty_five_seconds() {
+    GameEngine engine(705);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine, 10);
+
+    std::array<Coord, 2> coords =
+        adjacentOpenCoords(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2});
+    UnitId left = engine.debugCreateUnit(PlayerId::One, UnitType::ShieldGuardian, coords[0]);
+    UnitId right = engine.debugCreateUnit(PlayerId::Two, UnitType::ShieldGuardian, coords[1]);
+    assert(left != kInvalidUnitId);
+    assert(right != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool sawAttackAfterOldCap = false;
+    for (int i = 0; i < 30 * 52 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        GameSnapshot snapshot = engine.snapshot();
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::UnitAttacked && snapshot.combatTime > 45.0) {
+                sawAttackAfterOldCap = true;
+            }
+        }
+    }
+
+    GameSnapshot snapshot = engine.snapshot();
+    assert(snapshot.phase == Phase::Combat);
+    assert(snapshot.combatTime > 45.0);
+    assert(sawAttackAfterOldCap);
+}
+
+void test_stalled_combat_ends_after_no_attacks_or_movement() {
+    GameEngine engine(706);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine, 10);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), openCoordFarthestFromNeutral(engine.snapshot()), 8);
+    UnitId skeleton = engine.debugCreateUnit(PlayerId::One, UnitType::Skeleton, coords[0]);
+    UnitId mephit = engine.debugCreateUnit(PlayerId::Two, UnitType::FireMephit, coords[7]);
+    assert(skeleton != kInvalidUnitId);
+    assert(mephit != kInvalidUnitId);
+    assert(engine.debugSetUnitSpeed(skeleton, 0.0));
+    assert(engine.debugSetUnitSpeed(mephit, 0.0));
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool sawStalled = false;
+    for (int i = 0; i < 30 * 24 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.text.find("combat stalled") != std::string::npos) {
+                sawStalled = true;
+            }
+        }
+    }
+
+    GameSnapshot snapshot = engine.snapshot();
+    assert(snapshot.phase == Phase::Preparation);
+    assert(sawStalled);
+}
+
 void test_druid_summons_treant() {
     GameEngine engine(4);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -3577,6 +4035,9 @@ int main() {
     RUN_TEST(test_main_lane_units_ignore_unreachable_side_camps);
     RUN_TEST(test_random_gold_bricks_are_hidden_and_once_only);
     RUN_TEST(test_hidden_healing_spring_is_hidden_and_once_only);
+    RUN_TEST(test_high_wis_perception_detects_hidden_gold_and_healing);
+    RUN_TEST(test_low_wis_unit_can_miss_hidden_detection);
+    RUN_TEST(test_internal_units_cannot_detect_hidden_events);
     RUN_TEST(test_neutral_camps_hold_their_guard_posts);
     RUN_TEST(test_neutral_camps_wait_until_attacked_before_countering);
     RUN_TEST(test_neutral_activation_ignores_proximity_hidden_events_and_sourceless_damage);
@@ -3588,6 +4049,8 @@ int main() {
     RUN_TEST(test_neutral_spaw_caps_servants_and_servants_guard_locally);
     RUN_TEST(test_side_neutral_camps_do_not_respawn_after_death);
     RUN_TEST(test_side_trap_spawns_redcap_ambush_once);
+    RUN_TEST(test_high_dex_unit_avoids_redcap_trap_and_clears_it);
+    RUN_TEST(test_low_dex_unit_can_fail_redcap_trap_save);
     RUN_TEST(test_redcap_ambush_persists_next_round_until_killed);
     RUN_TEST(test_redcap_ambush_has_short_leash);
     RUN_TEST(test_neutral_monster_roster_has_bg3_camp_and_trap_units);
@@ -3597,6 +4060,9 @@ int main() {
     RUN_TEST(test_shop_roster_uses_fifteen_dnd_units);
     RUN_TEST(test_shop_costs_use_expanded_budget_tiers);
     RUN_TEST(test_shop_units_expose_dnd_combat_stats);
+    RUN_TEST(test_unit_profiles_cover_every_unit_type);
+    RUN_TEST(test_derived_combat_stats_use_bg3_profile_abilities);
+    RUN_TEST(test_saving_throws_use_specific_ability_scores);
     RUN_TEST(test_unit_attack_ranges_match_roles);
     RUN_TEST(test_damage_packets_use_bg3_style_ranges_and_types);
     RUN_TEST(test_damage_affinities_are_unit_specific);
@@ -3634,6 +4100,10 @@ int main() {
     RUN_TEST(test_melee_switches_to_immediate_threat_instead_of_chasing_far_target);
     RUN_TEST(test_ranged_stops_after_entering_attack_range);
     RUN_TEST(test_dynamic_chase_retargets_when_current_target_moves_out_of_reach);
+    RUN_TEST(test_ranged_attack_intent_awakens_minotaur_even_on_miss);
+    RUN_TEST(test_shield_guardian_does_not_refresh_shield_without_pressure);
+    RUN_TEST(test_continuing_combat_is_not_cut_off_at_forty_five_seconds);
+    RUN_TEST(test_stalled_combat_ends_after_no_attacks_or_movement);
     RUN_TEST(test_druid_summons_treant);
     RUN_TEST(test_summoners_respect_per_caster_summon_limits_and_relic_bonus);
     RUN_TEST(test_land_units_cannot_stack_but_air_units_can);

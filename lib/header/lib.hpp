@@ -112,6 +112,133 @@ enum class DamageAffinity {
     Normal,
     Vulnerable
 };
+enum class ProfileKind {
+    PlayableCharacter,
+    NamedActor,
+    PureMonster,
+    Summon
+};
+enum class AbilityScoreKind {
+    Strength,
+    Dexterity,
+    Constitution,
+    Intelligence,
+    Wisdom,
+    Charisma
+};
+enum class Race {
+    None,
+    Human,
+    Elf,
+    Dwarf,
+    Tiefling,
+    Githyanki,
+    Goblin,
+    Myconid
+};
+enum class Subrace {
+    None,
+    HighElf,
+    WoodElf,
+    ShieldDwarf,
+    GoldDwarf,
+    Drow
+};
+enum class CharacterClass {
+    None,
+    Barbarian,
+    Bard,
+    Cleric,
+    Druid,
+    Fighter,
+    Monk,
+    Paladin,
+    Ranger,
+    Rogue,
+    Sorcerer,
+    Warlock,
+    Wizard
+};
+enum class Background {
+    None,
+    Acolyte,
+    Charlatan,
+    Criminal,
+    FolkHero,
+    Noble,
+    Outlander,
+    Sage,
+    Soldier,
+    Urchin
+};
+enum class CreatureType {
+    None,
+    Humanoid,
+    Undead,
+    Fiend,
+    Construct,
+    Monstrosity,
+    Aberration,
+    Plant,
+    Fey,
+    Elemental,
+    Celestial,
+    Dragon,
+    Beast
+};
+enum class ArmorTraining {
+    None,
+    Light,
+    Medium,
+    Heavy,
+    Shield
+};
+enum class WeaponTraining {
+    None,
+    Simple,
+    Martial,
+    Natural
+};
+enum class SkillTag {
+    None,
+    Perception,
+    Deception,
+    Stealth,
+    SleightOfHand,
+    Persuasion,
+    Intimidation,
+    Arcana,
+    Religion,
+    Nature,
+    Survival,
+    Athletics,
+    Acrobatics,
+    Medicine,
+    Insight,
+    History
+};
+enum class TraitTag {
+    None,
+    Darkvision,
+    FeyAncestry,
+    MartialTraining,
+    Spellcasting,
+    NaturalArmor,
+    Charge,
+    Flying,
+    Summoned,
+    Constructed,
+    UndeadFortitude,
+    Psionics,
+    Regeneration,
+    Taunt,
+    PackTactics,
+    FireAffinity,
+    Poison,
+    RadiantAura,
+    Shapeshift,
+    Ambusher
+};
 enum class EventType {
     UnitMoved,
     UnitAttacked,
@@ -175,6 +302,43 @@ enum class AiActionKind {
     Ready
 };
 
+struct AbilityScores {
+    int strength = 10;
+    int dexterity = 10;
+    int constitution = 10;
+    int intelligence = 10;
+    int wisdom = 10;
+    int charisma = 10;
+};
+
+struct UnitProfile {
+    ProfileKind kind = ProfileKind::PureMonster;
+    Race race = Race::None;
+    Subrace subrace = Subrace::None;
+    CharacterClass characterClass = CharacterClass::None;
+    Background background = Background::None;
+    CreatureType creatureType = CreatureType::None;
+    std::string archetype;
+    int level = 1;
+    int tier = 1;
+    AbilityScores abilityScores;
+    AbilityScoreKind attackAbility = AbilityScoreKind::Strength;
+    AbilityScoreKind castingAbility = AbilityScoreKind::Intelligence;
+    std::vector<AbilityScoreKind> savingThrowProficiencies;
+    std::vector<SkillTag> skills;
+    ArmorTraining armorTraining = ArmorTraining::None;
+    WeaponTraining weaponTraining = WeaponTraining::Simple;
+    int armorBase = 10;
+    int armorDexCap = 99;
+    int shieldBonus = 0;
+    int naturalArmorBonus = 0;
+    int hitDie = 8;
+    int hitDice = 1;
+    int weaponDamageAverage = 4;
+    double movementMeters = 9.0;
+    std::vector<TraitTag> traits;
+};
+
 struct GameConfig {
     GameMode mode = GameMode::SinglePlayerVsAi;
     AiDifficulty aiDifficulty = AiDifficulty::Normal;
@@ -219,6 +383,15 @@ struct UnitSpec {
     int attackBonus = 2;
     int savingThrowBonus = 0;
     int spellSaveDc = 10;
+    UnitProfile profile;
+    double hpScale = 1.0;
+    double damageScale = 1.0;
+    int flatHpBonus = 0;
+    int attackTuning = 0;
+    int damageTuning = 0;
+    int acTuning = 0;
+    int dcTuning = 0;
+    double speedTuning = 0.0;
 };
 
 struct DamageRoll {
@@ -236,6 +409,24 @@ struct DamagePacket {
 
 std::string toString(DamageType type);
 std::string toString(DamageAffinity affinity);
+std::string toString(ProfileKind kind);
+std::string toString(AbilityScoreKind ability);
+std::string toString(Race race);
+std::string toString(Subrace subrace);
+std::string toString(CharacterClass characterClass);
+std::string toString(Background background);
+std::string toString(CreatureType creatureType);
+std::string toString(SkillTag skill);
+std::string toString(TraitTag trait);
+int abilityModifier(int score);
+int proficiencyBonusForLevel(int levelOrTier);
+int abilityScore(const AbilityScores& scores, AbilityScoreKind ability);
+int abilityScore(const UnitProfile& profile, AbilityScoreKind ability);
+int savingThrowBonusFor(const UnitSpec& spec, AbilityScoreKind ability);
+int skillBonusFor(const UnitSpec& spec, SkillTag skill);
+bool hasSkillProficiency(const UnitProfile& profile, SkillTag skill);
+std::string profileSummary(const UnitProfile& profile);
+std::string abilityScoreSummary(const AbilityScores& scores);
 DamageType basicDamageTypeFor(UnitType type);
 DamageRoll damageRollForValue(int averageDamage, DamageType type);
 DamagePacket basicDamagePacketFor(const UnitSpec& spec);
@@ -397,7 +588,10 @@ struct UnitView {
     int armorClass = 10;
     int attackBonus = 0;
     int savingThrowBonus = 0;
+    std::array<int, 6> savingThrowBonuses{};
     int spellSaveDc = 10;
+    UnitProfile profile;
+    std::string profileSummary;
     bool slowed = false;
     bool taunting = false;
 };
@@ -501,13 +695,18 @@ public:
     const AiPolicyMetadata& aiPolicyMetadata() const;
     AiFeatureSchema aiFeatureSchema() const;
     std::string rulesFingerprint() const;
-    bool debugTriggerTrap(PlayerId triggeringPlayer, Coord coord);
+    bool debugTriggerTrap(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId = kInvalidUnitId);
     bool debugTriggerRandomGold(PlayerId triggeringPlayer, Coord coord);
     bool debugTriggerHiddenEvent(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId = kInvalidUnitId);
     bool debugClearVisibleObjectives(PlayerId clearer);
     bool debugApplyDamage(UnitId targetId, int amount, DamageType type = DamageType::Force);
     bool debugApplyDamageFrom(UnitId sourceId, UnitId targetId, int amount, DamageType type = DamageType::Force);
     UnitId debugCreateUnit(PlayerId owner, UnitType type, Coord coord);
+    bool debugSetUnitArmorClass(UnitId unitId, int armorClass);
+    bool debugSetUnitSpeed(UnitId unitId, double speed);
+    bool debugSetUnitAbilityScore(UnitId unitId, AbilityScoreKind ability, int score);
+    bool debugSetUnitSkillProficiency(UnitId unitId, SkillTag skill, bool proficient);
+    bool debugDetectHiddenEvent(PlayerId triggeringPlayer, Coord movedCoord, UnitId triggerUnitId);
     bool debugKnockback(UnitId targetId, Coord source, int distance, UnitId sourceId = kInvalidUnitId);
     bool debugRadialKnockback(Coord center, int radius, int distance, UnitId sourceId = kInvalidUnitId);
     std::vector<Coord> debugRandomGoldCoords() const;
@@ -579,6 +778,7 @@ private:
     int round_ = 0;
     double time_ = 0.0;
     double combatTime_ = 0.0;
+    double lastCombatProgressTime_ = 0.0;
     int explorationRound_ = 0;
     int explorationRoundLimit_ = 8;
     bool explorationRoundLimitLocked_ = false;
@@ -609,7 +809,10 @@ private:
     bool triggerTrapAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId = kInvalidUnitId);
     bool triggerRandomGoldEventAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId);
     bool canTriggerHiddenEvent(const Unit& unit) const;
+    bool tryDetectHiddenEvent(PlayerId triggeringPlayer, Coord movedCoord, UnitId triggerUnitId);
     bool triggerHiddenEventAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId);
+    bool explorationCheckSucceeds(const Unit& unit, AbilityScoreKind ability, int dc,
+                                  SkillTag skill = SkillTag::None, int extraBonus = 0);
     int spawnRedcapAmbush(PlayerId triggeringPlayer, Coord origin, UnitId triggerUnitId);
     void clearExplorationObjective(size_t index, PlayerId clearer, UnitId actorId);
     void updateExplorationObjectiveForDeath(UnitId deadId, UnitId sourceId);
@@ -648,6 +851,9 @@ private:
     void tickStatuses(Unit& unit, double dt);
     void tickAbilities(UnitId id, double dt);
     void tickCombat(double dt);
+    void markCombatProgress();
+    bool shouldEndStalledCombat() const;
+    bool shouldCastGuardianShield(const Unit& unit) const;
     void refreshTarget(Unit& unit, bool force);
     UnitId selectTarget(const Unit& unit) const;
     TargetCandidate evaluateTargetCandidate(const Unit& unit, const Unit& candidate) const;
@@ -672,6 +878,7 @@ private:
     bool canNeutralAct(const Unit& unit) const;
     bool canActivateNeutralFrom(UnitId sourceId) const;
     void activateNeutral(UnitId neutralId, UnitId sourceId, const std::string& reason);
+    void activateNeutralOnAttackIntent(UnitId attackerId, UnitId targetId);
     void provokeNeutral(UnitId neutralId, UnitId sourceId);
     bool isNeutralGuardianUnit(const Unit& unit) const;
     bool isNeutralSpawServant(const Unit& unit) const;
@@ -708,13 +915,14 @@ private:
                             const DamagePacket& strikeDamage, int strikeCount);
     void applyDamage(UnitId targetId, int amount, UnitId sourceId);
     void applyHeal(UnitId targetId, int amount, UnitId sourceId);
-    void addShield(UnitId targetId, int amount, UnitId sourceId);
+    int addShield(UnitId targetId, int amount, UnitId sourceId);
     void killUnit(UnitId id, UnitId sourceId);
     void clearDeadUnits();
     void resolveVictory();
     bool hasActiveCombatUnit(PlayerId player) const;
 
     void moveUnits(double dt);
+    bool isEffectiveCombatMove(const Unit& unit, Coord from, Coord to) const;
     std::optional<Coord> chooseNextStep(UnitId id, const std::vector<Coord>& reserved) const;
     bool hasImmediateAttackTarget(const Unit& unit) const;
     std::optional<Coord> chooseLandStepToward(const Unit& unit, Coord target, bool attackTarget,

@@ -2873,10 +2873,17 @@ Rectangle relicInfoCardRect(Rectangle panel, int visibleIndex, int visibleCount)
 
 Rectangle draftScrollButtonRect(Rectangle panel, bool right) {
     float size = 34.0f;
-    return {right ? panel.x + panel.width - 52.0f : panel.x + panel.width - 92.0f,
+    float rightX = panel.x + panel.width - 18.0f - size;
+    float leftX = rightX - 8.0f - size;
+    return {right ? rightX : leftX,
             panel.y + 15.0f,
             size,
             size};
+}
+
+Rectangle draftScrollPageRect(Rectangle panel) {
+    Rectangle left = draftScrollButtonRect(panel, false);
+    return {left.x - 100.0f, panel.y + 17.0f, 88.0f, 28.0f};
 }
 
 void drawRelicCard(const DraftOffer& offer, Rectangle rect, bool selected) {
@@ -2983,7 +2990,10 @@ void drawRelicDraftPanel(const DraftState& draft,
         drawTextCentered("<", left, 24.0f, kInk);
         drawTextCentered(">", right, 24.0f, kInk);
         std::string page = TextFormat("%d-%d / %d", start + 1, std::min(start + visibleCount, offerCount), offerCount);
-        drawTextRight(page, right.x - 10.0f, panel.y + 23.0f, 18.0f, kMutedInk);
+        Rectangle pageSlot = draftScrollPageRect(panel);
+        DrawRectangleRounded(pageSlot, 0.12f, 5, Color{42, 31, 26, 172});
+        DrawRectangleRoundedLines(pageSlot, 0.12f, 5, 1.0f, Color{118, 85, 49, 165});
+        drawTextCentered(fitText(page, pageSlot.width - 10.0f, 16.0f), pageSlot, 16.0f, kMutedInk);
     }
 }
 
@@ -3319,6 +3329,14 @@ void drawUnitDetails(const UnitSpec& spec,
     drawText(fitText(title, panel.width - 258.0f, 26.0f), x, y, 26.0f, kParchmentInk);
     y += 36.0f;
 
+    const UnitProfile& profileData = view ? view->profile : spec.profile;
+    std::string dossierLine = view ? view->profileSummary : profileSummary(spec.profile);
+    if (!dossierLine.empty()) {
+        drawText(fitText(dossierLine, panel.width - 124.0f, 18.0f),
+                 x, y, 18.0f, Color{96, 66, 44, 255});
+        y += 26.0f;
+    }
+
     int cost = view ? view->cost : spec.cost;
     int units = view ? view->units : spec.unitCount;
     int maxUnits = view ? view->maxUnits : spec.unitCount;
@@ -3399,6 +3417,10 @@ void drawUnitDetails(const UnitSpec& spec,
                                          targetText(spec).c_str());
     drawText(fitText(defenseLine, panel.width - 124.0f, 20.0f), x, y, 20.0f, kParchmentMuted);
     y += 30.0f;
+    std::string abilityLine = abilityScoreSummary(profileData.abilityScores);
+    drawText(fitText(abilityLine, panel.width - 124.0f, 18.0f), x, y, 18.0f,
+             Color{94, 69, 48, 255});
+    y += 27.0f;
     std::string bodyLine = TextFormat("%s", toString(layer).c_str());
     if (!neutral && spec.speed > 0.0) {
         bodyLine += TextFormat("   Move %.1f", spec.speed);
@@ -3675,31 +3697,31 @@ void drawCombatCues(const std::vector<CombatCue>& cues) {
             float progress = std::clamp(t * 1.25f, 0.0f, 1.0f);
             Vector2 head{from.x + (to.x - from.x) * progress,
                          from.y + (to.y - from.y) * progress};
-            float arrowLen = std::clamp(len * 0.34f, 42.0f, 82.0f);
+            float arrowLen = std::clamp(len * 0.24f, 24.0f, 46.0f);
             Vector2 tail{head.x - dir.x * arrowLen, head.y - dir.y * arrowLen};
-            Color flame{235, 36, 12, static_cast<unsigned char>(std::clamp(alpha * 155.0f, 0.0f, 155.0f))};
-            Color ember{255, 90, 20, static_cast<unsigned char>(std::clamp(alpha * 180.0f, 0.0f, 180.0f))};
-            Color gold{255, 205, 96, static_cast<unsigned char>(std::clamp(alpha * 245.0f, 0.0f, 245.0f))};
-            Color whiteHot{255, 246, 205, static_cast<unsigned char>(std::clamp(alpha * 255.0f, 0.0f, 255.0f))};
+            Color shadow{25, 18, 14, static_cast<unsigned char>(std::clamp(alpha * 92.0f, 0.0f, 92.0f))};
+            Color copper{174, 122, 61, static_cast<unsigned char>(std::clamp(alpha * 138.0f, 0.0f, 138.0f))};
+            Color gold{232, 184, 92, static_cast<unsigned char>(std::clamp(alpha * 188.0f, 0.0f, 188.0f))};
+            Color pale{255, 228, 158, static_cast<unsigned char>(std::clamp(alpha * 210.0f, 0.0f, 210.0f))};
 
-            DrawLineEx(tail, head, 22.0f, Color{flame.r, flame.g, flame.b, static_cast<unsigned char>(flame.a * 0.70f)});
-            DrawCircleV(head, 24.0f + 10.0f * (1.0f - alpha), Color{flame.r, flame.g, flame.b, static_cast<unsigned char>(flame.a * 0.72f)});
-            DrawLineEx(tail, head, 14.0f, ember);
+            DrawLineEx(tail, head, 7.0f, shadow);
+            DrawLineEx(tail, head, 3.5f, copper);
 
-            Vector2 headLeft{head.x - dir.x * 24.0f + perp.x * 18.0f,
-                             head.y - dir.y * 24.0f + perp.y * 18.0f};
-            Vector2 headRight{head.x - dir.x * 24.0f - perp.x * 18.0f,
-                              head.y - dir.y * 24.0f - perp.y * 18.0f};
-            Vector2 notch{head.x - dir.x * 16.0f, head.y - dir.y * 16.0f};
+            Vector2 headLeft{head.x - dir.x * 11.0f + perp.x * 7.0f,
+                             head.y - dir.y * 11.0f + perp.y * 7.0f};
+            Vector2 headRight{head.x - dir.x * 11.0f - perp.x * 7.0f,
+                              head.y - dir.y * 11.0f - perp.y * 7.0f};
+            Vector2 notch{head.x - dir.x * 7.0f, head.y - dir.y * 7.0f};
             DrawTriangle(head, headLeft, notch, gold);
             DrawTriangle(head, notch, headRight, gold);
-            DrawLineEx(tail, {head.x - dir.x * 19.0f, head.y - dir.y * 19.0f}, 9.0f, gold);
-            DrawLineEx(tail, {head.x - dir.x * 19.0f, head.y - dir.y * 19.0f}, 4.0f, whiteHot);
-            DrawLineEx({tail.x - perp.x * 10.0f, tail.y - perp.y * 10.0f},
-                       {tail.x + perp.x * 10.0f, tail.y + perp.y * 10.0f},
-                       5.0f,
+            DrawLineEx(tail, {head.x - dir.x * 8.0f, head.y - dir.y * 8.0f}, 2.0f, pale);
+            DrawLineEx({tail.x - perp.x * 5.0f, tail.y - perp.y * 5.0f},
+                       {tail.x + perp.x * 5.0f, tail.y + perp.y * 5.0f},
+                       2.0f,
                        gold);
-            DrawCircleLines(static_cast<int>(head.x), static_cast<int>(head.y), 20.0f + 18.0f * t, flame);
+            DrawCircleLines(static_cast<int>(head.x), static_cast<int>(head.y),
+                            8.0f + 8.0f * t, Color{gold.r, gold.g, gold.b,
+                                                    static_cast<unsigned char>(gold.a * 0.55f)});
             continue;
         }
 
@@ -3762,6 +3784,10 @@ void drawBoard(const GameEngine& engine,
             Coord coord{x, y};
             Rectangle cell = cellRect(coord);
             TerrainKind terrain = terrainAt(snapshot, coord);
+            bool deployOne = engine.isDeploymentCell(PlayerId::One, coord);
+            bool deployTwo = engine.isDeploymentCell(PlayerId::Two, coord);
+            bool deployCell = deployOne || deployTwo;
+            bool preparation = snapshot.phase == Phase::Preparation;
             Color fill = terrainColor(terrain, coord, snapshot);
             if ((x + y) % 2 == 1 && terrain != TerrainKind::Wall) {
                 fill.r = static_cast<unsigned char>(std::max(0, fill.r - 4));
@@ -3772,6 +3798,13 @@ void drawBoard(const GameEngine& engine,
             DrawRectangleLinesEx(cell, 1.0f,
                                  terrain == TerrainKind::Wall ? Color{16, 14, 15, 180}
                                                               : Color{106, 85, 61, 88});
+            if (deployCell) {
+                Color deployFill = deployOne
+                                       ? Color{148, 112, 61, static_cast<unsigned char>(preparation ? 54 : 22)}
+                                       : Color{134, 96, 56, static_cast<unsigned char>(preparation ? 48 : 20)};
+                DrawRectangleRec({cell.x + 2.0f, cell.y + 2.0f, cell.width - 4.0f, cell.height - 4.0f},
+                                 deployFill);
+            }
             if (terrain == TerrainKind::Wall) {
                 DrawRectangleRec({cell.x + 8.0f, cell.y + 8.0f, cell.width - 16.0f, cell.height - 16.0f},
                                  Color{18, 16, 17, 126});
@@ -3847,19 +3880,45 @@ void drawBoard(const GameEngine& engine,
                            {c.x + cell.width * 0.09f, c.y + cell.height * 0.10f},
                            2.0f, Color{24, 22, 21, 210});
             }
-            if (engine.isDeploymentCell(PlayerId::One, coord) || engine.isDeploymentCell(PlayerId::Two, coord)) {
-                Color rune = engine.isDeploymentCell(PlayerId::One, coord)
-                                 ? Color{160, 145, 110, 58}
-                                 : Color{176, 138, 96, 58};
-                DrawCircleLines(static_cast<int>(cell.x + cell.width / 2.0f),
-                                static_cast<int>(cell.y + cell.height / 2.0f),
-                                21.0f, rune);
-                DrawLineEx({cell.x + 23.0f, cell.y + cell.height / 2.0f},
-                           {cell.x + cell.width - 23.0f, cell.y + cell.height / 2.0f},
-                           1.0f, rune);
-                DrawLineEx({cell.x + cell.width / 2.0f, cell.y + 23.0f},
-                           {cell.x + cell.width / 2.0f, cell.y + cell.height - 23.0f},
-                           1.0f, rune);
+            if (deployCell) {
+                auto adjacentDeploy = [&](Coord adjacent) {
+                    return engine.isDeploymentCell(PlayerId::One, adjacent) ||
+                           engine.isDeploymentCell(PlayerId::Two, adjacent);
+                };
+                Color edge = deployOne
+                                 ? Color{222, 178, 99, static_cast<unsigned char>(preparation ? 142 : 74)}
+                                 : Color{204, 149, 87, static_cast<unsigned char>(preparation ? 124 : 66)};
+                float edgeWidth = preparation ? 2.2f : 1.2f;
+                if (!adjacentDeploy({coord.x - 1, coord.y})) {
+                    DrawLineEx({cell.x + 1.5f, cell.y + 3.0f},
+                               {cell.x + 1.5f, cell.y + cell.height - 3.0f}, edgeWidth, edge);
+                }
+                if (!adjacentDeploy({coord.x + 1, coord.y})) {
+                    DrawLineEx({cell.x + cell.width - 1.5f, cell.y + 3.0f},
+                               {cell.x + cell.width - 1.5f, cell.y + cell.height - 3.0f}, edgeWidth, edge);
+                }
+                if (!adjacentDeploy({coord.x, coord.y - 1})) {
+                    DrawLineEx({cell.x + 3.0f, cell.y + 1.5f},
+                               {cell.x + cell.width - 3.0f, cell.y + 1.5f}, edgeWidth, edge);
+                }
+                if (!adjacentDeploy({coord.x, coord.y + 1})) {
+                    DrawLineEx({cell.x + 3.0f, cell.y + cell.height - 1.5f},
+                               {cell.x + cell.width - 3.0f, cell.y + cell.height - 1.5f}, edgeWidth, edge);
+                }
+
+                if (((coord.x + coord.y) % 2) == 0) {
+                    Color rune = Color{225, 178, 95, static_cast<unsigned char>(preparation ? 108 : 52)};
+                    float inset = preparation ? 9.0f : 11.0f;
+                    float mark = preparation ? 9.0f : 6.0f;
+                    DrawLineEx({cell.x + inset, cell.y + inset},
+                               {cell.x + inset + mark, cell.y + inset}, 1.2f, rune);
+                    DrawLineEx({cell.x + inset, cell.y + inset},
+                               {cell.x + inset, cell.y + inset + mark}, 1.2f, rune);
+                    DrawLineEx({cell.x + cell.width - inset, cell.y + cell.height - inset},
+                               {cell.x + cell.width - inset - mark, cell.y + cell.height - inset}, 1.2f, rune);
+                    DrawLineEx({cell.x + cell.width - inset, cell.y + cell.height - inset},
+                               {cell.x + cell.width - inset, cell.y + cell.height - inset - mark}, 1.2f, rune);
+                }
             }
             if ((x == 0 || x == snapshot.width - 1) && y == snapshot.height / 2) {
                 DrawCircleV({cell.x + cell.width / 2.0f, cell.y + cell.height / 2.0f},
@@ -3871,6 +3930,8 @@ void drawBoard(const GameEngine& engine,
 
             if (hasHover && hover == coord && draggingUnit && snapshot.phase == Phase::Preparation) {
                 bool legal = engine.canDeploy(PlayerId::One, coord, draggingUnit->layer);
+                DrawRectangleRec({cell.x + 4, cell.y + 4, cell.width - 8, cell.height - 8},
+                                 legal ? Color{208, 166, 91, 46} : Color{128, 61, 49, 36});
                 DrawRectangleLinesEx({cell.x + 3, cell.y + 3, cell.width - 6, cell.height - 6},
                                      3.0f, legal ? Color{186, 152, 92, 235} : Color{142, 83, 63, 235});
             }
@@ -4028,6 +4089,8 @@ void drawHoverTooltip(const UnitSpec* spec,
     std::vector<std::string> lines;
     lines.push_back(view ? view->name : spec->name);
     lines.push_back(TextFormat("Type %s   Layer %s", toString(spec->type).c_str(), toString(spec->layer).c_str()));
+    std::string dossierLine = view ? view->profileSummary : profileSummary(spec->profile);
+    if (!dossierLine.empty()) lines.push_back(dossierLine);
     std::vector<AbilityKind> abilities = displayedAbilitiesFor(*spec);
     if (abilities.size() > 1) {
         std::string skillLine = "Skills ";
