@@ -142,6 +142,13 @@ struct DraftState {
     std::string fixedDropText;
 };
 
+struct DetailPanelState {
+    float scroll = 0.0f;
+    UnitId unitId = kInvalidUnitId;
+    UnitType type = UnitType::Skeleton;
+    bool shopMode = true;
+};
+
 std::filesystem::path resolveAssetPath(const std::filesystem::path& relative) {
     std::filesystem::path current = std::filesystem::current_path();
     for (int i = 0; i < 8; ++i) {
@@ -967,6 +974,43 @@ float drawWrappedTextLimited(const std::string& text,
     }
     if (!clipped && !line.empty()) drawLine(line);
     return y;
+}
+
+std::vector<std::string> wrapTextLines(const std::string& text,
+                                       float maxWidth,
+                                       float size,
+                                       int maxLines = 0) {
+    std::vector<std::string> lines;
+    if (text.empty() || maxWidth <= 0.0f) return lines;
+
+    std::istringstream words(text);
+    std::string word;
+    std::string line;
+    auto pushLine = [&](std::string value) {
+        if (value.empty()) return false;
+        if (maxLines > 0 && static_cast<int>(lines.size()) >= maxLines) return false;
+        if (maxLines > 0 && static_cast<int>(lines.size()) == maxLines - 1) {
+            value = fitText(value, maxWidth, size);
+        }
+        lines.push_back(std::move(value));
+        return true;
+    };
+
+    while (words >> word) {
+        std::string candidate = line.empty() ? word : line + " " + word;
+        if (measureText(candidate, size).x <= maxWidth) {
+            line = candidate;
+            continue;
+        }
+        if (!line.empty() && !pushLine(line)) return lines;
+        line = word;
+        if (measureText(line, size).x > maxWidth) {
+            if (!pushLine(fitText(line, maxWidth, size))) return lines;
+            line.clear();
+        }
+    }
+    if (!line.empty()) pushLine(line);
+    return lines;
 }
 
 void drawTextCentered(const std::string& text, Rectangle rect, float size, Color color) {
@@ -3302,41 +3346,293 @@ void drawAbilityDetailsInline(const UnitSpec& spec, float x, float y, float widt
     }
 }
 
-void drawUnitDetails(const UnitSpec& spec,
-                     const UnitView* view,
-                     Rectangle panel) {
-    drawParchmentPanel(panel, kParchment);
-    BeginScissorMode(static_cast<int>(panel.x), static_cast<int>(panel.y),
-                     static_cast<int>(panel.width), static_cast<int>(panel.height));
+struct DetailStat {
+    std::string label;
+    std::string value;
+};
+
+float detailLineHeight(float size) {
+    return size * kFontScale + 5.0f;
+}
+
+bool detailVisible(Rectangle viewport, float y, float h) {
+    return y + h >= viewport.y - 12.0f && y <= viewport.y + viewport.height + 12.0f;
+}
+
+void drawDetailStatChip(Rectangle rect,
+                        const std::string& label,
+                        const std::string& value,
+                        bool prominent = false) {
+    Color fill = prominent ? Color{86, 60, 38, 92} : Color{93, 71, 48, 54};
+    Color line = prominent ? Color{150, 104, 57, 175} : Color{126, 93, 55, 120};
+    DrawRectangleRounded(rect, 0.10f, 5, fill);
+    DrawRectangleRoundedLines(rect, 0.10f, 5, 1.0f, line);
+    drawText(fitText(label, rect.width - 12.0f, 13.0f),
+             rect.x + 7.0f, rect.y + 5.0f, 13.0f, Color{98, 71, 48, 255});
+    drawTextStrong(fitTextStrong(value, rect.width - 12.0f, prominent ? 19.0f : 18.0f),
+                   rect.x + 7.0f, rect.y + 20.0f, prominent ? 19.0f : 18.0f, kParchmentInk);
+}
+
+class DetailCursor {
+public:
+    DetailCursor(Rectangle viewport, float scroll, bool draw)
+        : viewport_(viewport),
+          x_(viewport.x + 16.0f),
+          width_(viewport.width - 42.0f),
+          y_(viewport.y + 14.0f - scroll),
+          startY_(viewport.y + 14.0f - scroll),
+          draw_(draw) {}
+
+    float contentHeight() const {
+        return std::max(0.0f, y_ - startY_ + 18.0f);
+    }
+
+    void sectionTitle(const std::string& title) {
+        float h = 30.0f;
+        if (draw_ && detailVisible(viewport_, y_, h)) {
+            drawTextStrong(title, x_, y_, 21.0f, kParchmentInk);
+            DrawLineEx({x_ + 122.0f, y_ + 15.0f},
+                       {x_ + width_, y_ + 15.0f},
+                       1.0f,
+                       Color{132, 101, 64, 120});
+        }
+        y_ += h;
+    }
+
+    void divider(float gap = 10.0f) {
+        if (draw_ && detailVisible(viewport_, y_, 8.0f)) {
+            DrawLineEx({x_, y_}, {x_ + width_, y_}, 1.0f, Color{132, 101, 64, 90});
+        }
+        y_ += gap;
+    }
+
+    void wrapped(const std::string& text,
+                 float size,
+                 Color color,
+                 int maxLines = 0,
+                 bool strong = false) {
+        std::vector<std::string> lines = wrapTextLines(text, width_, size, maxLines);
+        float h = detailLineHeight(size);
+        for (const std::string& line : lines) {
+            if (draw_ && detailVisible(viewport_, y_, h)) {
+                if (strong) {
+                    drawTextStrong(fitTextStrong(line, width_, size), x_, y_, size, color);
+                } else {
+                    drawText(fitText(line, width_, size), x_, y_, size, color);
+                }
+            }
+            y_ += h;
+        }
+    }
+
+    void statGrid(const std::vector<DetailStat>& stats, int columns = 3) {
+        if (stats.empty()) return;
+        columns = std::max(1, std::min(columns, 3));
+        const float gap = 8.0f;
+        const float rowH = 42.0f;
+        float colW = (width_ - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
+        for (size_t i = 0; i < stats.size(); i += static_cast<size_t>(columns)) {
+            for (int col = 0; col < columns; ++col) {
+                size_t index = i + static_cast<size_t>(col);
+                if (index >= stats.size()) break;
+                Rectangle rect{x_ + static_cast<float>(col) * (colW + gap), y_, colW, rowH};
+                if (draw_ && detailVisible(viewport_, rect.y, rect.height)) {
+                    drawDetailStatChip(rect, stats[index].label, stats[index].value);
+                }
+            }
+            y_ += rowH + 8.0f;
+        }
+    }
+
+    void abilityBlock(const UnitSpec& spec, AbilityKind ability) {
+        AbilityDetail detail = abilityDetailFor(spec, ability);
+        Color accent = abilitySchoolColor(ability);
+        divider(12.0f);
+
+        float iconSize = 42.0f;
+        Rectangle icon{x_, y_ + 2.0f, iconSize, iconSize};
+        float textX = x_ + iconSize + 12.0f;
+        float textW = width_ - iconSize - 12.0f;
+        if (draw_ && detailVisible(viewport_, y_, 48.0f)) {
+            drawAbilitySigil(icon, ability);
+            drawTextStrong(fitTextStrong(detail.title, textW, 22.0f),
+                           textX, y_, 22.0f, kParchmentInk);
+            drawText(fitText(abilitySchoolLabel(ability), textW, 15.0f),
+                     textX, y_ + 27.0f, 15.0f, Color{98, 71, 48, 255});
+            DrawLineEx({textX, y_ + 47.0f}, {x_ + width_, y_ + 47.0f}, 2.0f,
+                       Color{accent.r, accent.g, accent.b, 125});
+        }
+        y_ += 56.0f;
+
+        DamageTextParts damageText = splitDamageText(detail.headline);
+        std::string headline = damageText.formulaLine.empty()
+                                   ? damageText.rangeLine
+                                   : damageText.formulaLine;
+        if (!headline.empty()) wrapped(headline, 19.0f, Color{52, 38, 29, 255}, 0, true);
+        if (!damageText.formulaLine.empty() && damageText.rangeLine != headline) {
+            wrapped(damageText.rangeLine, 16.0f, Color{88, 48, 32, 255});
+        }
+
+        std::string mechanic = stripMechanicPrefix(detail.formula);
+        if (!mechanic.empty() && mechanic != detail.headline) {
+            wrapped(mechanic, 16.0f, Color{88, 48, 32, 255});
+        }
+        statGrid({{"Check", detail.save.empty() ? "No Save" : detail.save},
+                  {"Timing", detail.recharge},
+                  {"Reach", detail.range}}, 3);
+        if (!detail.body.empty()) wrapped(detail.body, 16.0f, Color{64, 46, 34, 255});
+        y_ += 8.0f;
+    }
+
+private:
+    Rectangle viewport_;
+    float x_ = 0.0f;
+    float width_ = 0.0f;
+    float y_ = 0.0f;
+    float startY_ = 0.0f;
+    bool draw_ = false;
+};
+
+std::vector<DetailStat> abilityScoreStats(const AbilityScores& scores) {
+    return {{"STR", std::to_string(scores.strength)},
+            {"DEX", std::to_string(scores.dexterity)},
+            {"CON", std::to_string(scores.constitution)},
+            {"INT", std::to_string(scores.intelligence)},
+            {"WIS", std::to_string(scores.wisdom)},
+            {"CHA", std::to_string(scores.charisma)}};
+}
+
+std::vector<AbilityKind> detailAbilityListFor(const UnitSpec& spec) {
+    std::vector<AbilityKind> abilities{AbilityKind::None};
+    for (AbilityKind ability : displayedAbilitiesFor(spec)) {
+        if (ability != AbilityKind::None &&
+            std::find(abilities.begin(), abilities.end(), ability) == abilities.end()) {
+            abilities.push_back(ability);
+        }
+    }
+    return abilities;
+}
+
+float detailMaxScroll(float contentHeight, Rectangle viewport) {
+    return std::max(0.0f, contentHeight - viewport.height);
+}
+
+void drawDetailScrollbar(Rectangle viewport, float contentHeight, float scroll) {
+    float maxScroll = detailMaxScroll(contentHeight, viewport);
+    if (maxScroll <= 1.0f) return;
+    float trackH = viewport.height - 10.0f;
+    float barHeight = std::max(36.0f, trackH * viewport.height / std::max(contentHeight, viewport.height));
+    float barY = viewport.y + 5.0f + (trackH - barHeight) * (scroll / maxScroll);
+    Rectangle track{viewport.x + viewport.width - 8.0f, viewport.y + 5.0f, 4.0f, trackH};
+    Rectangle thumb{track.x - 1.0f, barY, 6.0f, barHeight};
+    DrawRectangleRounded(track, 1.0f, 4, Color{120, 92, 58, 82});
+    DrawRectangleRounded(thumb, 1.0f, 4, Color{130, 91, 48, 205});
+}
+
+void syncDetailPanelState(DetailPanelState& state, const UnitSpec* spec, const UnitView* view) {
+    if (!spec) return;
+    UnitId unitId = view ? view->id : kInvalidUnitId;
+    UnitType type = spec->type;
+    bool shopMode = view == nullptr;
+    if (state.unitId != unitId || state.type != type || state.shopMode != shopMode) {
+        state.scroll = 0.0f;
+        state.unitId = unitId;
+        state.type = type;
+        state.shopMode = shopMode;
+    }
+}
+
+void drawUnitDetailHeader(const UnitSpec& spec, const UnitView* view, Rectangle panel) {
     std::vector<AbilityKind> headerAbilities = displayedAbilitiesFor(spec);
-    Rectangle detailSchoolChip{panel.x + panel.width - 176.0f, panel.y + 12.0f, 152.0f, 38.0f};
-    DrawRectangleRounded(detailSchoolChip, 0.16f, 6, Color{67, 49, 37, 232});
-    DrawRectangleRoundedLines(detailSchoolChip, 0.16f, 6, 2.0f, abilitySchoolColor(spec.ability));
+    std::string dossierLine = view ? view->profileSummary : profileSummary(spec.profile);
+
+    int units = view ? view->units : spec.unitCount;
+    int maxUnits = view ? view->maxUnits : spec.unitCount;
+    int totalHp = view ? view->totalHp : spec.maxHp * spec.unitCount;
+    int maxTotalHp = view ? view->maxTotalHp : spec.maxHp * spec.unitCount;
+    int range = view ? view->range : spec.range;
+    int armorClass = view ? view->armorClass : spec.armorClass;
+    int attackBonus = view ? view->attackBonus : spec.attackBonus;
+    bool neutral = view ? (isNeutralMonster(view->type) || view->neutralControlled)
+                        : isNeutralMonster(spec.type);
+
+    Rectangle iconArea{panel.x + 16.0f, panel.y + 17.0f, 66.0f, 66.0f};
+    drawUnitGlyph(spec.type, iconArea, iconAccent(spec.type));
+    drawAbilitySigil({panel.x + 29.0f, panel.y + 94.0f, 42.0f, 42.0f}, spec.ability);
+
+    Rectangle schoolChip{panel.x + panel.width - 156.0f, panel.y + 13.0f, 134.0f, 32.0f};
+    DrawRectangleRounded(schoolChip, 0.14f, 6, Color{67, 49, 37, 232});
+    DrawRectangleRoundedLines(schoolChip, 0.14f, 6, 1.4f, abilitySchoolColor(spec.ability));
     std::string chipLabel = headerAbilities.size() > 1
                                 ? TextFormat("%d Skills", static_cast<int>(headerAbilities.size()))
                                 : abilitySchoolLabel(spec.ability);
-    drawTextCentered(fitText(chipLabel, detailSchoolChip.width - 14.0f, 20.0f),
-                     detailSchoolChip, 20.0f, kInk);
+    drawTextCentered(fitText(chipLabel, schoolChip.width - 14.0f, 16.0f),
+                     schoolChip, 16.0f, kInk);
 
-    Rectangle iconArea{panel.x + 16.0f, panel.y + 18.0f, 62.0f, 62.0f};
-    drawUnitGlyph(spec.type, iconArea, iconAccent(spec.type));
-    drawAbilitySigil({panel.x + 16.0f, panel.y + 90.0f, 62.0f, 62.0f}, spec.ability);
-
-    float x = panel.x + 92.0f;
-    float y = panel.y + 16.0f;
+    float x = panel.x + 104.0f;
+    float contentW = panel.width - 126.0f;
+    float titleW = schoolChip.x - x - 10.0f;
     std::string title = spec.name;
     if (view) title += TextFormat("  #%d", view->id);
-    drawText(fitText(title, panel.width - 258.0f, 26.0f), x, y, 26.0f, kParchmentInk);
-    y += 36.0f;
+    drawTextStrong(fitTextStrong(title, titleW, 25.0f), x, panel.y + 15.0f, 25.0f, kParchmentInk);
+
+    if (!dossierLine.empty()) {
+        drawText(fitText(dossierLine, contentW, 15.0f), x, panel.y + 46.0f, 15.0f,
+                 Color{96, 66, 44, 255});
+    }
+
+    std::string roleLine = unitProfileLine(spec,
+                                           neutral,
+                                           view ? view->neutralActivated : false,
+                                           view ? view->neutralReturningHome : false);
+    drawWrappedTextLimited(roleLine, x, panel.y + 66.0f, contentW, 14.5f,
+                           kParchmentMuted, panel.y + 108.0f, 2);
+
+    Rectangle hpBar{x, panel.y + 111.0f, contentW, 26.0f};
+    DrawRectangleRounded(hpBar, 0.12f, 6, Color{75, 49, 34, 205});
+    float hpRatio = maxTotalHp > 0 ? std::clamp(static_cast<float>(totalHp) /
+                                                    static_cast<float>(maxTotalHp),
+                                                0.0f,
+                                                1.0f)
+                                   : 0.0f;
+    Rectangle hpFill{hpBar.x + 3.0f, hpBar.y + 3.0f,
+                     (hpBar.width - 6.0f) * hpRatio, hpBar.height - 6.0f};
+    DrawRectangleRounded(hpFill, 0.10f, 6,
+                         hpRatio > 0.45f ? Color{58, 135, 103, 230}
+                                          : Color{181, 77, 65, 230});
+    DrawRectangleRoundedLines(hpBar, 0.12f, 6, 1.2f, Color{118, 82, 45, 230});
+    drawTextCentered(TextFormat("HP %d/%d   Models %d/%d",
+                                totalHp,
+                                maxTotalHp,
+                                units,
+                                maxUnits),
+                     hpBar, 17.0f, kInk);
+
+    float chipY = panel.y + 145.0f;
+    float gap = 8.0f;
+    float chipW = (contentW - gap * 2.0f) / 3.0f;
+    drawDetailStatChip({x, chipY, chipW, 38.0f}, "AC", std::to_string(armorClass), true);
+    drawDetailStatChip({x + chipW + gap, chipY, chipW, 38.0f},
+                       "Hit", TextFormat("%+d", attackBonus), true);
+    drawDetailStatChip({x + (chipW + gap) * 2.0f, chipY, chipW, 38.0f},
+                       "Range", std::to_string(range), true);
+
+    DrawLineEx({panel.x + 14.0f, panel.y + 187.0f},
+               {panel.x + panel.width - 14.0f, panel.y + 187.0f},
+               1.0f,
+               Color{132, 101, 64, 120});
+
+}
+
+float drawUnitDetailBody(const UnitSpec& spec,
+                         const UnitView* view,
+                         Rectangle viewport,
+                         float scroll,
+                         bool draw) {
+    DetailCursor cursor(viewport, scroll, draw);
 
     const UnitProfile& profileData = view ? view->profile : spec.profile;
     std::string dossierLine = view ? view->profileSummary : profileSummary(spec.profile);
-    if (!dossierLine.empty()) {
-        drawText(fitText(dossierLine, panel.width - 124.0f, 18.0f),
-                 x, y, 18.0f, Color{96, 66, 44, 255});
-        y += 26.0f;
-    }
-
     int cost = view ? view->cost : spec.cost;
     int units = view ? view->units : spec.unitCount;
     int maxUnits = view ? view->maxUnits : spec.unitCount;
@@ -3349,113 +3645,113 @@ void drawUnitDetails(const UnitSpec& spec,
     int savingThrowBonus = view ? view->savingThrowBonus : spec.savingThrowBonus;
     int spellSaveDc = view ? view->spellSaveDc : spec.spellSaveDc;
     UnitLayer layer = view ? view->layer : spec.layer;
-
-    if (view) {
-        Rectangle hpBar{x, y, panel.width - 124.0f, 38.0f};
-        DrawRectangleRounded(hpBar, 0.14f, 6, Color{75, 49, 34, 210});
-        float hpRatio = view->maxTotalHp > 0
-                            ? std::clamp(static_cast<float>(view->totalHp) /
-                                             static_cast<float>(view->maxTotalHp),
-                                         0.0f,
-                                         1.0f)
-                            : 0.0f;
-        Rectangle hpFill{hpBar.x + 3.0f, hpBar.y + 3.0f,
-                         (hpBar.width - 6.0f) * hpRatio, hpBar.height - 6.0f};
-        DrawRectangleRounded(hpFill, 0.12f, 6,
-                             hpRatio > 0.45f ? Color{58, 135, 103, 230}
-                                              : Color{181, 77, 65, 230});
-        DrawRectangleRoundedLines(hpBar, 0.14f, 6, 1.5f, Color{118, 82, 45, 230});
-        drawTextCentered(TextFormat("HP %d / %d     Units %d / %d",
-                                    view->totalHp,
-                                    view->maxTotalHp,
-                                    units,
-                                    maxUnits),
-                         hpBar, 22.0f, kInk);
-        y += 50.0f;
-    }
+    bool neutral = view ? (isNeutralMonster(view->type) || view->neutralControlled)
+                        : isNeutralMonster(spec.type);
 
     UnitSpec damageSpec = spec;
     damageSpec.attack = attack;
     damageSpec.unitCount = std::max(1, units);
     DamagePacket damage = basicDamagePacketFor(damageSpec);
-    bool neutral = view ? (isNeutralMonster(view->type) || view->neutralControlled)
-                        : isNeutralMonster(spec.type);
 
-    std::string profile = unitProfileLine(spec,
-                                          neutral,
-                                          view ? view->neutralActivated : false,
-                                          view ? view->neutralReturningHome : false);
-    if (!neutral && cost > 0) {
-        profile = TextFormat("Cost %d | ", cost) + profile;
-    }
-    drawText(fitText(profile, panel.width - 124.0f, 19.0f), x, y, 19.0f, kParchmentMuted);
-    y += 30.0f;
+    cursor.sectionTitle("Profile");
+    if (!dossierLine.empty()) cursor.wrapped(dossierLine, 17.0f, Color{88, 59, 40, 255});
+    std::string profileLine = unitProfileLine(spec,
+                                              neutral,
+                                              view ? view->neutralActivated : false,
+                                              view ? view->neutralReturningHome : false);
+    if (!neutral && cost > 0) profileLine = TextFormat("Cost %d. ", cost) + profileLine;
+    cursor.wrapped(profileLine, 16.0f, kParchmentMuted);
+    cursor.statGrid({{"Layer", toString(layer)},
+                     {"School", abilitySchoolLabel(spec.ability)},
+                     {"Targets", targetText(spec)}}, 3);
 
+    cursor.sectionTitle("Combat");
     std::string formulaLine = damageFormula(damage);
-    if (damageSpec.unitCount > 1) {
-        formulaLine += TextFormat(" x%d", damageSpec.unitCount);
-    }
-    drawTextStrong(fitTextStrong(formulaLine, panel.width - 124.0f, 20.0f),
-                   x, y, 20.0f, kParchmentInk);
-    y += 30.0f;
+    if (damageSpec.unitCount > 1) formulaLine += TextFormat(" x%d", damageSpec.unitCount);
+    cursor.wrapped(formulaLine, 20.0f, kParchmentInk, 0, true);
     std::string damageLine = "Damage " + damageRange(damage);
     if (damageSpec.unitCount > 1) {
-        damageLine += TextFormat(" each; volley %d~%d",
+        damageLine += TextFormat(" each. Volley %d-%d.",
                                  damagePacketMin(damage) * damageSpec.unitCount,
                                  damagePacketMax(damage) * damageSpec.unitCount);
     }
-    drawText(fitText(damageLine +
-                         TextFormat("   Hit %+d   AC %d", attackBonus, armorClass),
-                     panel.width - 124.0f,
-                     20.0f),
-             x, y, 20.0f, Color{84, 55, 38, 255});
-    y += 30.0f;
-    std::string defenseLine = TextFormat("Save +%d   DC %d   Range %d   Targets %s",
-                                         savingThrowBonus,
-                                         spellSaveDc,
-                                         range,
-                                         targetText(spec).c_str());
-    drawText(fitText(defenseLine, panel.width - 124.0f, 20.0f), x, y, 20.0f, kParchmentMuted);
-    y += 30.0f;
-    std::string abilityLine = abilityScoreSummary(profileData.abilityScores);
-    drawText(fitText(abilityLine, panel.width - 124.0f, 18.0f), x, y, 18.0f,
-             Color{94, 69, 48, 255});
-    y += 27.0f;
-    std::string bodyLine = TextFormat("%s", toString(layer).c_str());
-    if (!neutral && spec.speed > 0.0) {
-        bodyLine += TextFormat("   Move %.1f", spec.speed);
-    }
-    bodyLine += TextFormat("   Models %d/%d", units, maxUnits);
-    drawText(fitText(bodyLine, panel.width - 124.0f, 20.0f), x, y, 20.0f, kParchmentMuted);
-    y += 30.0f;
+    cursor.wrapped(damageLine, 16.0f, Color{88, 48, 32, 255});
+    cursor.statGrid({{"Attack", std::to_string(attack)},
+                     {"Hit", TextFormat("%+d", attackBonus)},
+                     {"AC", std::to_string(armorClass)},
+                     {"Save", TextFormat("%+d", savingThrowBonus)},
+                     {"DC", std::to_string(spellSaveDc)},
+                     {"Range", std::to_string(range)},
+                     {"Move", TextFormat("%.1f", spec.speed)},
+                     {"Models", TextFormat("%d/%d", units, maxUnits)},
+                     {"HP each", std::to_string(hpEach)}}, 3);
 
+    cursor.sectionTitle("Attributes");
+    cursor.statGrid(abilityScoreStats(profileData.abilityScores), 3);
+
+    cursor.sectionTitle("Defenses");
+    cursor.wrapped(damageAffinitySummary(spec.type), 16.0f, Color{79, 61, 43, 255});
+    if (view && view->shield > 0) {
+        cursor.statGrid({{"Shield", std::to_string(view->shield)}}, 3);
+    }
     if (view && view->hp.size() > 1) {
         std::string hpLine = "Member HP ";
         for (size_t i = 0; i < view->hp.size(); ++i) {
             if (i > 0) hpLine += " | ";
             hpLine += std::to_string(view->hp[i]) + "/" + std::to_string(hpEach);
         }
-        drawText(fitText(hpLine, panel.width - 124.0f, 20.0f), x, y, 20.0f,
-                 Color{79, 61, 43, 255});
-        y += 30.0f;
-    }
-    if (view && view->shield > 0) {
-        drawText(TextFormat("Shield %d", view->shield),
-                 x, y, 20.0f, Color{79, 61, 43, 255});
-        y += 30.0f;
+        cursor.wrapped(hpLine, 16.0f, Color{79, 61, 43, 255});
     }
 
-    float abilityTop = y + 4.0f;
-    float abilityBottom = panel.y + panel.height - 18.0f;
-    if (abilityBottom - abilityTop >= 150.0f) {
-        drawAbilityDetailsInline(spec, panel.x + 18.0f, abilityTop,
-                                 panel.width - 36.0f, abilityBottom);
-    } else {
-        drawWrappedText(abilitySummary(spec), panel.x + 18.0f, abilityTop,
-                        panel.width - 36.0f, 18.0f, Color{76, 47, 32, 255});
+    cursor.sectionTitle("Abilities");
+    for (AbilityKind ability : detailAbilityListFor(spec)) {
+        cursor.abilityBlock(spec, ability);
     }
 
+    return cursor.contentHeight();
+}
+
+float drawUnitDetails(const UnitSpec& spec,
+                      const UnitView* view,
+                      Rectangle panel,
+                      float scroll) {
+    drawParchmentPanel(panel, kParchment);
+    constexpr float headerH = 194.0f;
+    drawUnitDetailHeader(spec, view, panel);
+
+    Rectangle viewport{panel.x + 10.0f,
+                       panel.y + headerH,
+                       panel.width - 20.0f,
+                       panel.height - headerH - 12.0f};
+    float contentHeight = drawUnitDetailBody(spec, view, viewport, 0.0f, false);
+    float maxScroll = detailMaxScroll(contentHeight, viewport);
+    float drawScroll = std::clamp(scroll, 0.0f, maxScroll);
+
+    BeginScissorMode(static_cast<int>(viewport.x),
+                     static_cast<int>(viewport.y),
+                     static_cast<int>(viewport.width),
+                     static_cast<int>(viewport.height));
+    drawUnitDetailBody(spec, view, viewport, drawScroll, true);
     EndScissorMode();
+
+    if (drawScroll > 1.0f) {
+        DrawRectangleGradientV(static_cast<int>(viewport.x),
+                               static_cast<int>(viewport.y),
+                               static_cast<int>(viewport.width - 12.0f),
+                               18,
+                               Color{220, 202, 163, 230},
+                               Color{220, 202, 163, 0});
+    }
+    if (maxScroll - drawScroll > 1.0f) {
+        DrawRectangleGradientV(static_cast<int>(viewport.x),
+                               static_cast<int>(viewport.y + viewport.height - 18.0f),
+                               static_cast<int>(viewport.width - 12.0f),
+                               18,
+                               Color{220, 202, 163, 0},
+                               Color{220, 202, 163, 230});
+    }
+    drawDetailScrollbar(viewport, contentHeight, drawScroll);
+    return maxScroll;
 }
 
 void drawRelicsPanel(const std::vector<std::string>& relicIds, const RunModifiers& modifiers) {
@@ -4127,16 +4423,38 @@ void drawHoverTooltip(const UnitSpec* spec,
     }
     lines.push_back(abilitySummary(*spec));
 
-    float maxWidth = 0.0f;
+    float width = 340.0f;
     for (const std::string& line : lines) {
-        maxWidth = std::max(maxWidth, measureText(line, 22.0f).x);
+        float lineWidth = measureText(line, 20.0f).x + 30.0f;
+        width = std::max(width, std::min(500.0f, lineWidth));
     }
-    float width = std::min(500.0f, maxWidth + 28.0f);
-    float height = 18.0f + static_cast<float>(lines.size()) * 27.0f + 12.0f;
+    width = std::clamp(width, 340.0f, 500.0f);
+
+    std::vector<std::string> drawLines;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (i == 0) {
+            drawLines.push_back(fitTextStrong(lines[i], width - 28.0f, 24.0f));
+            continue;
+        }
+        int maxLines = 2;
+        if (i == lines.size() - 1 || lines[i].size() > 72) maxLines = 3;
+        std::vector<std::string> wrapped = wrapTextLines(lines[i], width - 28.0f, 20.0f, maxLines);
+        for (const std::string& wrappedLine : wrapped) {
+            drawLines.push_back(wrappedLine);
+        }
+    }
+
+    float height = 18.0f;
+    height += 29.0f;
+    height += 10.0f;
+    int bodyCount = std::max(0, static_cast<int>(drawLines.size()) - 1);
+    height += static_cast<float>(bodyCount) * (20.0f * kFontScale + 5.0f);
+    height += 12.0f;
     float x = mouse.x + 20.0f;
     float y = mouse.y - height - 18.0f;
     if (x + width > kScreenWidth - 24.0f) x = mouse.x - width - 20.0f;
     if (y < 16.0f) y = mouse.y + 20.0f;
+    if (y + height > kScreenHeight - 16.0f) y = std::max(16.0f, kScreenHeight - height - 16.0f);
 
     Rectangle panel{x, y, width, height};
     drawParchmentPanel(panel, Color{221, 199, 151, 245});
@@ -4144,11 +4462,17 @@ void drawHoverTooltip(const UnitSpec* spec,
                Color{99, 61, 32, 150});
 
     float textY = panel.y + 14.0f;
-    drawTextStrong(lines[0], panel.x + 14.0f, textY, 24.0f, kParchmentInk);
-    textY += 31.0f;
-    for (size_t i = 1; i < lines.size(); ++i) {
-        drawText(fitText(lines[i], panel.width - 28.0f, 22.0f), panel.x + 14.0f, textY, 22.0f, kParchmentMuted);
-        textY += 26.0f;
+    if (!drawLines.empty()) {
+        drawTextStrong(drawLines.front(), panel.x + 14.0f, textY, 24.0f, kParchmentInk);
+        textY += 39.0f;
+    }
+    for (size_t i = 1; i < drawLines.size(); ++i) {
+        drawText(fitText(drawLines[i], panel.width - 28.0f, 20.0f),
+                 panel.x + 14.0f,
+                 textY,
+                 20.0f,
+                 kParchmentMuted);
+        textY += 20.0f * kFontScale + 5.0f;
     }
 }
 
@@ -4420,6 +4744,7 @@ int main() {
     UnitId dragging = kInvalidUnitId;
     UnitId inspectedUnit = kInvalidUnitId;
     float shopScroll = 0.0f;
+    DetailPanelState detailPanel;
     bool explorationRoundChoicesDismissed = false;
     double accumulator = 0.0;
     std::vector<std::string> log;
@@ -4467,13 +4792,20 @@ int main() {
             inspectedUnit = kInvalidUnitId;
         }
         shopScroll = clampShopScroll(engine, shopScroll);
+        DetailSelection wheelDetail = resolveDetailSelection(engine, snapshot, mouse, shopScroll, inspectedUnit);
+        syncDetailPanelState(detailPanel,
+                             wheelDetail.spec ? wheelDetail.spec : shopSpecAtIndex(engine, 0),
+                             wheelDetail.unit);
         float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f && CheckCollisionPointRec(mouse, shopViewportRect())) {
-            shopScroll = clampShopScroll(engine, shopScroll - wheel * 72.0f);
-        }
-        if (pendingDraft && wheel != 0.0f && CheckCollisionPointRec(mouse, activeDraftPanel)) {
-            int count = static_cast<int>(pendingDraft->offers.size());
-            draftScrollIndex = draftVisibleStart(draftScrollIndex + (wheel < 0.0f ? 1 : -1), count);
+        if (wheel != 0.0f) {
+            if (pendingDraft && CheckCollisionPointRec(mouse, activeDraftPanel)) {
+                int count = static_cast<int>(pendingDraft->offers.size());
+                draftScrollIndex = draftVisibleStart(draftScrollIndex + (wheel < 0.0f ? 1 : -1), count);
+            } else if (!pendingDraft && CheckCollisionPointRec(mouse, explorationUnitDetailRect())) {
+                detailPanel.scroll = std::max(0.0f, detailPanel.scroll - wheel * 72.0f);
+            } else if (CheckCollisionPointRec(mouse, shopViewportRect())) {
+                shopScroll = clampShopScroll(engine, shopScroll - wheel * 72.0f);
+            }
         }
 
         bool handledMouseDown = false;
@@ -4591,6 +4923,7 @@ int main() {
         DetailSelection detail = resolveDetailSelection(engine, snapshot, mouse, shopScroll, inspectedUnit);
         const UnitView* detailUnit = detail.unit;
         const UnitSpec* detailSpec = detail.spec ? detail.spec : shopSpecAtIndex(engine, 0);
+        syncDetailPanelState(detailPanel, detailSpec, detailUnit);
 
         BeginTextureMode(canvas);
         ClearBackground(Color{13, 10, 9, 255});
@@ -4619,9 +4952,11 @@ int main() {
         if (pendingDraft) {
             drawRelicDraftPanel(*pendingDraft, playerModifiers, draftScrollIndex);
         } else {
-            drawUnitDetails(detailSpec ? *detailSpec : engine.shop().front(),
-                            detailUnit,
-                            explorationUnitDetailRect());
+            float maxDetailScroll = drawUnitDetails(detailSpec ? *detailSpec : engine.shop().front(),
+                                                    detailUnit,
+                                                    explorationUnitDetailRect(),
+                                                    detailPanel.scroll);
+            detailPanel.scroll = std::clamp(detailPanel.scroll, 0.0f, maxDetailScroll);
             drawRunInfoPanel(snapshot, explorationRoundChoicesDismissed);
         }
         drawBench(snapshot, dragging, engine.benchLimit(PlayerId::One));
