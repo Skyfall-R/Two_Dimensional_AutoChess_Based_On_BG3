@@ -44,7 +44,7 @@ constexpr float kShopViewportH = 612.0f;
 constexpr int kBattleLogVisibleLines = 3;
 constexpr int kUnitTextureCount = static_cast<int>(UnitType::NeutralTamiaHolzt) + 1;
 constexpr int kNeutralFamilyTextureCount = static_cast<int>(NeutralFamily::Artillery) + 1;
-constexpr int kAbilityTextureCount = static_cast<int>(AbilityKind::ElectrifiedFlail) + 1;
+constexpr int kAbilityTextureCount = static_cast<int>(AbilityKind::BossFireball) + 1;
 
 Font gFont{};
 bool gCustomFont = false;
@@ -124,6 +124,7 @@ bool isKnockbackCueText(const std::string& text) {
 Color knockbackCueColor(const CombatCue& cue) {
     switch (cue.ability) {
         case AbilityKind::DiabolicChains:
+        case AbilityKind::BossFireball:
             return Color{214, 82, 49, 255};
         case AbilityKind::KethericSmite:
             return Color{226, 197, 102, 255};
@@ -409,6 +410,7 @@ void loadUiTextures() {
     loadAbilityTexture(AbilityKind::Blight, "library/skills/actions/blight.png");
     loadAbilityTexture(AbilityKind::StaggeringSmite, "library/skills/actions/staggering_smite.png");
     loadAbilityTexture(AbilityKind::ElectrifiedFlail, "library/skills/actions/electrified_flail.png");
+    loadAbilityTexture(AbilityKind::BossFireball, "library/skills/spells/fireball.png");
     loadRelicTextures();
 }
 
@@ -1121,6 +1123,7 @@ std::optional<AbilityKind> abilityFromEvent(const Event& event) {
     if (text.find("cinders") != std::string::npos || text.find("death burst") != std::string::npos) {
         return AbilityKind::MephitDeathBurst;
     }
+    if (text.find("Fireball") != std::string::npos) return AbilityKind::BossFireball;
     if (text.find("cast frost nova") != std::string::npos || text.find("slow") != std::string::npos) {
         return AbilityKind::FrostNova;
     }
@@ -1379,6 +1382,7 @@ std::string abilitySchoolLabel(AbilityKind ability) {
         case AbilityKind::Blight: return "Necromancy";
         case AbilityKind::StaggeringSmite: return "Necromancy";
         case AbilityKind::ElectrifiedFlail: return "Elemental";
+        case AbilityKind::BossFireball: return "Evocation";
         case AbilityKind::None:
         default:
             return "Martial";
@@ -1417,6 +1421,7 @@ Color abilitySchoolColor(AbilityKind ability) {
         case AbilityKind::Blight: return Color{98, 143, 88, 255};
         case AbilityKind::StaggeringSmite: return Color{189, 99, 178, 255};
         case AbilityKind::ElectrifiedFlail: return Color{85, 150, 231, 255};
+        case AbilityKind::BossFireball: return Color{214, 82, 49, 255};
         case AbilityKind::None:
         default:
             return Color{154, 137, 105, 255};
@@ -1439,167 +1444,6 @@ void drawRoundedRuneRing(Rectangle rect, Color accent) {
                               0.22f, 6, 1.0f, Color{102, 69, 38, 180});
 }
 
-void drawAbilityGlyph(AbilityKind ability, Rectangle rect, Color ink, Color accent) {
-    Vector2 c{rect.x + rect.width / 2.0f, rect.y + rect.height / 2.0f};
-    float w = rect.width;
-    float h = rect.height;
-    switch (ability) {
-        case AbilityKind::GithyankiAstralRaid:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.22f, accent);
-            drawTinySpark(c, std::max(3.0f, std::min(w, h) * 0.12f), ink);
-            DrawLineEx({c.x - w * 0.12f, c.y + h * 0.12f}, {c.x + w * 0.10f, c.y - h * 0.10f}, 2.0f, accent);
-            break;
-        case AbilityKind::BarbarianHeavySwing:
-            DrawLineEx({c.x - w * 0.18f, c.y + h * 0.14f}, {c.x + w * 0.06f, c.y - h * 0.10f}, 3.0f, ink);
-            DrawTriangle({c.x + w * 0.06f, c.y - h * 0.10f}, {c.x + w * 0.18f, c.y - h * 0.05f},
-                         {c.x + w * 0.02f, c.y + h * 0.02f}, accent);
-            DrawLineEx({c.x - w * 0.04f, c.y + h * 0.20f}, {c.x + w * 0.14f, c.y - h * 0.12f}, 2.0f, accent);
-            break;
-        case AbilityKind::NecromancerSummon:
-            DrawCircleV({c.x, c.y - h * 0.04f}, w * 0.10f, ink);
-            DrawCircleV({c.x - w * 0.03f, c.y - h * 0.04f}, w * 0.015f, accent);
-            DrawCircleV({c.x + w * 0.03f, c.y - h * 0.04f}, w * 0.015f, accent);
-            DrawLineEx({c.x - w * 0.08f, c.y + h * 0.08f}, {c.x + w * 0.08f, c.y + h * 0.08f}, 2.0f, ink);
-            DrawLineEx({c.x - w * 0.06f, c.y + h * 0.18f}, {c.x + w * 0.06f, c.y + h * 0.18f}, 2.0f, accent);
-            break;
-        case AbilityKind::MephitDeathBurst:
-            DrawTriangle({c.x, rect.y + h * 0.14f}, {rect.x + w * 0.30f, rect.y + h * 0.58f},
-                         {rect.x + w * 0.70f, rect.y + h * 0.58f}, accent);
-            DrawTriangle({c.x, rect.y + h * 0.28f}, {rect.x + w * 0.40f, rect.y + h * 0.58f},
-                         {rect.x + w * 0.60f, rect.y + h * 0.58f}, ink);
-            break;
-        case AbilityKind::PaladinCharge:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.18f, accent);
-            drawTinySpark({c.x, c.y - h * 0.06f}, std::max(2.0f, w * 0.06f), ink);
-            DrawLineEx({c.x - w * 0.06f, c.y + h * 0.18f}, {c.x + w * 0.08f, c.y - h * 0.16f}, 3.0f, ink);
-            DrawTriangle({c.x + w * 0.08f, c.y - h * 0.16f}, {c.x + w * 0.20f, c.y - h * 0.10f},
-                         {c.x + w * 0.04f, c.y - h * 0.02f}, accent);
-            break;
-        case AbilityKind::DragonBreath:
-            DrawTriangle({rect.x + w * 0.22f, c.y}, {rect.x + w * 0.54f, rect.y + h * 0.24f},
-                         {rect.x + w * 0.54f, rect.y + h * 0.76f}, accent);
-            DrawTriangle({rect.x + w * 0.42f, rect.y + h * 0.36f}, {rect.x + w * 0.74f, c.y},
-                         {rect.x + w * 0.42f, rect.y + h * 0.64f}, ink);
-            break;
-        case AbilityKind::GuardianShield:
-            DrawRectangleRounded({c.x - w * 0.16f, rect.y + h * 0.18f, w * 0.32f, h * 0.48f}, 0.30f, 5, ink);
-            DrawRectangleRoundedLines({c.x - w * 0.16f, rect.y + h * 0.18f, w * 0.32f, h * 0.48f}, 0.30f, 5, 2.0f, accent);
-            drawTinySpark(c, std::max(2.0f, w * 0.06f), accent);
-            break;
-        case AbilityKind::ClericHeal:
-            drawTinySpark(c, std::max(2.0f, w * 0.08f), accent);
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.18f, ink);
-            break;
-        case AbilityKind::FrostNova:
-            DrawLineEx({c.x - w * 0.16f, c.y}, {c.x + w * 0.16f, c.y}, 2.0f, ink);
-            DrawLineEx({c.x, c.y - h * 0.16f}, {c.x, c.y + h * 0.16f}, 2.0f, ink);
-            DrawLineEx({c.x - w * 0.12f, c.y - h * 0.12f}, {c.x + w * 0.12f, c.y + h * 0.12f}, 1.5f, accent);
-            DrawLineEx({c.x - w * 0.12f, c.y + h * 0.12f}, {c.x + w * 0.12f, c.y - h * 0.12f}, 1.5f, accent);
-            break;
-        case AbilityKind::RogueAmbush:
-            DrawLineEx({c.x - w * 0.16f, c.y + h * 0.14f}, {c.x + w * 0.04f, c.y - h * 0.14f}, 2.5f, ink);
-            DrawTriangle({c.x + w * 0.04f, c.y - h * 0.14f}, {c.x + w * 0.18f, c.y - h * 0.08f},
-                         {c.x + w * 0.02f, c.y - h * 0.02f}, accent);
-            DrawLineEx({c.x - w * 0.18f, c.y - h * 0.02f}, {c.x - w * 0.02f, c.y - h * 0.12f}, 1.5f, accent);
-            break;
-        case AbilityKind::DruidSummon:
-            DrawTriangle({c.x, rect.y + h * 0.16f}, {rect.x + w * 0.28f, rect.y + h * 0.62f},
-                         {rect.x + w * 0.72f, rect.y + h * 0.62f}, accent);
-            DrawLineEx({c.x, rect.y + h * 0.18f}, {c.x, rect.y + h * 0.74f}, 2.0f, ink);
-            DrawLineEx({c.x - w * 0.12f, c.y + h * 0.06f}, {c.x - w * 0.24f, c.y + h * 0.18f}, 1.5f, ink);
-            DrawLineEx({c.x + w * 0.12f, c.y + h * 0.06f}, {c.x + w * 0.24f, c.y + h * 0.18f}, 1.5f, ink);
-            break;
-        case AbilityKind::KarnissCruelSting:
-        case AbilityKind::OwlbearMultiattack:
-            DrawLineEx({c.x - w * 0.20f, c.y - h * 0.10f}, {c.x + w * 0.18f, c.y + h * 0.10f}, 3.0f, ink);
-            DrawLineEx({c.x - w * 0.18f, c.y + h * 0.10f}, {c.x + w * 0.20f, c.y - h * 0.10f}, 3.0f, accent);
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.23f, accent);
-            break;
-        case AbilityKind::SpectatorWoundingRay:
-            DrawCircleLines(static_cast<int>(c.x - w * 0.12f), static_cast<int>(c.y), w * 0.10f, ink);
-            DrawLineEx({c.x - w * 0.02f, c.y}, {c.x + w * 0.24f, c.y - h * 0.16f}, 3.0f, accent);
-            DrawLineEx({c.x - w * 0.02f, c.y}, {c.x + w * 0.24f, c.y + h * 0.16f}, 2.0f, ink);
-            break;
-        case AbilityKind::MindBlast:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.20f, accent);
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.30f, Color{accent.r, accent.g, accent.b, 160});
-            drawTinySpark(c, std::max(2.0f, w * 0.07f), ink);
-            break;
-        case AbilityKind::Counterspell:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.24f, accent);
-            DrawLineEx({c.x - w * 0.18f, c.y + h * 0.18f}, {c.x + w * 0.18f, c.y - h * 0.18f}, 3.0f, ink);
-            break;
-        case AbilityKind::AnimatingSpores:
-            DrawCircleV({c.x - w * 0.10f, c.y}, w * 0.08f, accent);
-            DrawCircleV({c.x + w * 0.02f, c.y - h * 0.08f}, w * 0.10f, ink);
-            DrawCircleV({c.x + w * 0.12f, c.y + h * 0.05f}, w * 0.07f, accent);
-            DrawLineEx({c.x, c.y - h * 0.02f}, {c.x, c.y + h * 0.24f}, 2.0f, ink);
-            break;
-        case AbilityKind::HiemalStrike:
-            DrawLineEx({c.x - w * 0.20f, c.y + h * 0.14f}, {c.x + w * 0.14f, c.y - h * 0.18f}, 3.0f, ink);
-            DrawTriangle({c.x + w * 0.14f, c.y - h * 0.18f}, {c.x + w * 0.24f, c.y - h * 0.10f},
-                         {c.x + w * 0.05f, c.y - h * 0.04f}, accent);
-            drawTinySpark({c.x - w * 0.06f, c.y}, std::max(2.0f, w * 0.07f), accent);
-            break;
-        case AbilityKind::VenomousBite:
-            DrawTriangle({c.x - w * 0.16f, c.y - h * 0.12f}, {c.x - w * 0.02f, c.y + h * 0.18f},
-                         {c.x + w * 0.04f, c.y - h * 0.08f}, ink);
-            DrawTriangle({c.x + w * 0.08f, c.y - h * 0.12f}, {c.x + w * 0.18f, c.y + h * 0.16f},
-                         {c.x + w * 0.24f, c.y - h * 0.10f}, accent);
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.24f, accent);
-            break;
-        case AbilityKind::DiabolicChains:
-            for (float dy : {-0.16f, 0.0f, 0.16f}) {
-                DrawLineEx({c.x - w * 0.24f, c.y + h * dy - h * 0.08f},
-                           {c.x + w * 0.22f, c.y + h * dy + h * 0.06f},
-                           3.0f, dy == 0.0f ? ink : accent);
-            }
-            break;
-        case AbilityKind::KethericSmite:
-            drawTinySpark({c.x - w * 0.07f, c.y - h * 0.04f}, std::max(2.0f, w * 0.08f), accent);
-            DrawLineEx({c.x + w * 0.04f, c.y - h * 0.18f}, {c.x - w * 0.14f, c.y + h * 0.18f}, 4.0f, ink);
-            DrawRectangleRounded({c.x - w * 0.02f, c.y - h * 0.24f, w * 0.20f, h * 0.16f},
-                                 0.08f, 4, accent);
-            break;
-        case AbilityKind::SelunesIre:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.24f, accent);
-            DrawLineEx({c.x - w * 0.12f, c.y + h * 0.18f}, {c.x + w * 0.16f, c.y - h * 0.16f}, 3.8f, ink);
-            drawTinySpark({c.x + w * 0.02f, c.y - h * 0.06f}, std::max(2.0f, w * 0.09f), accent);
-            break;
-        case AbilityKind::EvokerMagicMissile:
-            for (float dy : {-0.16f, 0.0f, 0.16f}) {
-                DrawLineEx({c.x - w * 0.22f, c.y + h * dy}, {c.x + w * 0.18f, c.y + h * dy}, 2.5f, accent);
-                DrawCircleV({c.x + w * 0.22f, c.y + h * dy}, w * 0.035f, ink);
-            }
-            break;
-        case AbilityKind::DominatePerson:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.25f, accent);
-            DrawCircleV({c.x - w * 0.08f, c.y - h * 0.02f}, w * 0.045f, ink);
-            DrawCircleV({c.x + w * 0.08f, c.y - h * 0.02f}, w * 0.045f, ink);
-            DrawLineEx({c.x - w * 0.15f, c.y + h * 0.13f}, {c.x + w * 0.15f, c.y + h * 0.13f}, 2.4f, accent);
-            break;
-        case AbilityKind::ExtractBrain:
-            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), w * 0.23f, accent);
-            DrawLineEx({c.x - w * 0.18f, c.y - h * 0.16f}, {c.x + w * 0.08f, c.y + h * 0.16f}, 3.0f, ink);
-            DrawLineEx({c.x - w * 0.04f, c.y - h * 0.20f}, {c.x + w * 0.18f, c.y + h * 0.10f}, 2.2f, accent);
-            DrawCircleV({c.x + w * 0.16f, c.y + h * 0.16f}, w * 0.055f, ink);
-            break;
-        case AbilityKind::Blight:
-            DrawCircleV(c, w * 0.20f, Color{accent.r, accent.g, accent.b, 190});
-            DrawLineEx({c.x - w * 0.14f, c.y + h * 0.18f}, {c.x + w * 0.10f, c.y - h * 0.18f}, 3.0f, ink);
-            DrawLineEx({c.x + w * 0.02f, c.y + h * 0.18f}, {c.x + w * 0.18f, c.y - h * 0.02f}, 2.0f, accent);
-            break;
-        case AbilityKind::None:
-        default:
-            DrawLineEx({c.x - w * 0.15f, c.y + h * 0.14f}, {c.x + w * 0.12f, c.y - h * 0.16f}, 2.5f, ink);
-            DrawTriangle({c.x + w * 0.12f, c.y - h * 0.16f}, {c.x + w * 0.22f, c.y - h * 0.10f},
-                         {c.x + w * 0.04f, c.y - h * 0.02f}, accent);
-            DrawRectangleRounded({c.x - w * 0.18f, c.y - h * 0.02f, w * 0.20f, h * 0.28f}, 0.20f, 4, Color{0, 0, 0, 0});
-            DrawRectangleRoundedLines({c.x - w * 0.18f, c.y - h * 0.02f, w * 0.20f, h * 0.28f}, 0.20f, 4, 1.5f, accent);
-            break;
-    }
-}
-
 void drawAbilitySigil(Rectangle rect, AbilityKind ability, bool withLabel = false) {
     Color accent = abilitySchoolColor(ability);
     Rectangle shadow{rect.x + 2.0f, rect.y + 3.0f, rect.width, rect.height};
@@ -1615,7 +1459,12 @@ void drawAbilitySigil(Rectangle rect, AbilityKind ability, bool withLabel = fals
                        rect.width * 0.88f, rect.height * 0.88f};
         drawTextureAspectFit(*texture, icon, WHITE);
     } else {
-        drawAbilityGlyph(ability, core, Color{232, 216, 187, 255}, accent);
+        DrawRectangleRoundedLines(core, 0.20f, 6, 2.0f, Color{180, 132, 76, 150});
+        drawTextCentered(ability == AbilityKind::None ? "ATK" : "ICON",
+                         core,
+                         std::max(12.0f, rect.height * 0.18f),
+                         Color{210, 184, 130, 210});
+        TraceLog(LOG_WARNING, "Missing BG3 ability icon for ability id %d", static_cast<int>(ability));
     }
 
     DrawLineEx({rect.x + rect.width * 0.18f, rect.y + rect.height * 0.12f},
@@ -2103,6 +1952,8 @@ std::string unitProfileLine(const UnitSpec& spec,
             return "Backline support; keeps damaged allies alive.";
         case AbilityKind::GuardianShield:
             return "Defensive anchor; taunts and rebuilds shields.";
+        case AbilityKind::BossFireball:
+            return "Boss controller; punishes flying attackers with Fireball.";
         default:
             break;
     }
@@ -2135,6 +1986,7 @@ std::string abilityDamageLine(const UnitSpec& spec, AbilityKind ability) {
             return damageFormula(abilityDamagePacketFor(spec, AbilityKind::ExtractBrain));
         case AbilityKind::GithyankiAstralRaid:
         case AbilityKind::MephitDeathBurst:
+        case AbilityKind::BossFireball:
         case AbilityKind::PaladinCharge:
         case AbilityKind::DragonBreath:
         case AbilityKind::FrostNova:
@@ -2238,6 +2090,15 @@ AbilityDetail abilityDetailFor(UnitSpec spec, AbilityKind ability) {
             detail.save = TextFormat("DEX Save DC %d halves", spec.spellSaveDc);
             detail.recharge = TextFormat("Attack %.1fs; death trigger", spec.attackCooldown);
             detail.range = TextFormat("Range %d; splash radius 1", spec.range);
+            return detail;
+        case AbilityKind::BossFireball:
+            detail.title = "Fireball";
+            detail.headline = abilityDamageLine(spec, AbilityKind::BossFireball);
+            detail.formula = "Anti-air boss spell; burst radius 1";
+            detail.body = "Activated bosses punish flying units from long range, but the blast can also catch nearby ground units.";
+            detail.save = TextFormat("DEX Save DC %d halves", spec.spellSaveDc);
+            detail.recharge = "Boss reaction spell";
+            detail.range = "Range 5; burst radius 1";
             return detail;
         case AbilityKind::PaladinCharge:
             detail.title = "Divine Charge";
@@ -2504,6 +2365,8 @@ std::string abilityText(const UnitSpec& spec) {
             return "Ability: raise dead. Summons temporary skeletons nearby if a land tile is open, up to 2 active summons per necromancer plus relic bonuses.";
         case AbilityKind::MephitDeathBurst:
             return "Ability: cinder burst. Attacks splash fire around the target; on death, nearby enemy land units make a Dex save or take 60 damage.";
+        case AbilityKind::BossFireball:
+            return "Ability: Fireball. Activated bosses target flying attackers at range 5; enemies around the impact make Dex saves, success halves damage.";
         case AbilityKind::PaladinCharge:
             return "Ability: divine charge. After moving, the next attack has advantage and deals double damage.";
         case AbilityKind::DragonBreath:
@@ -2567,6 +2430,7 @@ std::string abilitySummary(const UnitSpec& spec) {
         case AbilityKind::BarbarianHeavySwing: return "Berserker Rage: damage reduction, wound-scaling speed, Frenzied Strike.";
         case AbilityKind::NecromancerSummon: return "Raises temporary skeletons, capped per necromancer.";
         case AbilityKind::MephitDeathBurst: return "Cinder splash attacks; death burst forces nearby Dex saves.";
+        case AbilityKind::BossFireball: return "Boss Fireball: long-range anti-air blast; Dex save halves.";
         case AbilityKind::PaladinCharge: return "After moving, next hit has advantage and double damage.";
         case AbilityKind::DragonBreath: return "Fire breath hits all enemies in range; Dex save halves.";
         case AbilityKind::GuardianShield: return "Taunts enemies and gains shield over time.";
@@ -3928,7 +3792,7 @@ bool cueUsesArcaneTexture(const CombatCue& cue) {
            cue.visual == CombatCueVisualKind::Heal ||
            cue.visual == CombatCueVisualKind::Gold ||
            cue.visual == CombatCueVisualKind::Shield ||
-           cue.arcane || cue.ability != AbilityKind::None ||
+           cue.arcane ||
            cue.type == EventType::Shielded || cue.type == EventType::Healed ||
            cue.type == EventType::StatusApplied || cue.type == EventType::GoldGained;
 }
@@ -4559,7 +4423,44 @@ bool eventHasBoardCue(const Event& event) {
 }
 
 bool eventLooksArcane(const Event& event) {
-    if (abilityFromEvent(event).has_value()) return true;
+    if (std::optional<AbilityKind> ability = abilityFromEvent(event)) {
+        switch (*ability) {
+            case AbilityKind::NecromancerSummon:
+            case AbilityKind::MephitDeathBurst:
+            case AbilityKind::DragonBreath:
+            case AbilityKind::ClericHeal:
+            case AbilityKind::FrostNova:
+            case AbilityKind::DruidSummon:
+            case AbilityKind::SpectatorWoundingRay:
+            case AbilityKind::MindBlast:
+            case AbilityKind::Counterspell:
+            case AbilityKind::AnimatingSpores:
+            case AbilityKind::BossFireball:
+            case AbilityKind::DiabolicChains:
+            case AbilityKind::SelunesIre:
+            case AbilityKind::EvokerMagicMissile:
+            case AbilityKind::DominatePerson:
+            case AbilityKind::StrikeOfTheGuardian:
+            case AbilityKind::Blight:
+                return true;
+            case AbilityKind::None:
+            case AbilityKind::GithyankiAstralRaid:
+            case AbilityKind::BarbarianHeavySwing:
+            case AbilityKind::PaladinCharge:
+            case AbilityKind::GuardianShield:
+            case AbilityKind::RogueAmbush:
+            case AbilityKind::KarnissCruelSting:
+            case AbilityKind::OwlbearMultiattack:
+            case AbilityKind::HiemalStrike:
+            case AbilityKind::VenomousBite:
+            case AbilityKind::KethericSmite:
+            case AbilityKind::ExtractBrain:
+            case AbilityKind::MinotaurCharge:
+            case AbilityKind::StaggeringSmite:
+            case AbilityKind::ElectrifiedFlail:
+                return false;
+        }
+    }
     return event.type == EventType::GoldGained ||
            event.text.find("cast") != std::string::npos ||
            event.text.find("breath") != std::string::npos ||

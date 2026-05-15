@@ -330,7 +330,7 @@ BuildProfile analyzeBuild(const GameSnapshot& snapshot, PlayerId player) {
         }
         if (unit.ability == AbilityKind::FrostNova || unit.ability == AbilityKind::DragonBreath ||
             unit.ability == AbilityKind::MindBlast || unit.ability == AbilityKind::SpectatorWoundingRay ||
-            unit.ability == AbilityKind::EvokerMagicMissile) {
+            unit.ability == AbilityKind::EvokerMagicMissile || unit.ability == AbilityKind::BossFireball) {
             ++profile.controlCount;
         }
         if (unit.ability == AbilityKind::RogueAmbush || unit.type == UnitType::GithyankiWarrior) {

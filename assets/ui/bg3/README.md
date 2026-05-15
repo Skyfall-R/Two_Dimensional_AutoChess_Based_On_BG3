@@ -48,7 +48,8 @@ Portrait mapping:
 
 Effect and ability icons:
 
-- `arcane_burst.png` -> `Magic_Missile_Icon.png`
+- `arcane_burst.png` -> legacy spell burst texture; not used as a Magic Missile
+  fallback for arbitrary abilities
 - `melee_hit.png` -> `Reckless_Attack_Action_Icon.png`
 - `ability_githyanki_astral_raid.png` -> `Astral_Knowledge_Icon.webp`
 - `ability_barbarian_heavy_swing.png` -> `Frenzied_Strike_Icon.png`
@@ -61,6 +62,16 @@ Effect and ability icons:
 - `ability_frost_nova.png` -> `Ice_Storm_Icon.png`
 - `ability_rogue_ambush.png` -> `Sneak_Attack_(Melee)_Icon.png`
 - `ability_druid_summon.png` -> `Conjure_Animals_Icon.webp`
+- `library/skills/spells/fireball.png` -> `Fireball_Icon.webp` from
+  `https://bg3.wiki/wiki/Fireball`
+- `library/skills/actions/electrified_flail.png` -> `Generic_Lightning_Icon.webp`
+  from `https://bg3.wiki/wiki/Electrified_Flail`
+- `sources/Magic_Missile_Icon.png` -> `Magic_Missile_Icon.webp` from
+  `https://bg3.wiki/wiki/Magic_Missile`
+- `ability_mephit_death_burst.png` -> `Generic_Explosion_Icon.webp` from
+  `https://bg3.wiki/wiki/Death_Burst`
+- `ability_dragon_breath.png` -> `Fire_Breath_Cone_Icon.webp` from
+  `https://bg3.wiki/wiki/Fire_Breath_(Cone)`
 
 Relic and expansion library:
 

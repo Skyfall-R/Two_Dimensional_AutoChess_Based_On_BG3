@@ -40,11 +40,10 @@ constexpr int kRedcapAmbushRadius = 5;
 constexpr int kNeutralGuardianLeashRadius = 5;
 constexpr int kNeutralSummonGuardRadius = 4;
 constexpr int kExplorationUnitAggroRadius = 7;
-constexpr int kMajorObjectiveAntiAirRadius = 4;
-constexpr int kMajorObjectiveAntiAirGuardianRadius = 2;
-constexpr double kMajorObjectiveAntiAirCooldown = 1.5;
-constexpr int kEliteAntiAirDamage = 18;
-constexpr int kBossAntiAirDamage = 28;
+constexpr int kBossGuardianSummonRadius = 2;
+constexpr double kBossFireballCooldown = 1.6;
+constexpr int kBossFireballRange = 5;
+constexpr int kBossFireballDamage = 42;
 constexpr int kRogueAmbushMaxRange = 7;
 constexpr double kRetargetInterval = 0.35;
 constexpr int kBoardFeaturePlanes = 6;
@@ -803,15 +802,15 @@ std::vector<UnitSpec> makeSpecs() {
         {UnitType::Necromancer, "Grave Necromancer", "Nc", 11, 1, 82, 19, 2, 2.0, 0.8,
          UnitLayer::Land, true, true, 44, kRoleRanged | kRoleSummoner, AbilityKind::NecromancerSummon,
          1.0, 0, 1, 0.0},
-        {UnitType::FireMephit, "Fire Mephit", "Me", 12, 1, 155, 26, 2, 2.0, 0.9,
-         UnitLayer::Air, true, true, 45, kRoleAir | kRoleAoe, AbilityKind::MephitDeathBurst},
-        {UnitType::ImpSwarm, "Imp Swarm", "Im", 10, 3, 22, 15, 3, 3.0, 0.8,
-         UnitLayer::Air, true, true, 39, kRoleAir | kRoleRanged, AbilityKind::None},
+        {UnitType::FireMephit, "Fire Mephit", "Me", 12, 1, 105, 20, 2, 2.5, 1.05,
+         UnitLayer::Air, true, true, 34, kRoleAir | kRoleAoe, AbilityKind::MephitDeathBurst},
+        {UnitType::ImpSwarm, "Imp Swarm", "Im", 9, 3, 16, 10, 2, 3.4, 0.82,
+         UnitLayer::Air, true, true, 28, kRoleAir | kRoleRanged, AbilityKind::None},
         {UnitType::GoblinSkirmisher, "Goblin Ambusher", "Gb", 6, 3, 30, 12, 1, 4.0, 0.7,
          UnitLayer::Land, true, false, 26, kRoleMelee, AbilityKind::None},
         {UnitType::Paladin, "Oathbound Paladin", "Pa", 15, 1, 210, 36, 1, 3.0, 0.8,
          UnitLayer::Land, true, false, 50, kRoleMelee, AbilityKind::PaladinCharge},
-        {UnitType::DragonWyrmling, "Dragon Wyrmling", "Dw", 13, 1, 150, 24, 3, 3.0, 0.9,
+        {UnitType::DragonWyrmling, "Dragon Wyrmling", "Dw", 20, 1, 150, 24, 3, 3.0, 0.9,
          UnitLayer::Air, true, true, 48, kRoleAir | kRoleAoe, AbilityKind::DragonBreath},
         {UnitType::NeutralSpectator, "Spectator Raycaster", "Sp", 0, 1, 185, 34, 4, 1.6, 1.0,
          UnitLayer::Land, true, true, 62, kRoleRanged | kRoleControl, AbilityKind::SpectatorWoundingRay,
@@ -1912,6 +1911,8 @@ DamagePacket abilityDamagePacketFor(const UnitSpec& spec, AbilityKind ability) {
         case AbilityKind::DragonBreath:
         case AbilityKind::DiabolicChains:
             return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Fire)}, 0, "fire"};
+        case AbilityKind::BossFireball:
+            return DamagePacket{{damageRollForValue(kBossFireballDamage, DamageType::Fire)}, 0, "fireball"};
         case AbilityKind::FrostNova:
             return DamagePacket{{damageRollForValue(std::max(1, spec.attack), DamageType::Cold)}, 0, "cold"};
         case AbilityKind::PaladinCharge:
@@ -3519,7 +3520,7 @@ void GameEngine::clearExplorationObjective(size_t index, PlayerId clearer, UnitI
     ExplorationObjectiveState* objective = exploration_.objective(index);
     if (!objective || objective->cleared) return;
 
-    UnitId antiAirGuardianId = objective->antiAirGuardianId;
+    UnitId bossGuardianId = objective->bossGuardianId;
     exploration_.markCleared(index);
     applyExplorationObjectiveTerrain();
 
@@ -3556,9 +3557,9 @@ void GameEngine::clearExplorationObjective(size_t index, PlayerId clearer, UnitI
                totalRewardGold,
                std::move(text)});
 
-    if (antiAirGuardianId >= 0 && antiAirGuardianId < static_cast<int>(units_.size()) &&
-        unit(antiAirGuardianId).alive) {
-        killUnit(antiAirGuardianId, kInvalidUnitId);
+    if (bossGuardianId >= 0 && bossGuardianId < static_cast<int>(units_.size()) &&
+        unit(bossGuardianId).alive) {
+        killUnit(bossGuardianId, kInvalidUnitId);
     }
 }
 
@@ -4674,6 +4675,10 @@ bool GameEngine::isMajorObjective(ExplorationObjectiveKind kind) const {
     return kind == ExplorationObjectiveKind::Elite || kind == ExplorationObjectiveKind::Boss;
 }
 
+bool GameEngine::isBossObjective(ExplorationObjectiveKind kind) const {
+    return kind == ExplorationObjectiveKind::Boss;
+}
+
 Coord GameEngine::majorObjectiveAnchor(const ExplorationObjectiveState& objective) const {
     if (objective.unitId >= 0 && objective.unitId < static_cast<int>(units_.size())) {
         const Unit& objectiveUnit = unit(objective.unitId);
@@ -4690,31 +4695,31 @@ std::optional<size_t> GameEngine::majorObjectiveIndexForUnit(UnitId unitId) cons
     return index;
 }
 
-bool GameEngine::isRealFlyingIntruder(const Unit& u) const {
-    return u.alive && u.deployed && u.spec.layer == UnitLayer::Air &&
-           !isNeutralLikeCombatant(u) && !isInternalUnitType(u.spec.type);
+bool GameEngine::isRealObjectiveProvoker(const Unit& u) const {
+    return u.alive && u.deployed && !isNeutralLikeCombatant(u) &&
+           !isInternalUnitType(u.spec.type);
 }
 
-UnitId GameEngine::spawnAntiAirGuardian(size_t objectiveIndex, UnitId intruderId) {
+UnitId GameEngine::spawnBossGuardian(size_t objectiveIndex, UnitId provokerId) {
     ExplorationObjectiveState* objective = exploration_.objective(objectiveIndex);
-    if (!objective || objective->cleared || !isMajorObjective(objective->kind)) return kInvalidUnitId;
-    if (objective->antiAirGuardianId >= 0 &&
-        objective->antiAirGuardianId < static_cast<int>(units_.size()) &&
-        unit(objective->antiAirGuardianId).alive) {
-        return objective->antiAirGuardianId;
+    if (!objective || objective->cleared || !isBossObjective(objective->kind)) return kInvalidUnitId;
+    if (objective->bossGuardianId >= 0 &&
+        objective->bossGuardianId < static_cast<int>(units_.size()) &&
+        unit(objective->bossGuardianId).alive) {
+        return objective->bossGuardianId;
     }
 
     Coord anchor = majorObjectiveAnchor(*objective);
-    Coord intruderCoord = anchor;
-    if (intruderId >= 0 && intruderId < static_cast<int>(units_.size()) &&
-        unit(intruderId).alive) {
-        intruderCoord = unit(intruderId).coord;
+    Coord provokerCoord = anchor;
+    if (provokerId >= 0 && provokerId < static_cast<int>(units_.size()) &&
+        unit(provokerId).alive) {
+        provokerCoord = unit(provokerId).coord;
     }
 
-    std::vector<Coord> candidates = cellsInRange(anchor, kMajorObjectiveAntiAirGuardianRadius);
+    std::vector<Coord> candidates = cellsInRange(anchor, kBossGuardianSummonRadius);
     std::sort(candidates.begin(), candidates.end(), [&](Coord lhs, Coord rhs) {
-        int lhsScore = manhattan(lhs, intruderCoord) * 10 + manhattan(lhs, anchor);
-        int rhsScore = manhattan(rhs, intruderCoord) * 10 + manhattan(rhs, anchor);
+        int lhsScore = manhattan(lhs, provokerCoord) * 10 + manhattan(lhs, anchor);
+        int rhsScore = manhattan(rhs, provokerCoord) * 10 + manhattan(rhs, anchor);
         return lhsScore < rhsScore;
     });
 
@@ -4752,96 +4757,119 @@ UnitId GameEngine::spawnAntiAirGuardian(size_t objectiveIndex, UnitId intruderId
     guardian.neutralBehavior = NeutralBehavior::PassiveGuardian;
     guardian.neutralProvoked = true;
     guardian.neutralReturningHome = false;
-    guardian.provokedBy = intruderId;
-    guardian.target = intruderId;
+    guardian.provokedBy = provokerId;
+    guardian.target = provokerId;
     guardian.retargetTimer = 0.0;
     player(objective->owner).deployed.push_back(guardianId);
 
-    objective->antiAirGuardianId = guardianId;
+    objective->bossGuardianId = guardianId;
     if (std::find(objective->spawnedUnitIds.begin(), objective->spawnedUnitIds.end(), guardianId) ==
         objective->spawnedUnitIds.end()) {
         objective->spawnedUnitIds.push_back(guardianId);
     }
-    pushEvent({EventType::Deployed, objective->owner, guardianId, intruderId, anchor, spawn, 0,
-               eventUnitName(guardian) + " answered the air intrusion"});
+    pushEvent({EventType::Deployed, objective->owner, guardianId, provokerId, anchor, spawn, 0,
+               eventUnitName(guardian) + " answered the boss call"});
     return guardianId;
 }
 
-void GameEngine::triggerMajorObjectiveAntiAir(size_t objectiveIndex, UnitId intruderId,
-                                              const std::string& reason) {
+bool GameEngine::triggerBossGuardian(size_t objectiveIndex, UnitId provokerId,
+                                     const std::string& reason) {
     ExplorationObjectiveState* objective = exploration_.objective(objectiveIndex);
-    if (!objective || objective->cleared || !isMajorObjective(objective->kind)) return;
-    if (intruderId < 0 || intruderId >= static_cast<int>(units_.size()) ||
-        !isRealFlyingIntruder(unit(intruderId))) {
-        return;
+    if (!objective || objective->cleared || !isBossObjective(objective->kind)) return false;
+    if (provokerId < 0 || provokerId >= static_cast<int>(units_.size()) ||
+        !isRealObjectiveProvoker(unit(provokerId))) {
+        return false;
     }
 
-    bool firstTrigger = !objective->antiAirTriggered;
-    objective->antiAirTriggered = true;
+    bool firstTrigger = !objective->bossGuardianSummoned;
+    objective->bossGuardianSummoned = true;
     if (objective->unitId >= 0 && objective->unitId < static_cast<int>(units_.size()) &&
         unit(objective->unitId).alive) {
-        activateNeutral(objective->unitId, intruderId, reason.empty() ? "air intrusion" : reason);
+        activateNeutral(objective->unitId, provokerId, reason.empty() ? "boss challenged" : reason);
     }
     if (firstTrigger) {
-        objective->antiAirCooldown = 0.0;
-        spawnAntiAirGuardian(objectiveIndex, intruderId);
+        objective->bossFireballCooldown = 0.0;
+        spawnBossGuardian(objectiveIndex, provokerId);
     }
+    return firstTrigger;
 }
 
-void GameEngine::updateMajorObjectiveAntiAir(double dt) {
-    std::vector<std::pair<size_t, UnitId>> activeThreats;
-    for (const Unit& intruder : units_) {
-        if (!isRealFlyingIntruder(intruder)) continue;
+UnitId GameEngine::selectBossFireballTarget(const Unit& boss) const {
+    if (!boss.alive || !boss.deployed) return kInvalidUnitId;
 
-        std::optional<size_t> bestIndex;
-        int bestDistance = std::numeric_limits<int>::max();
-        for (size_t index = 0; index < exploration_.objectives().size(); ++index) {
-            const ExplorationObjectiveState* objective = exploration_.objective(index);
-            if (!objective || objective->cleared || !isMajorObjective(objective->kind)) continue;
-            int distance = manhattan(intruder.coord, majorObjectiveAnchor(*objective));
-            if (distance > kMajorObjectiveAntiAirRadius) continue;
-            if (!bestIndex || distance < bestDistance) {
-                bestIndex = index;
-                bestDistance = distance;
-            }
+    UnitId best = kInvalidUnitId;
+    double bestScore = -std::numeric_limits<double>::infinity();
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed || candidate.spec.layer != UnitLayer::Air) continue;
+        if (!canAttack(boss, candidate)) continue;
+        int distance = manhattan(boss.coord, candidate.coord);
+        if (distance > kBossFireballRange) continue;
+        double score = candidate.spec.threat * 2.0 - distance * 9.0;
+        int maxHp = std::max(1, candidate.spec.maxHp * candidate.spec.unitCount);
+        score += (maxHp - totalHp(candidate)) * 0.08;
+        if (candidate.id == boss.target) score += 30.0;
+        if (score > bestScore) {
+            bestScore = score;
+            best = candidate.id;
         }
-
-        if (!bestIndex) continue;
-        triggerMajorObjectiveAntiAir(*bestIndex, intruder.id, "air intrusion");
-        activeThreats.push_back({*bestIndex, intruder.id});
     }
+    return best;
+}
 
-    for (const auto& threat : activeThreats) {
-        size_t index = threat.first;
-        UnitId intruder = threat.second;
-        if (intruder < 0 || intruder >= static_cast<int>(units_.size()) ||
-            !isRealFlyingIntruder(unit(intruder))) {
-            continue;
-        }
+bool GameEngine::castBossFireball(UnitId bossId, UnitId targetId) {
+    if (bossId < 0 || bossId >= static_cast<int>(units_.size()) ||
+        targetId < 0 || targetId >= static_cast<int>(units_.size())) {
+        return false;
+    }
+    Unit& boss = unit(bossId);
+    Unit& target = unit(targetId);
+    if (!boss.alive || !boss.deployed || !target.alive || !target.deployed) return false;
+    if (!canAttack(boss, target) || target.spec.layer != UnitLayer::Air) return false;
+    if (manhattan(boss.coord, target.coord) > kBossFireballRange) return false;
+
+    pushEvent({EventType::UnitAttacked, boss.owner, bossId, targetId, boss.coord, target.coord,
+               kBossFireballDamage, eventUnitName(boss) + " cast Fireball"});
+    markCombatProgress();
+
+    std::vector<UnitId> targets;
+    Coord center = target.coord;
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed) continue;
+        if (!canAttack(boss, candidate)) continue;
+        if (manhattan(center, candidate.coord) > 1) continue;
+        targets.push_back(candidate.id);
+    }
+    if (targets.empty()) targets.push_back(targetId);
+
+    for (UnitId id : targets) {
+        if (id < 0 || id >= static_cast<int>(units_.size()) || !unit(id).alive) continue;
+        bool saved = savingThrowSucceeds(id, bossId, "Dex");
+        applyDamage(id,
+                    saved ? std::max(1, kBossFireballDamage / 2) : kBossFireballDamage,
+                    DamageType::Fire,
+                    bossId);
+    }
+    return true;
+}
+
+void GameEngine::updateBossFireball(double dt) {
+    for (size_t index = 0; index < exploration_.objectives().size(); ++index) {
         ExplorationObjectiveState* objective = exploration_.objective(index);
-        if (!objective || !objective->antiAirTriggered || objective->cleared) continue;
-        if (manhattan(unit(intruder).coord, majorObjectiveAnchor(*objective)) >
-            kMajorObjectiveAntiAirRadius) continue;
+        if (!objective || objective->cleared || !isBossObjective(objective->kind)) continue;
+        if (objective->unitId < 0 || objective->unitId >= static_cast<int>(units_.size())) continue;
 
-        objective->antiAirCooldown -= dt;
-        if (objective->antiAirCooldown > 0.0) continue;
+        Unit& boss = unit(objective->unitId);
+        if (!boss.alive || !boss.deployed || !boss.neutralProvoked || !canNeutralAct(boss)) continue;
 
-        UnitId sourceId = kInvalidUnitId;
-        if (objective->unitId >= 0 && objective->unitId < static_cast<int>(units_.size()) &&
-            unit(objective->unitId).alive) {
-            sourceId = objective->unitId;
-        } else if (objective->antiAirGuardianId >= 0 &&
-                   objective->antiAirGuardianId < static_cast<int>(units_.size()) &&
-                   unit(objective->antiAirGuardianId).alive) {
-            sourceId = objective->antiAirGuardianId;
+        objective->bossFireballCooldown = std::max(0.0, objective->bossFireballCooldown - dt);
+        if (objective->bossFireballCooldown > 0.0) continue;
+
+        UnitId targetId = selectBossFireballTarget(boss);
+        if (targetId == kInvalidUnitId) continue;
+        if (castBossFireball(boss.id, targetId)) {
+            objective = exploration_.objective(index);
+            if (objective) objective->bossFireballCooldown = kBossFireballCooldown;
         }
-
-        int damage = objective->kind == ExplorationObjectiveKind::Boss
-                         ? kBossAntiAirDamage
-                         : kEliteAntiAirDamage;
-        applyDamage(intruder, damage, DamageType::Radiant, sourceId);
-        objective = exploration_.objective(index);
-        if (objective) objective->antiAirCooldown = kMajorObjectiveAntiAirCooldown;
     }
 }
 
@@ -4979,7 +5007,7 @@ void GameEngine::tickCombat(double dt) {
         tickAbilities(id, dt);
     }
 
-    updateMajorObjectiveAntiAir(dt);
+    updateBossFireball(dt);
 
     for (UnitId id : ids) {
         if (!unit(id).alive) continue;
@@ -5563,9 +5591,9 @@ void GameEngine::activateNeutralOnAttackIntent(UnitId attackerId, UnitId targetI
     const Unit& attacker = unit(attackerId);
     const Unit& target = unit(targetId);
     if (!attacker.alive || !target.alive || !target.deployed) return;
-    if (isRealFlyingIntruder(attacker)) {
+    if (isRealObjectiveProvoker(attacker)) {
         if (std::optional<size_t> objectiveIndex = majorObjectiveIndexForUnit(targetId)) {
-            triggerMajorObjectiveAntiAir(*objectiveIndex, attackerId, "air intrusion");
+            triggerBossGuardian(*objectiveIndex, attackerId, "boss challenged");
         }
     }
     if (isNeutralLikeCombatant(attacker) || !isNeutralGuardianUnit(target)) return;
@@ -6511,6 +6539,12 @@ void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId
         return;
     }
 
+    if (sourceId >= 0 && sourceId < static_cast<int>(units_.size()) &&
+        isRealObjectiveProvoker(unit(sourceId))) {
+        if (std::optional<size_t> objectiveIndex = majorObjectiveIndexForUnit(targetId)) {
+            triggerBossGuardian(*objectiveIndex, sourceId, "boss challenged");
+        }
+    }
     activateNeutral(targetId, sourceId, "struck");
     markCombatProgress();
 
@@ -7106,8 +7140,8 @@ std::optional<Coord> GameEngine::chooseExplorationGoal(const Unit& u) const {
                 score += 82.0 - (hpRatio < 0.50 ? 28.0 : 0.0);
                 break;
         }
-        if (u.spec.layer == UnitLayer::Air && isMajorObjective(objective.kind)) {
-            bool objectiveActive = objective.antiAirTriggered;
+        if (u.spec.layer == UnitLayer::Air && isBossObjective(objective.kind)) {
+            bool objectiveActive = objective.bossGuardianSummoned;
             if (objective.unitId >= 0 && objective.unitId < static_cast<int>(units_.size())) {
                 const Unit& objectiveUnit = unit(objective.unitId);
                 objectiveActive = objectiveActive ||
@@ -7115,7 +7149,7 @@ std::optional<Coord> GameEngine::chooseExplorationGoal(const Unit& u) const {
                                    objectiveUnit.neutralProvoked);
             }
             if (!objectiveActive) {
-                score -= objective.kind == ExplorationObjectiveKind::Boss ? 290.0 : 190.0;
+                score -= 150.0;
             }
         }
 
