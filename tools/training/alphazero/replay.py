@@ -133,9 +133,10 @@ class ReplayBuffer:
             state = np.asarray(states[i], dtype=np.float32)
             action_features = np.asarray(actions[i], dtype=np.float16)
             policy = np.asarray(policies[i], dtype=np.float32)
-            mask = np.asarray(masks[i], dtype=bool) if i < len(masks) else np.ones(
-                action_features.shape[0],
-                dtype=bool,
+            mask = (
+                np.asarray(masks[i], dtype=bool)
+                if i < len(masks)
+                else np.ones(action_features.shape[0], dtype=bool)
             )
 
             if (

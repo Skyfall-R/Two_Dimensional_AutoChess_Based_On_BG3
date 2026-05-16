@@ -1,0 +1,51 @@
+{
+  "preset": "cloud",
+  "iterations": 600,
+  "hours": 20.0,
+  "seed": 7,
+  "device": "cuda",
+  "checkpoint_dir": "ai_runs/cloud",
+  "checkpoint_every_iter": 5,
+  "export_dir": "assets/ai",
+  "network": {
+    "hidden_sizes": [512, 512, 256],
+    "action_hidden": [256, 128],
+    "activation": "relu",
+    "dropout": 0.0
+  },
+  "mcts": {
+    "simulations": 256,
+    "c_puct": 1.5,
+    "dirichlet_alpha": 0.3,
+    "dirichlet_epsilon": 0.25,
+    "temperature_moves": 16,
+    "temperature": 1.0
+  },
+  "selfplay": {
+    "workers": 16,
+    "games_per_worker_iter": 4,
+    "max_actions_per_round": 32,
+    "rounds_per_game": 8,
+    "opponent_difficulty": "Hard",
+    "use_opponent_pool": true,
+    "opponent_snapshot_every_iter": 3
+  },
+  "trainer": {
+    "batch_size": 512,
+    "minibatches_per_iter": 96,
+    "learning_rate": 8e-4,
+    "weight_decay": 1e-4,
+    "value_loss_weight": 1.0,
+    "entropy_bonus": 5e-3,
+    "max_grad_norm": 1.0
+  },
+  "replay": {
+    "capacity": 200000,
+    "min_size_to_train": 8000
+  },
+  "arena": {
+    "games_per_eval": 48,
+    "accept_threshold": 0.55,
+    "eval_every_iter": 5
+  }
+}

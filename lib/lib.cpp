@@ -53,7 +53,10 @@ constexpr int kActionFeatureCount = 32;
 constexpr int kMaxAiActionsPerPreparation = 64;
 constexpr double kNecromancerSkeletonLifespan = 8.0;
 constexpr const char* kPolicyFormat = "autochess_policy_v1";
+// Distilled linear scorer (still the default for backwards-compat exports).
 constexpr const char* kPolicyModelVersion = "linear-v2";
+// Full neural policy + value forward exported by the AlphaZero pipeline.
+constexpr const char* kPolicyMlpModelVersion = "mlp-v3";
 constexpr std::array<const char*, kBoardHeight> kExplorationMapTemplateA = {
     "ssssssssss#sssssssssss#ssssssssss",
     "ssssssssss#sssssssssss#ssssssssss",
@@ -1788,6 +1791,112 @@ public:
 private:
     AiPolicyMetadata metadata_;
     std::vector<double> weights_;
+};
+
+// MLP layer used by MlpAiPlanner. Row-major weights: out_dim x in_dim.
+struct MlpLayer {
+    int inDim = 0;
+    int outDim = 0;
+    std::vector<double> weights;  // size = outDim * inDim
+    std::vector<double> biases;   // size = outDim
+};
+
+// Neural policy / value forward in C++ for "mlp-v3" exported networks.
+// Mirrors PolicyValueNet in tools/training/alphazero/network.py:
+//   state_emb = MLP_state(state)             (ReLU between layers)
+//   per-action logit = action_logit(MLP_action(concat(state_emb, action_feats)))
+//   value           = tanh(value_head(state_emb))   [unused for action choice]
+// All matrices are stored row-major and dense, no batching.
+class MlpAiPlanner : public AiPlanner {
+public:
+    MlpAiPlanner(AiPolicyMetadata metadata,
+                 std::vector<MlpLayer> stateTrunk,
+                 std::vector<MlpLayer> actionHead,
+                 MlpLayer actionLogit)
+        : metadata_(std::move(metadata)),
+          stateTrunk_(std::move(stateTrunk)),
+          actionHead_(std::move(actionHead)),
+          actionLogit_(std::move(actionLogit)) {}
+
+    std::optional<AiAction> chooseAction(GameEngine& engine,
+                                         PlayerId player,
+                                         const std::vector<AiAction>& legalActions) override {
+        if (!metadata_.valid || legalActions.empty()) {
+            return engine.chooseHeuristicAction(player, legalActions);
+        }
+
+        std::vector<double> state = engine.stateFeatures(player);
+        if (static_cast<int>(state.size()) != metadata_.stateFeatureCount) {
+            return engine.chooseHeuristicAction(player, legalActions);
+        }
+
+        std::vector<double> emb = forward(state, stateTrunk_, /*final_relu=*/true);
+        if (emb.empty()) return engine.chooseHeuristicAction(player, legalActions);
+
+        const AiAction* bestAction = nullptr;
+        double bestScore = -std::numeric_limits<double>::infinity();
+        std::vector<double> combined(emb.size() + static_cast<size_t>(metadata_.actionFeatureCount));
+        for (const AiAction& action : legalActions) {
+            std::vector<double> actionFeatures = engine.actionFeatures(player, action);
+            if (static_cast<int>(actionFeatures.size()) != metadata_.actionFeatureCount) continue;
+
+            // concat(emb, action_features)
+            for (size_t i = 0; i < emb.size(); ++i) combined[i] = emb[i];
+            for (size_t i = 0; i < actionFeatures.size(); ++i) {
+                combined[emb.size() + i] = actionFeatures[i];
+            }
+            std::vector<double> headOut = forward(combined, actionHead_, /*final_relu=*/true);
+            if (headOut.empty()) continue;
+            std::vector<double> logit = applyLayer(headOut, actionLogit_, /*relu=*/false);
+            if (logit.empty()) continue;
+            double score = logit[0] + metadata_.bias;
+            score += metadata_.heuristicBlend * engine.heuristicActionScore(player, action);
+            if (!bestAction || score > bestScore) {
+                bestAction = &action;
+                bestScore = score;
+            }
+        }
+        if (!bestAction) return engine.chooseHeuristicAction(player, legalActions);
+        return *bestAction;
+    }
+
+    std::string name() const override { return "policy-mlp"; }
+
+    std::unique_ptr<AiPlanner> clone() const override {
+        return std::make_unique<MlpAiPlanner>(*this);
+    }
+
+private:
+    static std::vector<double> applyLayer(const std::vector<double>& in, const MlpLayer& layer, bool relu) {
+        if (static_cast<int>(in.size()) != layer.inDim) return {};
+        if (static_cast<int>(layer.weights.size()) != layer.inDim * layer.outDim) return {};
+        if (static_cast<int>(layer.biases.size()) != layer.outDim) return {};
+        std::vector<double> out(layer.outDim, 0.0);
+        for (int o = 0; o < layer.outDim; ++o) {
+            double acc = layer.biases[o];
+            const double* row = layer.weights.data() + static_cast<size_t>(o) * layer.inDim;
+            for (int i = 0; i < layer.inDim; ++i) acc += row[i] * in[i];
+            out[o] = relu ? (acc > 0.0 ? acc : 0.0) : acc;
+        }
+        return out;
+    }
+
+    static std::vector<double> forward(const std::vector<double>& in,
+                                       const std::vector<MlpLayer>& layers,
+                                       bool final_relu) {
+        std::vector<double> current = in;
+        for (size_t i = 0; i < layers.size(); ++i) {
+            bool relu = final_relu || (i + 1 < layers.size());
+            current = applyLayer(current, layers[i], relu);
+            if (current.empty()) return {};
+        }
+        return current;
+    }
+
+    AiPolicyMetadata metadata_;
+    std::vector<MlpLayer> stateTrunk_;
+    std::vector<MlpLayer> actionHead_;
+    MlpLayer actionLogit_;
 };
 
 bool operator==(Coord lhs, Coord rhs) {
@@ -4404,7 +4513,9 @@ void GameEngine::loadAiPlanner() {
         useHeuristicAiPlanner("policy format mismatch: " + aiPolicyMetadata_.format);
         return;
     }
-    if (aiPolicyMetadata_.modelVersion != kPolicyModelVersion) {
+    const bool isLinearV2 = aiPolicyMetadata_.modelVersion == kPolicyModelVersion;
+    const bool isMlpV3 = aiPolicyMetadata_.modelVersion == kPolicyMlpModelVersion;
+    if (!isLinearV2 && !isMlpV3) {
         useHeuristicAiPlanner("policy model mismatch: " + aiPolicyMetadata_.modelVersion);
         return;
     }
@@ -4421,6 +4532,74 @@ void GameEngine::loadAiPlanner() {
         useHeuristicAiPlanner("policy feature schema mismatch");
         return;
     }
+
+    if (isMlpV3) {
+        // mlp-v3 layout: hidden sizes describe stateTrunk + actionHead;
+        // each layer's flat matrix lives in stateW_<i>/stateB_<i>/headW_<i>/headB_<i>;
+        // actionLogit is a single (in -> 1) layer.
+        std::vector<double> hiddenSizes = jsonNumberArray(json, "hiddenSizes");
+        std::vector<double> actionHiddenSizes = jsonNumberArray(json, "actionHiddenSizes");
+        if (hiddenSizes.empty() || actionHiddenSizes.empty()) {
+            useHeuristicAiPlanner("mlp-v3 missing layer sizes");
+            return;
+        }
+        auto buildLayers = [&](int inDim,
+                               const std::vector<double>& sizes,
+                               const std::string& wPrefix,
+                               const std::string& bPrefix,
+                               std::vector<MlpLayer>& out) -> bool {
+            int cur = inDim;
+            for (size_t i = 0; i < sizes.size(); ++i) {
+                int outDim = static_cast<int>(sizes[i]);
+                std::vector<double> w = jsonNumberArray(json, wPrefix + std::to_string(i));
+                std::vector<double> b = jsonNumberArray(json, bPrefix + std::to_string(i));
+                if (static_cast<int>(w.size()) != cur * outDim || static_cast<int>(b.size()) != outDim) {
+                    return false;
+                }
+                MlpLayer layer;
+                layer.inDim = cur;
+                layer.outDim = outDim;
+                layer.weights = std::move(w);
+                layer.biases = std::move(b);
+                out.push_back(std::move(layer));
+                cur = outDim;
+            }
+            return true;
+        };
+        std::vector<MlpLayer> stateTrunk;
+        if (!buildLayers(kStateFeatureCount, hiddenSizes, "stateW_", "stateB_", stateTrunk)) {
+            useHeuristicAiPlanner("mlp-v3 state layer shape mismatch");
+            return;
+        }
+        int stateEmbDim = stateTrunk.back().outDim;
+        std::vector<MlpLayer> actionHead;
+        if (!buildLayers(stateEmbDim + kActionFeatureCount, actionHiddenSizes,
+                         "headW_", "headB_", actionHead)) {
+            useHeuristicAiPlanner("mlp-v3 action layer shape mismatch");
+            return;
+        }
+        std::vector<double> logitW = jsonNumberArray(json, "actionLogitW");
+        std::vector<double> logitB = jsonNumberArray(json, "actionLogitB");
+        int logitInDim = actionHead.empty() ? (stateEmbDim + kActionFeatureCount) : actionHead.back().outDim;
+        if (static_cast<int>(logitW.size()) != logitInDim || logitB.size() != 1) {
+            useHeuristicAiPlanner("mlp-v3 logit head shape mismatch");
+            return;
+        }
+        MlpLayer logitLayer;
+        logitLayer.inDim = logitInDim;
+        logitLayer.outDim = 1;
+        logitLayer.weights = std::move(logitW);
+        logitLayer.biases = std::move(logitB);
+
+        aiPolicyMetadata_.valid = true;
+        aiPolicyMetadata_.status = "loaded mlp-v3 policy: " + path;
+        aiPlanner_ = std::make_unique<MlpAiPlanner>(
+            aiPolicyMetadata_, std::move(stateTrunk), std::move(actionHead), std::move(logitLayer));
+        pushEvent({EventType::AiPolicyStatus, PlayerId::Two, kInvalidUnitId, kInvalidUnitId,
+                   {}, {}, 0, "AI policy " + toString(config_.aiDifficulty) + " (mlp-v3) loaded"});
+        return;
+    }
+
     if (static_cast<int>(weights.size()) != expectedWeights) {
         useHeuristicAiPlanner("policy weight count mismatch");
         return;

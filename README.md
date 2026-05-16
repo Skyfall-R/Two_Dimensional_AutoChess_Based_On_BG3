@@ -238,20 +238,45 @@ AlphaZero-style distilled policy packages:
 The training pipeline lives under `tools/training/alphazero/` and is driven by:
 
 ```powershell
-python tools/train_ai.py --preset smoke
-python tools/train_ai.py --preset short
-python tools/train_ai.py --preset full
+python tools/train_ai.py --preset smoke    # ~1 min sanity check (CPU OK)
+python tools/train_ai.py --preset short    # ~30 min, single GPU recommended
+python tools/train_ai.py --preset full     # 8h+ with 8 parallel workers
+python tools/train_ai.py --preset cloud    # 20h+, 16 workers, big net (cloud GPU)
 ```
 
 The C++ engine fingerprints the rules. If a policy is stale or missing, it
 falls back to the built-in heuristic rather than silently using incompatible
-weights.
+weights. Re-running `train_ai.py` after editing unit specs / economy / map
+templates auto-detects the fingerprint mismatch and starts a fresh run.
 
-The trainable policy uses MCTS self-play over preparation actions, a policy +
-value network, and a `linear-v2` export that includes tactical action features
-such as objective contact, enemy contact, role gaps, air-counter pressure, and
-formation density. `Difficult` is accepted as an alias for `Hard`; Super uses
-the strongest exported policy.
+Architecture: PUCT MCTS self-play over preparation actions, policy + value
+neural network, true multi-process self-play workers (one C++ engine per
+worker, NN inference on CPU), opponent pool with PFSP sampling, arena gate vs
+the scripted Normal AI.
+
+Export: SuperHard ships as `modelVersion: mlp-v3` so the in-game C++ AI runs
+the full neural network at game time (no information loss). Hard ships as
+`modelVersion: linear-v2` distilled from an opponent-pool mid-checkpoint, so
+the two difficulties have a real strength gap.
+
+### Cloud (Paratera) workflow
+
+For "super strong" runs on a Paratera GPU instance:
+
+```bash
+# On the instance after `git clone`:
+chmod +x tools/run_cloud.sh
+tools/run_cloud.sh cloud                   # 20h cloud preset, hidden=[512,512,256], sims=256
+tools/run_cloud.sh cloud --hours 6         # cap wall clock
+tools/run_cloud.sh cloud --resume ai_runs/cloud   # resume an interrupted run
+```
+
+Recommended instance: any single GPU (A100 / V100 / 3090 / 4090 / L40) plus at
+least 16 vCPUs (workers default to 16). The bottleneck is C++ env throughput,
+not GPU FLOPs - small NN inference on CPU within workers is faster than
+shuffling tensors to GPU every MCTS leaf.
+
+After the job, pull artifacts back with `scp -r user@host:repo/assets/ai .`.
 
 ## Project Status
 

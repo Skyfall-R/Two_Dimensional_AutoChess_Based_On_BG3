@@ -1,9 +1,8 @@
-"""Export trained PyTorch network to a JSON policy file consumable by the
-C++ PolicyAiPlanner.
+"""Export trained PyTorch networks to JSON policy files consumable by C++.
 
-Currently the C++ side supports modelVersion="linear-v2" (one weight per
-state-feature + per action-feature). We bridge by *distilling* the trained
-neural net into a linear scorer:
+Hard uses modelVersion="linear-v2" (one weight per state-feature + per
+action-feature). We bridge by *distilling* the trained neural net into a
+linear scorer:
 
     1. Sample many states by walking the env with random legal actions.
     2. For each state, enumerate legal actions and ask the NN for its policy
@@ -12,8 +11,11 @@ neural net into a linear scorer:
        logit as the regression target. Solve a ridge regression to obtain a
        linear weight vector w = [w_state ; w_action] of length F_s + F_a that
        reproduces the NN's preferences as best a linear model can.
-    4. Write the weights into a {Hard,SuperHard}.policy.json file with the
+    4. Write the weights into hard.policy.json with the
        current rulesFingerprint baked in.
+
+SuperHard uses modelVersion="mlp-v3" and serializes the full PolicyValueNet
+action scorer so the game can run the trained network directly.
 """
 
 from __future__ import annotations
@@ -29,7 +31,76 @@ from .encoder import encode
 from .network import PolicyValueNet
 
 POLICY_FORMAT = "autochess_policy_v1"
-LINEAR_MODEL_VERSION = "linear-v2"
+LINEAR_MODEL_VERSION = "linear-v2"  # Must match kPolicyModelVersion in lib.cpp
+MLP_MODEL_VERSION = "mlp-v3"         # Must match kPolicyMlpModelVersion in lib.cpp
+
+
+def _layer_arrays(linear: "torch.nn.Linear", prefix: str, index: int) -> dict:
+    """Pack a torch.nn.Linear's weights into the flat row-major JSON layout
+    that the C++ MlpAiPlanner expects: `{prefix}W_{i}` flat array of size
+    in*out, `{prefix}B_{i}` flat array of size out.
+    """
+    w = linear.weight.detach().cpu().numpy()
+    b = linear.bias.detach().cpu().numpy()
+    return {
+        f"{prefix}W_{index}": [round(float(v), 8) for v in w.flatten().tolist()],
+        f"{prefix}B_{index}": [round(float(v), 8) for v in b.flatten().tolist()],
+    }
+
+
+def write_mlp_policy(
+    path: Path,
+    difficulty: str,
+    network,
+    state_dim: int,
+    action_dim: int,
+    rules_fingerprint: str,
+    metrics: dict | None = None,
+) -> None:
+    """Serialize a PolicyValueNet to mlp-v3 JSON format consumed by C++.
+
+    Structure (must match parser in GameEngine::loadAiPlanner):
+      hiddenSizes        list of state-trunk layer widths (post-activation)
+      actionHiddenSizes  list of action-head layer widths (post-activation)
+      stateW_<i>/stateB_<i>   each layer's weights (out*in flat) + biases
+      headW_<i>/headB_<i>     same for action head
+      actionLogitW/actionLogitB  final scalar head
+    """
+    import torch.nn as nn
+
+    # Walk the state trunk: assumes Sequential(Linear, ReLU, Linear, ReLU, ...).
+    state_layers = [m for m in network.state_trunk if isinstance(m, nn.Linear)]
+    action_layers = [m for m in network.action_head if isinstance(m, nn.Linear)]
+    logit_layer = network.action_logit
+    payload: dict = {
+        "format": POLICY_FORMAT,
+        "modelVersion": MLP_MODEL_VERSION,
+        "difficulty": difficulty,
+        "rulesFingerprint": rules_fingerprint,
+        "stateFeatureCount": state_dim,
+        "actionFeatureCount": action_dim,
+        "heuristicBlend": 0.0,
+        "bias": 0.0,
+        "hiddenSizes": [int(layer.out_features) for layer in state_layers],
+        "actionHiddenSizes": [int(layer.out_features) for layer in action_layers],
+    }
+    for i, layer in enumerate(state_layers):
+        payload.update(_layer_arrays(layer, "state", i))
+    for i, layer in enumerate(action_layers):
+        payload.update(_layer_arrays(layer, "head", i))
+    payload["actionLogitW"] = [
+        round(float(v), 8) for v in logit_layer.weight.detach().cpu().numpy().flatten().tolist()
+    ]
+    payload["actionLogitB"] = [
+        round(float(v), 8) for v in logit_layer.bias.detach().cpu().numpy().flatten().tolist()
+    ]
+    if metrics:
+        payload["training"] = {
+            "exportedAt": int(time.time()),
+            "metrics": metrics,
+        }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def distill_linear(
@@ -147,22 +218,22 @@ def write_linear_policy(
 
 def export_policies(
     env_module,
-    network: PolicyValueNet,
-    device: torch.device,
+    network,
+    device,
     state_dim: int,
     action_dim: int,
     rules_fingerprint: str,
     export_dir: Path,
     metrics: dict | None = None,
-    weak_network: PolicyValueNet | None = None,
+    weak_network=None,
     seed: int = 0,
 ) -> list[Path]:
-    """Distill the trained network into two distinct linear policies.
+    """Export Hard (linear-v2 distilled) and SuperHard (mlp-v3 full network).
 
-    SuperHard is distilled from `network` (latest / strongest snapshot).
-    Hard is distilled from `weak_network` if provided (typically an earlier
-    opponent-pool checkpoint); otherwise we synthesize a softer policy from
-    the strong weights with scaling + Gaussian noise + heuristic blend.
+    SuperHard ships the full neural net so the in-game AI uses it at full
+    strength via the C++ MlpAiPlanner. Hard uses a distilled linear policy
+    from either an opponent-pool checkpoint or a scale+noise variant of the
+    strong weights, giving a meaningful difficulty gap.
     """
     rng = np.random.default_rng(seed)
 
@@ -197,36 +268,39 @@ def export_policies(
         hard_blend = 0.5
         hard_source = "scaled+noise from strong weights"
 
-    profiles = {
-        "Hard": {
-            "weights": weak_weights,
-            "bias": weak_bias,
-            "blend": hard_blend,
-            "source": hard_source,
-        },
-        "SuperHard": {
-            "weights": strong_weights,
-            "bias": strong_bias,
-            "blend": 0.0,
-            "source": "trained network (latest)",
-        },
-    }
-
     written: list[Path] = []
-    for difficulty, profile in profiles.items():
-        path = export_dir / f"{difficulty.lower()}.policy.json"
-        per_metrics = dict(metrics) if metrics else {}
-        per_metrics["distilledFrom"] = profile["source"]
-        write_linear_policy(
-            path=path,
-            difficulty=difficulty,
-            weights=profile["weights"],
-            bias=profile["bias"],
-            state_dim=state_dim,
-            action_dim=action_dim,
-            rules_fingerprint=rules_fingerprint,
-            heuristic_blend=profile["blend"],
-            metrics=per_metrics,
-        )
-        written.append(path)
+
+    # SuperHard: full mlp-v3 network (no information loss).
+    super_path = export_dir / "superhard.policy.json"
+    per_metrics_super = dict(metrics) if metrics else {}
+    per_metrics_super["exportedAs"] = "mlp-v3 (full network)"
+    write_mlp_policy(
+        path=super_path,
+        difficulty="SuperHard",
+        network=network,
+        state_dim=state_dim,
+        action_dim=action_dim,
+        rules_fingerprint=rules_fingerprint,
+        metrics=per_metrics_super,
+    )
+    written.append(super_path)
+
+    # Hard: distilled linear-v2 from the weaker source.
+    hard_path = export_dir / "hard.policy.json"
+    per_metrics_hard = dict(metrics) if metrics else {}
+    per_metrics_hard["distilledFrom"] = hard_source
+    per_metrics_hard["exportedAs"] = "linear-v2 (distilled)"
+    write_linear_policy(
+        path=hard_path,
+        difficulty="Hard",
+        weights=weak_weights,
+        bias=weak_bias,
+        state_dim=state_dim,
+        action_dim=action_dim,
+        rules_fingerprint=rules_fingerprint,
+        heuristic_blend=hard_blend,
+        metrics=per_metrics_hard,
+    )
+    written.append(hard_path)
+
     return written

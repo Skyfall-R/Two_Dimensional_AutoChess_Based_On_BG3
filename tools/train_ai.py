@@ -219,6 +219,7 @@ def main() -> int:
     from training.alphazero.replay import ReplayBuffer
     from training.alphazero.opponent_pool import OpponentPool
     from training.alphazero.selfplay import play_game
+    from training.alphazero.parallel_selfplay import run_iteration_parallel
     from training.alphazero.trainer import train_one_iteration
     from training.alphazero.arena import evaluate_vs_difficulty
     from training.alphazero.export import export_policies
@@ -330,30 +331,53 @@ def main() -> int:
             last_iter = iteration
             t_iter = time.time()
 
-            # 1. Self-play.
-            new_samples = 0
-            zs = []
-            max_legal_actions = 0
-            game_count = max(1, cfg.selfplay.games_per_worker_iter * max(1, cfg.selfplay.workers))
-            for game in range(game_count):
-                seed = (iteration * 10_000 + game) ^ cfg.seed
-                samples, stats = play_game(
-                    env_module=env_module,
+            # 1. Self-play. Use the parallel path when workers > 1 - this is
+            # the single biggest throughput knob on cloud GPU instances.
+            if cfg.selfplay.workers > 1:
+                t_sp = time.time()
+                wr = run_iteration_parallel(
+                    cfg=cfg,
                     network=network,
-                    device=device,
-                    config=cfg,
-                    seed=seed,
-                    rng=rng,
+                    build_dir=str(BUILD_DIR),
+                    state_dim=state_dim,
+                    action_dim=action_dim,
+                    iteration=iteration,
+                    base_seed=cfg.seed,
                     opponent_difficulty=cfg.selfplay.opponent_difficulty,
                 )
-                replay.extend(samples)
-                new_samples += len(samples)
-                zs.append(stats.final_value)
-                max_legal_actions = max(max_legal_actions, stats.max_legal_actions)
+                replay.extend(wr.samples)
+                new_samples = len(wr.samples)
+                zs = [s.final_value for s in wr.stats]
+                max_legal_actions = max(
+                    (s.max_legal_actions for s in wr.stats), default=0
+                )
+                sp_duration = time.time() - t_sp
+            else:
+                new_samples = 0
+                zs = []
+                max_legal_actions = 0
+                game_count = max(1, cfg.selfplay.games_per_worker_iter)
+                t_sp = time.time()
+                for game in range(game_count):
+                    seed = (iteration * 10_000 + game) ^ cfg.seed
+                    samples, stats = play_game(
+                        env_module=env_module,
+                        network=network,
+                        device=device,
+                        config=cfg,
+                        seed=seed,
+                        rng=rng,
+                        opponent_difficulty=cfg.selfplay.opponent_difficulty,
+                    )
+                    replay.extend(samples)
+                    new_samples += len(samples)
+                    zs.append(stats.final_value)
+                    max_legal_actions = max(max_legal_actions, stats.max_legal_actions)
+                sp_duration = time.time() - t_sp
             avg_z = sum(zs) / max(1, len(zs))
             replay_mb = replay.approx_bytes() / (1024.0 * 1024.0)
             utils.info(
-                f"iter {iteration} self-play: {new_samples} samples, "
+                f"iter {iteration} self-play: {new_samples} samples in {sp_duration:.1f}s, "
                 f"avg_z={avg_z:+.3f}, replay={len(replay)}, "
                 f"replay_mb={replay_mb:.1f}, max_legal={max_legal_actions}"
             )

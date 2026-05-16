@@ -506,6 +506,44 @@ void writePolicyFile(const std::filesystem::path& directory,
     out << "]\n}\n";
 }
 
+void writeMlpPolicyFile(const std::filesystem::path& directory,
+                        const std::string& difficulty,
+                        const std::string& fingerprint,
+                        const AiFeatureSchema& schema) {
+    std::filesystem::create_directories(directory);
+    std::string filename = difficulty == "SuperHard" ? "superhard.policy.json" : "hard.policy.json";
+    std::ofstream out(directory / filename);
+    out << "{\n"
+        << "  \"format\": \"autochess_policy_v1\",\n"
+        << "  \"modelVersion\": \"mlp-v3\",\n"
+        << "  \"difficulty\": \"" << difficulty << "\",\n"
+        << "  \"rulesFingerprint\": \"" << fingerprint << "\",\n"
+        << "  \"stateFeatureCount\": " << schema.stateFeatureCount << ",\n"
+        << "  \"actionFeatureCount\": " << schema.actionFeatureCount << ",\n"
+        << "  \"heuristicBlend\": 0.0,\n"
+        << "  \"bias\": 0.0,\n"
+        << "  \"hiddenSizes\": [1],\n"
+        << "  \"actionHiddenSizes\": [1],\n"
+        << "  \"stateW_0\": [";
+    for (int i = 0; i < schema.stateFeatureCount; ++i) {
+        if (i > 0) out << ",";
+        out << "0";
+    }
+    out << "],\n"
+        << "  \"stateB_0\": [0],\n"
+        << "  \"headW_0\": [";
+    int headInputCount = 1 + schema.actionFeatureCount;
+    for (int i = 0; i < headInputCount; ++i) {
+        if (i > 0) out << ",";
+        out << "0";
+    }
+    out << "],\n"
+        << "  \"headB_0\": [0],\n"
+        << "  \"actionLogitW\": [0],\n"
+        << "  \"actionLogitB\": [0]\n"
+        << "}\n";
+}
+
 void test_relic_taxonomy_has_four_layers_and_family_pools() {
     std::vector<RelicSpec> relics = relicCatalog();
     assert(relics.size() == 42);
@@ -3653,7 +3691,7 @@ void test_exported_policy_loads_when_rules_match() {
     AiFeatureSchema schema = schemaEngine.aiFeatureSchema();
     std::string fingerprint = schemaEngine.rulesFingerprint();
     writePolicyFile(policyDirectory, "Hard", fingerprint, schema, 1.2);
-    writePolicyFile(policyDirectory, "SuperHard", fingerprint, schema, 3.0);
+    writeMlpPolicyFile(policyDirectory, "SuperHard", fingerprint, schema);
 
     GameEngine engine(21);
     GameConfig config;
@@ -3668,6 +3706,12 @@ void test_exported_policy_loads_when_rules_match() {
     engine.startNewGame(config);
     assert(engine.aiPolicyMetadata().loaded);
     assert(engine.aiPolicyMetadata().valid);
+    assert(engine.aiPolicyMetadata().modelVersion == "mlp-v3");
+    assert(engine.aiPolicyMetadata().status.find("mlp-v3") != std::string::npos);
+
+    buyAndDeploy(engine, PlayerId::One, UnitType::ShieldGuardian, p1MainDeploy());
+    engine.setReady(PlayerId::One, true);
+    assert(engine.snapshot().phase == Phase::Combat);
 }
 
 void test_policy_ai_builds_roster_before_round_one_upgrades() {
