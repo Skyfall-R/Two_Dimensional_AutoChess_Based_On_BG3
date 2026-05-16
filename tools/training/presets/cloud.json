@@ -1,7 +1,7 @@
 {
   "preset": "cloud",
-  "iterations": 600,
-  "hours": 20.0,
+  "iterations": 800,
+  "hours": 40.0,
   "seed": 7,
   "device": "cuda",
   "checkpoint_dir": "ai_runs/cloud",
@@ -22,8 +22,8 @@
     "temperature": 1.0
   },
   "selfplay": {
-    "workers": 16,
-    "games_per_worker_iter": 4,
+    "workers": 8,
+    "games_per_worker_iter": 6,
     "max_actions_per_round": 32,
     "rounds_per_game": 8,
     "opponent_difficulty": "Hard",

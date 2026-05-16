@@ -241,7 +241,7 @@ The training pipeline lives under `tools/training/alphazero/` and is driven by:
 python tools/train_ai.py --preset smoke    # ~1 min sanity check (CPU OK)
 python tools/train_ai.py --preset short    # ~30 min, single GPU recommended
 python tools/train_ai.py --preset full     # 8h+ with 8 parallel workers
-python tools/train_ai.py --preset cloud    # 20h+, 16 workers, big net (cloud GPU)
+python tools/train_ai.py --preset cloud    # 40h, 8 workers, big net (cloud GPU)
 ```
 
 The C++ engine fingerprints the rules. If a policy is stale or missing, it
@@ -266,13 +266,13 @@ For "super strong" runs on a Paratera GPU instance:
 ```bash
 # On the instance after `git clone`:
 chmod +x tools/run_cloud.sh
-tools/run_cloud.sh cloud                   # 20h cloud preset, hidden=[512,512,256], sims=256
+tools/run_cloud.sh cloud                   # 40h cloud preset, hidden=[512,512,256], sims=256
 tools/run_cloud.sh cloud --hours 6         # cap wall clock
 tools/run_cloud.sh cloud --resume ai_runs/cloud   # resume an interrupted run
 ```
 
 Recommended instance: any single GPU (A100 / V100 / 3090 / 4090 / L40) plus at
-least 16 vCPUs (workers default to 16). The bottleneck is C++ env throughput,
+least 8 vCPUs (workers default to 8). The bottleneck is C++ env throughput,
 not GPU FLOPs - small NN inference on CPU within workers is faster than
 shuffling tensors to GPU every MCTS leaf.
 
