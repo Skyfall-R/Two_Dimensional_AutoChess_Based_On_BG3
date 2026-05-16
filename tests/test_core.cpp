@@ -241,6 +241,41 @@ Coord openCoordInRange(const GameSnapshot& snapshot, Coord center, int minRange,
     return best;
 }
 
+Coord openCoordInRangeAwayFromOtherNeutrals(const GameSnapshot& snapshot,
+                                            Coord center,
+                                            int minRange,
+                                            int maxRange,
+                                            int minOtherNeutralRange) {
+    Coord best{-1, -1};
+    int bestScore = std::numeric_limits<int>::max();
+    for (int y = 0; y < snapshot.height; ++y) {
+        for (int x = 0; x < snapshot.width; ++x) {
+            Coord coord{x, y};
+            int distance = manhattan(coord, center);
+            if (distance < minRange || distance > maxRange) continue;
+            if (terrainAtSnapshot(snapshot, coord) == TerrainKind::Wall || hasAliveUnitAt(snapshot, coord)) continue;
+
+            bool tooCloseToOtherNeutral = false;
+            for (const UnitView& unit : snapshot.units) {
+                if (!unit.alive || !unit.deployed || !isNeutralMonster(unit.type) || unit.coord == center) continue;
+                if (manhattan(coord, unit.coord) < minOtherNeutralRange) {
+                    tooCloseToOtherNeutral = true;
+                    break;
+                }
+            }
+            if (tooCloseToOtherNeutral) continue;
+
+            int score = distance * 10 + std::abs(coord.y - center.y);
+            if (score < bestScore) {
+                bestScore = score;
+                best = coord;
+            }
+        }
+    }
+    assert(best.x >= 0);
+    return best;
+}
+
 Coord openCoordFarthestFromNeutral(const GameSnapshot& snapshot) {
     Coord best{-1, -1};
     int bestDistance = -1;
@@ -2214,8 +2249,13 @@ void test_current_neutral_can_attack_air_roster() {
 
     const std::vector<UnitType> expected = {
         UnitType::NeutralSpectator,
+        UnitType::NeutralOwlbear,
         UnitType::NeutralMindFlayer,
+        UnitType::NeutralKarniss,
+        UnitType::NeutralWaterMyrmidon,
+        UnitType::NeutralPhaseSpiderMatriarch,
         UnitType::NeutralRaphael,
+        UnitType::NeutralKethericThorm,
         UnitType::NeutralMoonlightSliver,
         UnitType::NeutralGuardianOfFaith,
         UnitType::NeutralAirMyrmidon,
@@ -3094,6 +3134,46 @@ void test_owlbear_multiattack_knocks_prone_target_back() {
     assert(manhattan(behindView->coord, coords[2]) >= 1);
 }
 
+void test_owlbear_multiattack_can_target_flying_units() {
+    GameEngine engine(512);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), openCoordFarthestFromNeutral(engine.snapshot()), 3);
+    UnitId owlbear = engine.debugCreateUnit(PlayerId::One, UnitType::NeutralOwlbear, coords[0]);
+    UnitId flyer = engine.debugCreateUnit(PlayerId::Two, UnitType::DragonWyrmling, coords[1]);
+    assert(owlbear != kInvalidUnitId);
+    assert(flyer != kInvalidUnitId);
+    assert(engine.debugSetUnitArmorClass(flyer, 1));
+    assert(engine.debugSetUnitSpeed(flyer, 0.0));
+    assert(engine.debugApplyDamageFrom(flyer, owlbear, 1, DamageType::Fire));
+    engine.consumeEvents();
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool sawOwlbearAttackFlyer = false;
+    bool flyerTookDamage = false;
+    for (int i = 0; i < 30 * 5 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::UnitAttacked && event.actor == owlbear &&
+                event.target == flyer && event.text.find("Multiattack") != std::string::npos) {
+                sawOwlbearAttackFlyer = true;
+            }
+            if (event.type == EventType::DamageDealt && event.actor == owlbear &&
+                event.target == flyer && event.amount > 0) {
+                flyerTookDamage = true;
+            }
+        }
+        if (sawOwlbearAttackFlyer && flyerTookDamage) break;
+    }
+
+    assert(sawOwlbearAttackFlyer);
+    assert(flyerTookDamage);
+}
+
 void test_raphael_diabolic_chains_can_shove_failed_saves() {
     GameEngine engine(511);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -3957,7 +4037,7 @@ void test_boss_intrusion_without_attack_does_not_auto_punish() {
     UnitId bossId = boss->id;
     Coord bossCoord = boss->coord;
     int guardiansBefore = neutralGuardiansNear(opening, bossCoord, 2);
-    Coord impCoord = openCoordInRange(opening, bossCoord, 3, 4);
+    Coord impCoord = openCoordInRangeAwayFromOtherNeutrals(opening, bossCoord, 3, 4, 3);
     UnitId imp = engine.debugCreateUnit(PlayerId::One, UnitType::ImpSwarm, impCoord);
     assert(imp != kInvalidUnitId);
     assert(engine.debugSetUnitSpeed(imp, 0.0));
@@ -5220,6 +5300,7 @@ int main() {
     RUN_TEST(test_ketheric_wrathful_smite_repels_nearby_enemies);
     RUN_TEST(test_minotaur_charge_knocks_back_and_prones_line_targets);
     RUN_TEST(test_owlbear_multiattack_knocks_prone_target_back);
+    RUN_TEST(test_owlbear_multiattack_can_target_flying_units);
     RUN_TEST(test_raphael_diabolic_chains_can_shove_failed_saves);
     RUN_TEST(test_knockback_pushes_land_units_domino_style);
     RUN_TEST(test_knockback_stops_at_wall_without_land_overlap);
