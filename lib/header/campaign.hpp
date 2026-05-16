@@ -54,6 +54,8 @@ std::vector<RelicSpec> relicPoolForFamily(NeutralFamily family);
 
 RunModifiers runModifiersForRelics(const std::vector<std::string>& relicIds);
 RunModifiers runModifiersForRelic(const RelicSpec& relic);
+bool relicDropEligibleForObjective(ExplorationObjectiveKind kind, UnitType type);
+bool relicDropsForObjectiveClear(ExplorationObjectiveKind kind, UnitType type, unsigned seed);
 
 std::string neutralFamilyLabel(NeutralFamily family);
 std::string relicTierLabel(RelicTier tier);

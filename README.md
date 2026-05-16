@@ -63,8 +63,8 @@ repository.
     BG3-style icon assets;
   - larger readable typography and compact run-status layout.
 - AI support:
-  - built-in Normal AI;
-  - Hard / Super policy packages;
+  - built-in Normal AI with scripted roster and formation rules;
+  - Difficult / Super policy packages;
   - optional AlphaZero-style training pipeline and Python environment binding.
 
 ## How A Run Plays
@@ -229,7 +229,8 @@ Main targets:
 
 ## AI Training
 
-Normal difficulty uses a built-in strategy. Hard and Super load policy packages:
+Normal difficulty uses a built-in scripted strategy. Difficult and Super load
+AlphaZero-style distilled policy packages:
 
 - `assets/ai/hard.policy.json`
 - `assets/ai/superhard.policy.json`
@@ -245,6 +246,12 @@ python tools/train_ai.py --preset full
 The C++ engine fingerprints the rules. If a policy is stale or missing, it
 falls back to the built-in heuristic rather than silently using incompatible
 weights.
+
+The trainable policy uses MCTS self-play over preparation actions, a policy +
+value network, and a `linear-v2` export that includes tactical action features
+such as objective contact, enemy contact, role gaps, air-counter pressure, and
+formation density. `Difficult` is accepted as an alias for `Hard`; Super uses
+the strongest exported policy.
 
 ## Project Status
 

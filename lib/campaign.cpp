@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -103,6 +104,28 @@ const std::vector<RelicSpec>& catalogRef() {
               {"shop", "tempo", "basic"},
               26,
               makeModifiers(1)),
+        relic("scouts_chalk",
+              "Scout's Chalk",
+              RelicTier::Basic,
+              "Hidden event detection range +1.",
+              {"event", "scout", "basic", "choice"},
+              24,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.hiddenEventRevealBonus = 1;
+                  return modifiers;
+              }()),
+        relic("snarewire_charm",
+              "Snarewire Charm",
+              RelicTier::Basic,
+              "Trap checks +2.",
+              {"trap", "basic"},
+              24,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.trapCheckBonus = 2;
+                  return modifiers;
+              }()),
 
         relic("brood_sigil",
               "Brood Sigil",
@@ -139,6 +162,83 @@ const std::vector<RelicSpec>& catalogRef() {
               {"artillery", "build", "range"},
               30,
               makeModifiers(0, 0, 0, 1, 0, 0, 0, {0, 0, 0, 0, 2})),
+        relic("finders_pouch",
+              "Finder's Pouch",
+              RelicTier::Basic,
+              "Hidden event payouts +1.",
+              {"event", "economy", "basic"},
+              22,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.hiddenEventPayoutBonus = 1;
+                  return modifiers;
+              }()),
+        relic("bramble_brooch",
+              "Bramble Brooch",
+              RelicTier::Build,
+              "Swarm drops appear more often. Hidden event payouts +2.",
+              {"swarm", "event", "build"},
+              20,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 0, {1, 0, 0, 0, 0});
+                  modifiers.hiddenEventPayoutBonus = 2;
+                  return modifiers;
+              }()),
+        relic("wardplate_rivet",
+              "Wardplate Rivet",
+              RelicTier::Build,
+              "Guardian drops appear more often. Start combat with +4 shield.",
+              {"guardian", "shield", "build"},
+              20,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 0, {0, 1, 0, 0, 0});
+                  modifiers.roundStartShield = 4;
+                  return modifiers;
+              }()),
+        relic("spellglass_charm",
+              "Spellglass Charm",
+              RelicTier::Build,
+              "Caster drops appear more often. Event healing and shielding +3.",
+              {"caster", "event", "build"},
+              20,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 0, {0, 0, 1, 0, 0});
+                  modifiers.eventHealBonus = 3;
+                  return modifiers;
+              }()),
+        relic("backdoor_token",
+              "Backdoor Token",
+              RelicTier::Build,
+              "Assassin drops appear more often. Trap checks +2.",
+              {"assassin", "trap", "build"},
+              20,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 0, {0, 0, 0, 1, 0});
+                  modifiers.trapCheckBonus = 2;
+                  return modifiers;
+              }()),
+        relic("ballista_gauge",
+              "Ballista Gauge",
+              RelicTier::Build,
+              "Artillery drops appear more often. Hidden event detection range +1.",
+              {"artillery", "event", "build"},
+              20,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 0, {0, 0, 0, 0, 1});
+                  modifiers.hiddenEventRevealBonus = 1;
+                  return modifiers;
+              }()),
+        relic("oath_thread",
+              "Oath Thread",
+              RelicTier::Build,
+              "Guardian drops appear more often. Event healing and shielding +2.",
+              {"guardian", "event", "build"},
+              18,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 0, {0, 1, 0, 0, 0});
+                  modifiers.eventHealBonus = 2;
+                  return modifiers;
+              }()),
 
         relic("mirror_contract",
               "Mirror Contract",
@@ -176,6 +276,75 @@ const std::vector<RelicSpec>& catalogRef() {
               makeModifiers(0, 0, 0, 1, 0, 0, 0, {0, 0, 1, 0, 1}),
               false,
               false),
+        relic("pilgrims_basin",
+              "Pilgrim's Basin",
+              RelicTier::Transform,
+              "Hidden healing and waystone effects +6.",
+              {"event", "heal", "transform"},
+              16,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.eventHealBonus = 6;
+                  return modifiers;
+              }(),
+              false,
+              false),
+        relic("cartographers_needle",
+              "Cartographer's Needle",
+              RelicTier::Transform,
+              "Hidden event detection range +1. Hidden event payouts +2.",
+              {"event", "choice", "transform"},
+              16,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.hiddenEventRevealBonus = 1;
+                  modifiers.hiddenEventPayoutBonus = 2;
+                  return modifiers;
+              }(),
+              false,
+              false),
+        relic("trapwrights_nail",
+              "Trapwright's Nail",
+              RelicTier::Transform,
+              "Trap checks +4. Successful trap disarms pay +4 gold.",
+              {"trap", "economy", "transform"},
+              16,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.trapCheckBonus = 4;
+                  modifiers.trapDisarmGoldBonus = 4;
+                  return modifiers;
+              }(),
+              false,
+              false),
+        relic("grave_dividend",
+              "Grave Dividend",
+              RelicTier::Transform,
+              "Cursed idols pay +6 and deal less damage.",
+              {"event", "economy", "transform"},
+              14,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.cursedIdolPayoutBonus = 6;
+                  modifiers.cursedIdolDamageReductionPercent = 25;
+                  return modifiers;
+              }(),
+              false,
+              false),
+        relic("banner_cord",
+              "Banner Cord",
+              RelicTier::Transform,
+              "Rally banners last longer. Start combat with +3 shield.",
+              {"event", "shield", "transform"},
+              14,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.rallyDurationBonus = 3;
+                  modifiers.roundStartShield = 3;
+                  return modifiers;
+              }(),
+              false,
+              false),
 
         relic("crown_of_mirrors",
               "Crown of Mirrors",
@@ -202,6 +371,75 @@ const std::vector<RelicSpec>& catalogRef() {
               {"counter", "shop", "unique"},
               10,
               makeModifiers(1, 0, 0, 0, 0, 1),
+              true,
+              false),
+        relic("underdark_beacon",
+              "Underdark Beacon",
+              RelicTier::Unique,
+              "Hidden event detection range +2. Adds one hidden event.",
+              {"event", "choice", "unique"},
+              8,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.hiddenEventRevealBonus = 2;
+                  modifiers.hiddenEventCountBonus = 1;
+                  return modifiers;
+              }(),
+              true,
+              false),
+        relic("nine_hells_writ",
+              "Nine-Hells Writ",
+              RelicTier::Unique,
+              "Elite, boss, and cursed idol payouts +5. Start combat shield -2.",
+              {"boss", "event", "economy", "unique"},
+              8,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 0, 5);
+                  modifiers.cursedIdolPayoutBonus = 5;
+                  modifiers.roundStartShield = -2;
+                  return modifiers;
+              }(),
+              true,
+              false),
+        relic("dawnward_aegis",
+              "Dawnward Aegis",
+              RelicTier::Unique,
+              "Start combat with +10 shield. Healing springs cleanse poison and chill.",
+              {"guardian", "heal", "shield", "unique"},
+              8,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.roundStartShield = 10;
+                  modifiers.healingSpringCleanses = true;
+                  return modifiers;
+              }(),
+              true,
+              false),
+        relic("smuggler_kings_seal",
+              "Smuggler King's Seal",
+              RelicTier::Unique,
+              "Smuggler caches always pass their check. Hidden event payouts +4.",
+              {"assassin", "event", "economy", "unique"},
+              8,
+              [] {
+                  RunModifiers modifiers;
+                  modifiers.smugglerAlwaysSucceeds = true;
+                  modifiers.hiddenEventPayoutBonus = 4;
+                  return modifiers;
+              }(),
+              true,
+              false),
+        relic("vault_compass",
+              "Vault Compass",
+              RelicTier::Unique,
+              "Relic drafts show one extra choice. Hidden event payouts +3.",
+              {"choice", "event", "economy", "unique"},
+              8,
+              [] {
+                  RunModifiers modifiers = makeModifiers(0, 0, 0, 0, 0, 1);
+                  modifiers.hiddenEventPayoutBonus = 3;
+                  return modifiers;
+              }(),
               true,
               false),
         relic("quartermaster_badge",
@@ -396,12 +634,39 @@ RunModifiers runModifiersForRelics(const std::vector<std::string>& relicIds) {
         total.extraRelicChoices += current.extraRelicChoices;
         total.bonusGoldOnClear += current.bonusGoldOnClear;
         total.summonLimitBonus += current.summonLimitBonus;
+        total.hiddenEventRevealBonus += current.hiddenEventRevealBonus;
+        total.hiddenEventPayoutBonus += current.hiddenEventPayoutBonus;
+        total.trapCheckBonus += current.trapCheckBonus;
+        total.roundStartShield += current.roundStartShield;
+        total.eventHealBonus += current.eventHealBonus;
+        total.hiddenEventCountBonus += current.hiddenEventCountBonus;
+        total.trapDisarmGoldBonus += current.trapDisarmGoldBonus;
+        total.cursedIdolPayoutBonus += current.cursedIdolPayoutBonus;
+        total.cursedIdolDamageReductionPercent += current.cursedIdolDamageReductionPercent;
+        total.rallyDurationBonus += current.rallyDurationBonus;
+        total.smugglerAlwaysSucceeds = total.smugglerAlwaysSucceeds || current.smugglerAlwaysSucceeds;
+        total.healingSpringCleanses = total.healingSpringCleanses || current.healingSpringCleanses;
         for (size_t i = 0; i < total.familyBias.size(); ++i) {
             total.familyBias[i] += current.familyBias[i];
         }
         total.relicIds.push_back(id);
     }
     return total;
+}
+
+bool relicDropEligibleForObjective(ExplorationObjectiveKind kind, UnitType type) {
+    if (type == UnitType::NeutralRedcap) return false;
+    return kind == ExplorationObjectiveKind::Camp ||
+           kind == ExplorationObjectiveKind::Elite ||
+           kind == ExplorationObjectiveKind::Boss;
+}
+
+bool relicDropsForObjectiveClear(ExplorationObjectiveKind kind, UnitType type, unsigned seed) {
+    if (!relicDropEligibleForObjective(kind, type)) return false;
+    if (kind == ExplorationObjectiveKind::Elite || kind == ExplorationObjectiveKind::Boss) return true;
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<int> coin(0, 1);
+    return coin(rng) == 1;
 }
 
 std::string neutralFamilyLabel(NeutralFamily family) {

@@ -238,7 +238,7 @@ def main() -> int:
     device = utils.resolve_device(cfg.device)
     utils.info(f"device = {device}")
 
-    probe_handle = env_module.env_create(seed=1, max_steps=128, difficulty="Hard")
+    probe_handle = env_module.env_create(seed=1, max_steps=128, difficulty="Difficult")
     rules_fingerprint = env_module.env_rules_fingerprint(probe_handle)
     schema = env_module.env_feature_schema(probe_handle)
     state_dim = int(schema["stateFeatureCount"])

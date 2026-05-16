@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <random>
 #include <utility>
 
 namespace autochess {
@@ -9,13 +10,24 @@ namespace autochess {
 namespace {
 
 constexpr int kRandomGoldMinCount = 1;
-constexpr int kRandomGoldMaxCount = 3;
+constexpr int kRandomGoldMaxCount = 2;
 constexpr int kRandomGoldMinReward = 4;
 constexpr int kRandomGoldMaxReward = 8;
-constexpr int kHiddenHealMinCount = 1;
-constexpr int kHiddenHealMaxCount = 2;
+constexpr int kHiddenEventMinCount = 4;
+constexpr int kHiddenEventMaxCount = 7;
+constexpr int kHiddenHealCount = 1;
 constexpr int kHiddenHealMinAmount = 18;
 constexpr int kHiddenHealMaxAmount = 26;
+constexpr int kArcaneFontMinAmount = 8;
+constexpr int kArcaneFontMaxAmount = 14;
+constexpr int kSmugglerCacheMinReward = 6;
+constexpr int kSmugglerCacheMaxReward = 12;
+constexpr int kCursedIdolMinReward = 10;
+constexpr int kCursedIdolMaxReward = 16;
+constexpr int kRallyBannerMinDuration = 5;
+constexpr int kRallyBannerMaxDuration = 7;
+constexpr int kSilentWaystoneMinShield = 6;
+constexpr int kSilentWaystoneMaxShield = 10;
 constexpr int kExplorationTemplateCount = 2;
 constexpr int kExplorationBaseObjectiveCount = 28;
 
@@ -108,6 +120,84 @@ bool tooCloseToExisting(const std::vector<HiddenExplorationEventState>& events, 
     });
 }
 
+struct HiddenEventSpec {
+    HiddenExplorationEventKind kind = HiddenExplorationEventKind::GoldCache;
+    int minAmount = 0;
+    int maxAmount = 0;
+    int weight = 1;
+};
+
+const std::array<HiddenEventSpec, 5>& specialHiddenEventSpecs() {
+    static const std::array<HiddenEventSpec, 5> specs = {
+        HiddenEventSpec{HiddenExplorationEventKind::ArcaneFont, kArcaneFontMinAmount, kArcaneFontMaxAmount, 4},
+        HiddenEventSpec{HiddenExplorationEventKind::SmugglerCache, kSmugglerCacheMinReward, kSmugglerCacheMaxReward, 4},
+        HiddenEventSpec{HiddenExplorationEventKind::CursedIdol, kCursedIdolMinReward, kCursedIdolMaxReward, 3},
+        HiddenEventSpec{HiddenExplorationEventKind::RallyBanner, kRallyBannerMinDuration, kRallyBannerMaxDuration, 3},
+        HiddenEventSpec{HiddenExplorationEventKind::SilentWaystone, kSilentWaystoneMinShield, kSilentWaystoneMaxShield, 3}
+    };
+    return specs;
+}
+
+int rewardGoldForHiddenEvent(HiddenExplorationEventKind kind, int amount) {
+    switch (kind) {
+        case HiddenExplorationEventKind::GoldCache:
+        case HiddenExplorationEventKind::SmugglerCache:
+        case HiddenExplorationEventKind::CursedIdol:
+            return amount;
+        case HiddenExplorationEventKind::HealingSpring:
+        case HiddenExplorationEventKind::ArcaneFont:
+        case HiddenExplorationEventKind::RallyBanner:
+        case HiddenExplorationEventKind::SilentWaystone:
+            return 0;
+    }
+    return 0;
+}
+
+bool addHiddenEventAtCandidate(std::vector<HiddenExplorationEventState>& events,
+                               const std::vector<Coord>& candidates,
+                               HiddenExplorationEventKind kind,
+                               int amount) {
+    auto occupied = [&](Coord coord) {
+        return std::any_of(events.begin(), events.end(), [coord](const HiddenExplorationEventState& event) {
+            return event.coord == coord;
+        });
+    };
+
+    auto addAt = [&](Coord coord) {
+        HiddenExplorationEventState event;
+        event.coord = coord;
+        event.kind = kind;
+        event.amount = amount;
+        event.rewardGold = rewardGoldForHiddenEvent(kind, amount);
+        events.push_back(event);
+        return true;
+    };
+
+    for (Coord coord : candidates) {
+        if (occupied(coord)) continue;
+        if (tooCloseToExisting(events, coord)) continue;
+        return addAt(coord);
+    }
+    for (Coord coord : candidates) {
+        if (occupied(coord)) continue;
+        return addAt(coord);
+    }
+    return false;
+}
+
+HiddenEventSpec pickSpecialHiddenEvent(std::mt19937& rng) {
+    const auto& specs = specialHiddenEventSpecs();
+    std::array<int, 5> weights{};
+    for (size_t i = 0; i < specs.size(); ++i) weights[i] = specs[i].weight;
+    std::discrete_distribution<int> dist(weights.begin(), weights.end());
+    return specs[static_cast<size_t>(dist(rng))];
+}
+
+int amountForSpec(const HiddenEventSpec& spec, std::mt19937& rng) {
+    std::uniform_int_distribution<int> amount(spec.minAmount, spec.maxAmount);
+    return amount(rng);
+}
+
 } // namespace
 
 bool isCombatExplorationObjective(ExplorationObjectiveKind kind) {
@@ -166,52 +256,28 @@ void ExplorationState::resetHiddenEvents(std::vector<Coord> candidates, std::mt1
 
     std::uniform_int_distribution<int> goldCountDist(kRandomGoldMinCount, kRandomGoldMaxCount);
     std::uniform_int_distribution<int> goldRewardDist(kRandomGoldMinReward, kRandomGoldMaxReward);
-    std::uniform_int_distribution<int> healCountDist(kHiddenHealMinCount, kHiddenHealMaxCount);
     std::uniform_int_distribution<int> healAmountDist(kHiddenHealMinAmount, kHiddenHealMaxAmount);
+    std::uniform_int_distribution<int> totalCountDist(kHiddenEventMinCount, kHiddenEventMaxCount);
 
-    int goldCount = std::min(goldCountDist(rng), static_cast<int>(candidates.size()));
-    int healCount = std::min(healCountDist(rng), std::max(0, static_cast<int>(candidates.size()) - goldCount));
-
-    auto takeCandidate = [&](HiddenExplorationEventKind kind, int amount) {
-        for (Coord coord : candidates) {
-            if (std::any_of(hiddenEvents_.begin(), hiddenEvents_.end(),
-                            [coord](const HiddenExplorationEventState& event) {
-                                return event.coord == coord;
-                            })) {
-                continue;
-            }
-            if (tooCloseToExisting(hiddenEvents_, coord)) continue;
-            HiddenExplorationEventState event;
-            event.coord = coord;
-            event.kind = kind;
-            event.amount = amount;
-            event.rewardGold = kind == HiddenExplorationEventKind::GoldCache ? amount : 0;
-            hiddenEvents_.push_back(event);
-            return true;
-        }
-        for (Coord coord : candidates) {
-            if (std::any_of(hiddenEvents_.begin(), hiddenEvents_.end(),
-                            [coord](const HiddenExplorationEventState& event) {
-                                return event.coord == coord;
-                            })) {
-                continue;
-            }
-            HiddenExplorationEventState event;
-            event.coord = coord;
-            event.kind = kind;
-            event.amount = amount;
-            event.rewardGold = kind == HiddenExplorationEventKind::GoldCache ? amount : 0;
-            hiddenEvents_.push_back(event);
-            return true;
-        }
-        return false;
-    };
+    int targetCount = std::min(totalCountDist(rng), static_cast<int>(candidates.size()));
+    int goldCount = std::min(goldCountDist(rng), targetCount);
+    int healCount = targetCount - goldCount > 0 ? std::min(kHiddenHealCount, targetCount - goldCount) : 0;
+    if (static_cast<int>(candidates.size()) >= goldCount + healCount + 2) {
+        targetCount = std::min(static_cast<int>(candidates.size()),
+                               std::max(targetCount, goldCount + healCount + 2));
+    }
 
     for (int i = 0; i < goldCount; ++i) {
-        takeCandidate(HiddenExplorationEventKind::GoldCache, goldRewardDist(rng));
+        addHiddenEventAtCandidate(hiddenEvents_, candidates, HiddenExplorationEventKind::GoldCache,
+                                  goldRewardDist(rng));
     }
     for (int i = 0; i < healCount; ++i) {
-        takeCandidate(HiddenExplorationEventKind::HealingSpring, healAmountDist(rng));
+        addHiddenEventAtCandidate(hiddenEvents_, candidates, HiddenExplorationEventKind::HealingSpring,
+                                  healAmountDist(rng));
+    }
+    while (static_cast<int>(hiddenEvents_.size()) < targetCount) {
+        HiddenEventSpec spec = pickSpecialHiddenEvent(rng);
+        if (!addHiddenEventAtCandidate(hiddenEvents_, candidates, spec.kind, amountForSpec(spec, rng))) break;
     }
 }
 
@@ -246,12 +312,25 @@ std::vector<Coord> ExplorationState::randomGoldCoords() const {
 }
 
 std::vector<Coord> ExplorationState::hiddenHealingCoords() const {
+    return hiddenEventCoords(HiddenExplorationEventKind::HealingSpring);
+}
+
+std::vector<Coord> ExplorationState::hiddenEventCoords(HiddenExplorationEventKind kind) const {
     std::vector<Coord> coords;
     coords.reserve(hiddenEvents_.size());
     for (const HiddenExplorationEventState& event : hiddenEvents_) {
-        if (event.kind == HiddenExplorationEventKind::HealingSpring) coords.push_back(event.coord);
+        if (event.kind == kind) coords.push_back(event.coord);
     }
     return coords;
+}
+
+void ExplorationState::addBonusHiddenEvents(std::vector<Coord> candidates, std::mt19937& rng, int count) {
+    if (count <= 0 || candidates.empty()) return;
+    std::shuffle(candidates.begin(), candidates.end(), rng);
+    for (int i = 0; i < count; ++i) {
+        HiddenEventSpec spec = pickSpecialHiddenEvent(rng);
+        if (!addHiddenEventAtCandidate(hiddenEvents_, candidates, spec.kind, amountForSpec(spec, rng))) break;
+    }
 }
 
 std::optional<HiddenExplorationEventState> ExplorationState::claimHiddenEvent(PlayerId player,

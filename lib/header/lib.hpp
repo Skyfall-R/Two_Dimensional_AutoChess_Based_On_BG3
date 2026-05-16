@@ -44,7 +44,15 @@ enum class TerrainKind : unsigned char {
 enum class NeutralFamily { Swarm, Guardian, Caster, Assassin, Artillery };
 enum class RelicTier { Basic, Build, Transform, Unique };
 enum class ExplorationObjectiveKind { Camp, Elite, Boss, Trap };
-enum class HiddenExplorationEventKind { GoldCache, HealingSpring };
+enum class HiddenExplorationEventKind {
+    GoldCache,
+    HealingSpring,
+    ArcaneFont,
+    SmugglerCache,
+    CursedIdol,
+    RallyBanner,
+    SilentWaystone
+};
 enum class NeutralBehavior { PassiveGuardian, HostileAmbusher };
 enum class AbilityKind {
     None,
@@ -355,6 +363,18 @@ struct RunModifiers {
     int extraRelicChoices = 0;
     int bonusGoldOnClear = 0;
     int summonLimitBonus = 0;
+    int hiddenEventRevealBonus = 0;
+    int hiddenEventPayoutBonus = 0;
+    int trapCheckBonus = 0;
+    int roundStartShield = 0;
+    int eventHealBonus = 0;
+    int hiddenEventCountBonus = 0;
+    int trapDisarmGoldBonus = 0;
+    int cursedIdolPayoutBonus = 0;
+    int cursedIdolDamageReductionPercent = 0;
+    int rallyDurationBonus = 0;
+    bool smugglerAlwaysSucceeds = false;
+    bool healingSpringCleanses = false;
     std::array<int, 5> familyBias{};
     std::vector<std::string> relicIds;
 };
@@ -614,6 +634,7 @@ struct GameSnapshot {
     double time = 0.0;
     double combatTime = 0.0;
     MapKind mapKind = MapKind::ExplorationA;
+    int explorationMapVariant = 0;
     int explorationRound = 0;
     int explorationRoundLimit = 8;
     int explorationRoundsRemaining = 8;
@@ -712,6 +733,7 @@ public:
     bool debugRadialKnockback(Coord center, int radius, int distance, UnitId sourceId = kInvalidUnitId);
     std::vector<Coord> debugRandomGoldCoords() const;
     std::vector<Coord> debugHiddenHealingCoords() const;
+    std::vector<Coord> debugHiddenEventCoords(HiddenExplorationEventKind kind) const;
     std::vector<AiAction> legalActions(PlayerId player) const;
     bool applyAiAction(PlayerId player, const AiAction& action);
     std::vector<double> stateFeatures(PlayerId player) const;
@@ -774,6 +796,7 @@ private:
     GameMode mode_ = GameMode::SinglePlayerVsAi;
     MapKind mapKind_ = MapKind::ExplorationA;
     int explorationMapTemplate_ = 0;
+    int explorationMapVariant_ = 0;
     Phase phase_ = Phase::Preparation;
     std::optional<PlayerId> winner_;
     int round_ = 0;
@@ -806,6 +829,7 @@ private:
     void randomizeExplorationObjectives();
     void initializeNeutralObjectives();
     void initializeHiddenExplorationEvents();
+    std::vector<Coord> hiddenEventPlacementCandidates() const;
     void applyExplorationObjectiveTerrain();
     bool triggerTrapAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId = kInvalidUnitId);
     bool triggerRandomGoldEventAt(PlayerId triggeringPlayer, Coord coord, UnitId triggerUnitId);

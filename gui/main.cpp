@@ -58,7 +58,6 @@ std::array<Texture2D, kAbilityTextureCount> gAbilityTextures{};
 std::unordered_map<std::string, Texture2D> gRelicTextures{};
 Texture2D gFactionBlueSealTexture{};
 Texture2D gFactionRedSealTexture{};
-Texture2D gArcaneBurstTexture{};
 Texture2D gMeleeHitTexture{};
 Vector2 gMousePosition{};
 const std::filesystem::path kCacheDir = ".cache";
@@ -134,6 +133,38 @@ Color knockbackCueColor(const CombatCue& cue) {
             return Color{199, 111, 72, 255};
         default:
             return Color{223, 176, 94, 255};
+    }
+}
+
+Color arcaneCueColor(const CombatCue& cue) {
+    switch (cue.visual) {
+        case CombatCueVisualKind::Heal:
+            return Color{112, 219, 135, 255};
+        case CombatCueVisualKind::Gold:
+            return Color{239, 190, 83, 255};
+        case CombatCueVisualKind::Shield:
+            return Color{119, 198, 230, 255};
+        default:
+            break;
+    }
+    switch (cue.ability) {
+        case AbilityKind::MephitDeathBurst:
+        case AbilityKind::DragonBreath:
+        case AbilityKind::BossFireball:
+        case AbilityKind::DiabolicChains:
+            return Color{235, 91, 58, 255};
+        case AbilityKind::FrostNova:
+        case AbilityKind::SpectatorWoundingRay:
+        case AbilityKind::MindBlast:
+            return Color{126, 185, 229, 255};
+        case AbilityKind::SelunesIre:
+        case AbilityKind::StrikeOfTheGuardian:
+            return Color{236, 212, 118, 255};
+        case AbilityKind::Blight:
+        case AbilityKind::DominatePerson:
+            return Color{154, 104, 202, 255};
+        default:
+            return Color{126, 167, 210, 255};
     }
 }
 
@@ -260,7 +291,6 @@ void loadUiTextures() {
     gBannerLoaded = gBannerTexture.id != 0;
     gFactionBlueSealTexture = loadUiTexture("faction_blue_seal.png");
     gFactionRedSealTexture = loadUiTexture("faction_red_seal.png");
-    gArcaneBurstTexture = loadUiTexture("arcane_burst.png");
     gMeleeHitTexture = loadUiTexture("melee_hit.png");
 
     loadUnitTexture(UnitType::Skeleton, "unit_skeleton.png");
@@ -419,7 +449,6 @@ void unloadUiTextures() {
     gBannerLoaded = false;
     unloadTextureIfLoaded(gFactionBlueSealTexture);
     unloadTextureIfLoaded(gFactionRedSealTexture);
-    unloadTextureIfLoaded(gArcaneBurstTexture);
     unloadTextureIfLoaded(gMeleeHitTexture);
     for (Texture2D& texture : gUnitTextures) unloadTextureIfLoaded(texture);
     for (Texture2D& texture : gNeutralFamilyTextures) unloadTextureIfLoaded(texture);
@@ -1464,7 +1493,9 @@ void drawAbilitySigil(Rectangle rect, AbilityKind ability, bool withLabel = fals
                          core,
                          std::max(12.0f, rect.height * 0.18f),
                          Color{210, 184, 130, 210});
-        TraceLog(LOG_WARNING, "Missing BG3 ability icon for ability id %d", static_cast<int>(ability));
+        if (ability != AbilityKind::None) {
+            TraceLog(LOG_WARNING, "Missing BG3 ability icon for ability id %d", static_cast<int>(ability));
+        }
     }
 
     DrawLineEx({rect.x + rect.width * 0.18f, rect.y + rect.height * 0.12f},
@@ -2928,7 +2959,14 @@ void applyRelicChoice(const DraftOffer& offer,
 }
 
 bool neutralTypeDropsRelic(UnitType type) {
-    return isNeutralMonster(type) && type != UnitType::NeutralRedcap;
+    return isNeutralMonster(type) && relicDropEligibleForObjective(ExplorationObjectiveKind::Camp, type);
+}
+
+std::optional<ExplorationObjectiveKind> objectiveKindFromClearText(const std::string& text) {
+    if (text.find("Camp cleared") != std::string::npos) return ExplorationObjectiveKind::Camp;
+    if (text.find("Elite cleared") != std::string::npos) return ExplorationObjectiveKind::Elite;
+    if (text.find("Boss defeated") != std::string::npos) return ExplorationObjectiveKind::Boss;
+    return std::nullopt;
 }
 
 DraftState createRandomNeutralDraft(const std::string& sourceName,
@@ -2963,6 +3001,7 @@ void queueNeutralRelicDrops(const std::vector<Event>& events,
                             const std::vector<std::string>& relicIds,
                             const RunModifiers& modifiers,
                             unsigned& seed,
+                            std::vector<std::string>& log,
                             std::optional<DraftState>& pendingDraft,
                             std::vector<DraftState>& queuedDrafts) {
     std::vector<UnitId> queuedTargets;
@@ -2971,18 +3010,21 @@ void queueNeutralRelicDrops(const std::vector<Event>& events,
             event.target == kInvalidUnitId || event.amount <= 0) {
             continue;
         }
-        bool objectiveClear = event.text.find("Camp cleared") != std::string::npos ||
-                              event.text.find("Elite cleared") != std::string::npos ||
-                              event.text.find("Boss defeated") != std::string::npos;
-        if (!objectiveClear) continue;
+        std::optional<ExplorationObjectiveKind> objectiveKind = objectiveKindFromClearText(event.text);
+        if (!objectiveKind) continue;
         if (std::find(queuedTargets.begin(), queuedTargets.end(), event.target) != queuedTargets.end()) continue;
         queuedTargets.push_back(event.target);
 
         std::string sourceName = event.text;
         size_t colon = sourceName.find(':');
         if (colon != std::string::npos) sourceName = sourceName.substr(0, colon);
+        unsigned dropSeed = seed++ ^ static_cast<unsigned>(event.target * 97);
+        if (!relicDropsForObjectiveClear(*objectiveKind, UnitType::Skeleton, dropSeed)) {
+            log.push_back(sourceName + ": no relic found");
+            continue;
+        }
         DraftState draft = createRandomNeutralDraft(sourceName, relicIds, modifiers.extraRelicChoices,
-                                                    seed++ ^ static_cast<unsigned>(event.target * 97));
+                                                    seed++ ^ static_cast<unsigned>(event.target * 193));
         if (draft.offers.empty()) continue;
         queuedDrafts.push_back(std::move(draft));
     }
@@ -3233,8 +3275,114 @@ void drawDetailStatChip(Rectangle rect,
     DrawRectangleRoundedLines(rect, 0.10f, 5, 1.0f, line);
     drawText(fitText(label, rect.width - 12.0f, 13.0f),
              rect.x + 7.0f, rect.y + 5.0f, 13.0f, Color{98, 71, 48, 255});
-    drawTextStrong(fitTextStrong(value, rect.width - 12.0f, prominent ? 19.0f : 18.0f),
-                   rect.x + 7.0f, rect.y + 20.0f, prominent ? 19.0f : 18.0f, kParchmentInk);
+    float valueSize = prominent ? 19.0f : 18.0f;
+    while (valueSize > 14.0f && measureTextStrong(value, valueSize).x > rect.width - 12.0f) {
+        valueSize -= 1.0f;
+    }
+    drawTextStrong(fitTextStrong(value, rect.width - 12.0f, valueSize),
+                   rect.x + 7.0f, rect.y + 20.0f, valueSize, kParchmentInk);
+}
+
+std::string trimDetailText(const std::string& text) {
+    auto first = std::find_if_not(text.begin(), text.end(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    });
+    if (first == text.end()) return "";
+    auto last = std::find_if_not(text.rbegin(), text.rend(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    }).base();
+    return std::string(first, last);
+}
+
+std::string numberAfter(const std::string& text, const std::string& marker) {
+    size_t pos = text.find(marker);
+    if (pos == std::string::npos) return "";
+    pos += marker.size();
+    while (pos < text.size() && !std::isdigit(static_cast<unsigned char>(text[pos]))) ++pos;
+    size_t start = pos;
+    while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) ++pos;
+    return start < pos ? text.substr(start, pos - start) : "";
+}
+
+std::string compactCheckText(const std::string& text) {
+    std::string value = trimDetailText(text);
+    if (value.find("No Save") != std::string::npos) return "No Save";
+    constexpr const char* kAttackRoll = "Attack Roll ";
+    if (value.rfind(kAttackRoll, 0) == 0) {
+        return "Attack " + value.substr(std::string(kAttackRoll).size());
+    }
+
+    std::string dc = numberAfter(value, "DC ");
+    if (!dc.empty() && value.find("WIS avoids") != std::string::npos &&
+        value.find("CON avoids") != std::string::npos) {
+        return "WIS/CON DC " + dc;
+    }
+
+    size_t savePos = value.find(" Save DC ");
+    if (savePos != std::string::npos && !dc.empty()) {
+        std::string ability = trimDetailText(value.substr(0, savePos));
+        size_t semi = ability.find_last_of(';');
+        if (semi != std::string::npos) ability = trimDetailText(ability.substr(semi + 1));
+        size_t space = ability.find_last_of(' ');
+        if (space != std::string::npos) ability = trimDetailText(ability.substr(space + 1));
+        return ability + " DC " + dc;
+    }
+
+    return value;
+}
+
+std::string compactTimingText(const std::string& text) {
+    std::string value = trimDetailText(text);
+    if (value == "Refreshes after movement") return "After move";
+    if (value == "Once per combat" || value == "Once per lifetime" || value == "Once per game") return "Once";
+    if (value == "Every attack") return "Every hit";
+    if (value == "Always on") return "Always";
+    if (value == "Boss reaction spell") return "Reaction";
+    if (value.rfind("Recharge ", 0) == 0) return "Rech " + value.substr(9);
+    if (value.rfind("Poisoned:", 0) == 0) return "Poison" + value.substr(9);
+    return value;
+}
+
+std::string compactReachText(const std::string& text) {
+    std::string value = trimDetailText(text);
+    if (value.empty()) return value;
+    if (value.rfind("Melee; Stunned", 0) == 0) return "Melee Stunned";
+    if (value.rfind("Melee", 0) == 0) return "Melee";
+    if (value.rfind("Self", 0) == 0) return "Self";
+    if (value.rfind("Reaction", 0) == 0) return "Reaction";
+    if (value.rfind("Teleport", 0) == 0) return "Teleport";
+
+    std::string line = numberAfter(value, "Line ");
+    if (!line.empty()) return "Line " + line;
+    std::string heal = numberAfter(value, "Heal range ");
+    if (!heal.empty()) return "Heal " + heal;
+    std::string corpse = numberAfter(value, "Corpse search range ");
+    if (!corpse.empty()) return "Corpse " + corpse;
+    std::string summon = numberAfter(value, "range ");
+    if (value.find("Summon near caster") != std::string::npos && !summon.empty()) {
+        return "Summon " + summon;
+    }
+
+    std::string range = numberAfter(value, "Range ");
+    if (!range.empty()) {
+        std::string prefix = "R" + range;
+        std::string burst = numberAfter(value, "burst radius ");
+        if (!burst.empty()) return prefix + " Burst" + burst;
+        std::string chain = numberAfter(value, "chain radius ");
+        if (!chain.empty()) return prefix + " Chain" + chain;
+        std::string cluster = numberAfter(value, "cluster radius ");
+        if (!cluster.empty()) return prefix + " Cluster" + cluster;
+        if (value.find("humanoid only") != std::string::npos) return prefix + " Humanoid";
+        size_t targets = value.find("targets ");
+        if (targets == std::string::npos) targets = value.find("Targets ");
+        if (targets != std::string::npos) {
+            std::string target = trimDetailText(value.substr(targets + 8));
+            return target.empty() ? prefix : prefix + " " + target;
+        }
+        return prefix;
+    }
+
+    return value;
 }
 
 class DetailCursor {
@@ -3341,9 +3489,9 @@ public:
         if (!mechanic.empty() && mechanic != detail.headline) {
             wrapped(mechanic, 16.0f, Color{88, 48, 32, 255});
         }
-        statGrid({{"Check", detail.save.empty() ? "No Save" : detail.save},
-                  {"Timing", detail.recharge},
-                  {"Reach", detail.range}}, 3);
+        statGrid({{"Check", compactCheckText(detail.save.empty() ? "No Save" : detail.save)},
+                  {"Timing", compactTimingText(detail.recharge)},
+                  {"Reach", compactReachText(detail.range)}}, 3);
         if (!detail.body.empty()) wrapped(detail.body, 16.0f, Color{64, 46, 34, 255});
         y_ += 8.0f;
     }
@@ -3408,7 +3556,6 @@ void syncDetailPanelState(DetailPanelState& state, const UnitSpec* spec, const U
 
 void drawUnitDetailHeader(const UnitSpec& spec, const UnitView* view, Rectangle panel) {
     std::vector<AbilityKind> headerAbilities = displayedAbilitiesFor(spec);
-    std::string dossierLine = view ? view->profileSummary : profileSummary(spec.profile);
 
     int units = view ? view->units : spec.unitCount;
     int maxUnits = view ? view->maxUnits : spec.unitCount;
@@ -3417,8 +3564,6 @@ void drawUnitDetailHeader(const UnitSpec& spec, const UnitView* view, Rectangle 
     int range = view ? view->range : spec.range;
     int armorClass = view ? view->armorClass : spec.armorClass;
     int attackBonus = view ? view->attackBonus : spec.attackBonus;
-    bool neutral = view ? (isNeutralMonster(view->type) || view->neutralControlled)
-                        : isNeutralMonster(spec.type);
 
     Rectangle iconArea{panel.x + 16.0f, panel.y + 17.0f, 66.0f, 66.0f};
     drawUnitGlyph(spec.type, iconArea, iconAccent(spec.type));
@@ -3440,19 +3585,7 @@ void drawUnitDetailHeader(const UnitSpec& spec, const UnitView* view, Rectangle 
     if (view) title += TextFormat("  #%d", view->id);
     drawTextStrong(fitTextStrong(title, titleW, 25.0f), x, panel.y + 15.0f, 25.0f, kParchmentInk);
 
-    if (!dossierLine.empty()) {
-        drawText(fitText(dossierLine, contentW, 15.0f), x, panel.y + 46.0f, 15.0f,
-                 Color{96, 66, 44, 255});
-    }
-
-    std::string roleLine = unitProfileLine(spec,
-                                           neutral,
-                                           view ? view->neutralActivated : false,
-                                           view ? view->neutralReturningHome : false);
-    drawWrappedTextLimited(roleLine, x, panel.y + 66.0f, contentW, 14.5f,
-                           kParchmentMuted, panel.y + 108.0f, 2);
-
-    Rectangle hpBar{x, panel.y + 111.0f, contentW, 26.0f};
+    Rectangle hpBar{x, panel.y + 58.0f, contentW, 26.0f};
     DrawRectangleRounded(hpBar, 0.12f, 6, Color{75, 49, 34, 205});
     float hpRatio = maxTotalHp > 0 ? std::clamp(static_cast<float>(totalHp) /
                                                     static_cast<float>(maxTotalHp),
@@ -3472,7 +3605,7 @@ void drawUnitDetailHeader(const UnitSpec& spec, const UnitView* view, Rectangle 
                                 maxUnits),
                      hpBar, 17.0f, kInk);
 
-    float chipY = panel.y + 145.0f;
+    float chipY = panel.y + 94.0f;
     float gap = 8.0f;
     float chipW = (contentW - gap * 2.0f) / 3.0f;
     drawDetailStatChip({x, chipY, chipW, 38.0f}, "AC", std::to_string(armorClass), true);
@@ -3481,8 +3614,8 @@ void drawUnitDetailHeader(const UnitSpec& spec, const UnitView* view, Rectangle 
     drawDetailStatChip({x + (chipW + gap) * 2.0f, chipY, chipW, 38.0f},
                        "Range", std::to_string(range), true);
 
-    DrawLineEx({panel.x + 14.0f, panel.y + 187.0f},
-               {panel.x + panel.width - 14.0f, panel.y + 187.0f},
+    DrawLineEx({panel.x + 14.0f, panel.y + 140.0f},
+               {panel.x + panel.width - 14.0f, panel.y + 140.0f},
                1.0f,
                Color{132, 101, 64, 120});
 
@@ -3580,7 +3713,7 @@ float drawUnitDetails(const UnitSpec& spec,
                       Rectangle panel,
                       float scroll) {
     drawParchmentPanel(panel, kParchment);
-    constexpr float headerH = 194.0f;
+    constexpr float headerH = 150.0f;
     drawUnitDetailHeader(spec, view, panel);
 
     Rectangle viewport{panel.x + 10.0f,
@@ -3885,9 +4018,10 @@ void drawCombatCues(const std::vector<CombatCue>& cues) {
             continue;
         }
 
-        const Texture2D* texture = abilityTexture(cue.ability);
-        if (!texture) {
-            texture = cueUsesArcaneTexture(cue) ? &gArcaneBurstTexture : &gMeleeHitTexture;
+        const Texture2D* texture = cue.ability != AbilityKind::None ? abilityTexture(cue.ability) : nullptr;
+        bool useArcaneFallback = !texture && cueUsesArcaneTexture(cue);
+        if (!texture && !useArcaneFallback) {
+            texture = &gMeleeHitTexture;
         }
         bool hasTexture = texture && texture->id != 0;
         float size = (cueUsesArcaneTexture(cue) ? 92.0f : 76.0f) + 26.0f * t;
@@ -3895,6 +4029,15 @@ void drawCombatCues(const std::vector<CombatCue>& cues) {
         Color tint{255, 255, 255, static_cast<unsigned char>(std::clamp(alpha * 235.0f, 0.0f, 235.0f))};
         if (hasTexture) {
             drawTextureAspectFit(*texture, rect, tint);
+        } else if (useArcaneFallback) {
+            Color glow = arcaneCueColor(cue);
+            glow.a = static_cast<unsigned char>(std::clamp(alpha * 210.0f, 0.0f, 210.0f));
+            Color soft{glow.r, glow.g, glow.b,
+                       static_cast<unsigned char>(std::clamp(alpha * 70.0f, 0.0f, 70.0f))};
+            DrawCircleV(to, size * 0.24f + 12.0f * t, soft);
+            DrawCircleLines(static_cast<int>(to.x), static_cast<int>(to.y), size * 0.30f, glow);
+            DrawCircleLines(static_cast<int>(to.x), static_cast<int>(to.y), size * 0.17f + 10.0f * t, glow);
+            drawTinySpark(to, size * 0.18f, glow);
         } else {
             DrawCircleLines(static_cast<int>(to.x), static_cast<int>(to.y), size * 0.32f, faction);
             drawTinySpark(to, size * 0.18f, faction);
@@ -4677,7 +4820,7 @@ int main() {
         appendEvents(engine, log, &eventLog, &combatCues, &consumedEvents);
         snapshot = engine.snapshot();
         bool hadDraftBeforeQueue = pendingDraft.has_value();
-        queueNeutralRelicDrops(consumedEvents, playerRelics, playerModifiers, neutralDraftSeed,
+        queueNeutralRelicDrops(consumedEvents, playerRelics, playerModifiers, neutralDraftSeed, log,
                                pendingDraft, queuedNeutralDrafts);
         if (!hadDraftBeforeQueue && pendingDraft) draftScrollIndex = 0;
 

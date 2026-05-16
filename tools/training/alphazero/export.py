@@ -1,7 +1,7 @@
 """Export trained PyTorch network to a JSON policy file consumable by the
 C++ PolicyAiPlanner.
 
-Currently the C++ side only supports modelVersion="linear-v1" (one weight per
+Currently the C++ side supports modelVersion="linear-v2" (one weight per
 state-feature + per action-feature). We bridge by *distilling* the trained
 neural net into a linear scorer:
 
@@ -29,7 +29,7 @@ from .encoder import encode
 from .network import PolicyValueNet
 
 POLICY_FORMAT = "autochess_policy_v1"
-LINEAR_MODEL_VERSION = "linear-v1"
+LINEAR_MODEL_VERSION = "linear-v2"
 
 
 def distill_linear(

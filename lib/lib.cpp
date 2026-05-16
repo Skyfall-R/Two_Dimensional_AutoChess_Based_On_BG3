@@ -49,11 +49,11 @@ constexpr double kRetargetInterval = 0.35;
 constexpr int kBoardFeaturePlanes = 6;
 constexpr int kGlobalStateFeatureCount = 16;
 constexpr int kStateFeatureCount = kGlobalStateFeatureCount + kBoardWidth * kBoardHeight * kBoardFeaturePlanes;
-constexpr int kActionFeatureCount = 20;
+constexpr int kActionFeatureCount = 32;
 constexpr int kMaxAiActionsPerPreparation = 64;
 constexpr double kNecromancerSkeletonLifespan = 8.0;
 constexpr const char* kPolicyFormat = "autochess_policy_v1";
-constexpr const char* kPolicyModelVersion = "linear-v1";
+constexpr const char* kPolicyModelVersion = "linear-v2";
 constexpr std::array<const char*, kBoardHeight> kExplorationMapTemplateA = {
     "ssssssssss#sssssssssss#ssssssssss",
     "ssssssssss#sssssssssss#ssssssssss",
@@ -104,6 +104,7 @@ constexpr std::array<std::array<const char*, kBoardHeight>, 2> kExplorationMapTe
 };
 
 constexpr int kExplorationMapTemplateCount = static_cast<int>(kExplorationMapTemplates.size());
+constexpr int kExplorationMapVariantCount = 3;
 
 int playerIndex(PlayerId player) {
     return player == PlayerId::One ? 0 : 1;
@@ -170,6 +171,20 @@ bool isHostileCombatTarget(const Unit& attacker, const Unit& target) {
 
 bool isRoundTransientUnit(UnitType type) {
     return type == UnitType::SkeletonByNecromancer || type == UnitType::Treant;
+}
+
+bool isPlayerSummonedCombatUnitType(UnitType type) {
+    return type == UnitType::SkeletonByNecromancer || type == UnitType::Treant;
+}
+
+bool canReceivePartyCombatEffect(const Unit& unit) {
+    if (!unit.alive || !unit.deployed || unit.neutralControlled) return false;
+    if (isNeutralMonsterType(unit.spec.type) || unit.spec.type == UnitType::SporeServant) return false;
+    if (isInternalUnitType(unit.spec.type) &&
+        !isPlayerSummonedCombatUnitType(unit.spec.type)) {
+        return false;
+    }
+    return true;
 }
 
 bool isSpellLikeAbility(AbilityKind ability) {
@@ -1135,6 +1150,16 @@ bool readTextFile(const std::string& path, std::string& out) {
     return true;
 }
 
+double clampUnitFeature(double value, double scale) {
+    if (scale <= 0.0) return 0.0;
+    return clampFeature(value / scale);
+}
+
+double distanceFeature(int distance, int maxDistance) {
+    if (distance < 0 || maxDistance <= 0) return 0.0;
+    return clampFeature(1.0 - std::min(distance, maxDistance) / static_cast<double>(maxDistance));
+}
+
 std::optional<std::string> jsonStringValue(const std::string& json, const std::string& key) {
     std::string marker = "\"" + key + "\"";
     size_t keyPos = json.find(marker);
@@ -1226,6 +1251,53 @@ const std::array<const char*, kBoardHeight>& explorationMapMask(int templateInde
     return kExplorationMapTemplates[static_cast<size_t>(index)];
 }
 
+int normalizedExplorationMapVariant(int variantIndex) {
+    return ((variantIndex % kExplorationMapVariantCount) + kExplorationMapVariantCount) %
+           kExplorationMapVariantCount;
+}
+
+const std::array<std::array<std::vector<Coord>, kExplorationMapVariantCount>, kExplorationMapTemplateCount>&
+explorationVariantOpenings() {
+    static const std::array<std::array<std::vector<Coord>, kExplorationMapVariantCount>,
+                            kExplorationMapTemplateCount>
+        openings = {{
+            {{
+                {},
+                {{Coord{10, 2}, Coord{15, 3}, Coord{25, 4}, Coord{8, 6},
+                  Coord{14, 7}, Coord{18, 8}, Coord{10, 9}, Coord{13, 10},
+                  Coord{14, 11}, Coord{18, 12}, Coord{15, 14}, Coord{20, 16}}},
+                {{Coord{4, 2}, Coord{11, 3}, Coord{19, 4}, Coord{21, 5},
+                  Coord{22, 6}, Coord{27, 7}, Coord{9, 8}, Coord{18, 9},
+                  Coord{4, 10}, Coord{23, 11}, Coord{9, 13}, Coord{25, 14}}}
+            }},
+            {{
+                {},
+                {{Coord{9, 2}, Coord{16, 3}, Coord{24, 4}, Coord{8, 5},
+                  Coord{13, 6}, Coord{15, 7}, Coord{12, 8}, Coord{20, 9},
+                  Coord{23, 10}, Coord{20, 11}, Coord{14, 13}, Coord{20, 15}}},
+                {{Coord{15, 2}, Coord{4, 3}, Coord{11, 4}, Coord{18, 5},
+                  Coord{25, 6}, Coord{22, 7}, Coord{18, 8}, Coord{14, 9},
+                  Coord{5, 10}, Coord{12, 12}, Coord{21, 13}, Coord{17, 14}}}
+            }}
+        }};
+    return openings;
+}
+
+void applyExplorationMapVariant(Board& board, int templateIndex, int variantIndex) {
+    int templateSlot = ((templateIndex % kExplorationMapTemplateCount) + kExplorationMapTemplateCount) %
+                       kExplorationMapTemplateCount;
+    int variant = normalizedExplorationMapVariant(variantIndex);
+    if (variant == 0) return;
+
+    const auto& openings = explorationVariantOpenings()[static_cast<size_t>(templateSlot)]
+                                                       [static_cast<size_t>(variant)];
+    for (Coord coord : openings) {
+        if (!board.inBounds(coord)) continue;
+        if (board.terrainAt(coord) != TerrainKind::Wall) continue;
+        board.setTerrain(coord, TerrainKind::SideRoad);
+    }
+}
+
 MapKind explorationMapKindForTemplate(int templateIndex) {
     return ((templateIndex % kExplorationMapTemplateCount) + kExplorationMapTemplateCount) %
                    kExplorationMapTemplateCount ==
@@ -1293,8 +1365,9 @@ bool isEdgeWingExplorationStagingCoord(PlayerId playerId, Coord coord) {
     return coord.x <= kBoardWidth - 5 && (coord.y <= 1 || coord.y >= kBoardHeight - 2);
 }
 
-void paintExplorationMap(Board& board, int templateIndex) {
+void paintExplorationMap(Board& board, int templateIndex, int variantIndex) {
     paintMapFromMask(board, explorationMapMask(templateIndex));
+    applyExplorationMapVariant(board, templateIndex, variantIndex);
     for (int y = 0; y < board.height; ++y) {
         for (int x = 0; x < board.width; ++x) {
             Coord coord{x, y};
@@ -2156,6 +2229,7 @@ GameEngine::GameEngine(const GameEngine& other)
       mode_(other.mode_),
       mapKind_(other.mapKind_),
       explorationMapTemplate_(other.explorationMapTemplate_),
+      explorationMapVariant_(other.explorationMapVariant_),
       phase_(other.phase_),
       winner_(other.winner_),
       round_(other.round_),
@@ -2188,6 +2262,7 @@ GameEngine& GameEngine::operator=(const GameEngine& other) {
     mode_ = other.mode_;
     mapKind_ = other.mapKind_;
     explorationMapTemplate_ = other.explorationMapTemplate_;
+    explorationMapVariant_ = other.explorationMapVariant_;
     phase_ = other.phase_;
     winner_ = other.winner_;
     round_ = other.round_;
@@ -2217,7 +2292,9 @@ void GameEngine::startNewGame(const GameConfig& config) {
     config_ = config;
     mode_ = config.mode;
     std::uniform_int_distribution<int> pickExplorationTemplate(0, kExplorationMapTemplateCount - 1);
+    std::uniform_int_distribution<int> pickExplorationVariant(0, kExplorationMapVariantCount - 1);
     explorationMapTemplate_ = pickExplorationTemplate(rng_);
+    explorationMapVariant_ = pickExplorationVariant(rng_);
     mapKind_ = explorationMapKindForTemplate(explorationMapTemplate_);
     phase_ = Phase::Preparation;
     winner_.reset();
@@ -2403,6 +2480,7 @@ GameSnapshot GameEngine::snapshot() const {
     snapshot.time = time_;
     snapshot.combatTime = combatTime_;
     snapshot.mapKind = mapKind_;
+    snapshot.explorationMapVariant = explorationMapVariant_;
     snapshot.explorationRound = explorationRound_;
     snapshot.explorationRoundLimit = explorationRoundLimit_;
     snapshot.explorationRoundsRemaining = std::max(0, explorationRoundLimit_ - explorationRound_);
@@ -2598,7 +2676,13 @@ int GameEngine::explorationRoundLimit() const {
 }
 
 void GameEngine::setRunModifiers(PlayerId playerId, const RunModifiers& modifiers) {
-    runModifiers_[playerIndex(playerId)] = modifiers;
+    int index = playerIndex(playerId);
+    int previousHiddenEventBonus = runModifiers_[index].hiddenEventCountBonus;
+    runModifiers_[index] = modifiers;
+    int extraHiddenEvents = modifiers.hiddenEventCountBonus - previousHiddenEventBonus;
+    if (extraHiddenEvents > 0 && phase_ != Phase::Finished && !units_.empty()) {
+        exploration_.addBonusHiddenEvents(hiddenEventPlacementCandidates(), rng_, extraHiddenEvents);
+    }
 }
 
 const RunModifiers& GameEngine::runModifiers(PlayerId playerId) const {
@@ -2669,7 +2753,8 @@ AiFeatureSchema GameEngine::aiFeatureSchema() const {
         {
             "kind:buy,deploy,move,return,upgrade-disabled,ready",
             "unit:cost,count,hp,attack,range,speed,threat,layer,targets_air",
-            "coord:normalized_x,normalized_y,forward_depth,unit_flags"
+            "coord:normalized_x,normalized_y,forward_depth,unit_flags",
+            "tactical:enemy_contact,objective_contact,frontline_gap,backline_gap,air_counter_need,role_need,formation,bank"
         }
     };
 }
@@ -2900,6 +2985,10 @@ std::vector<Coord> GameEngine::debugHiddenHealingCoords() const {
     return exploration_.hiddenHealingCoords();
 }
 
+std::vector<Coord> GameEngine::debugHiddenEventCoords(HiddenExplorationEventKind kind) const {
+    return exploration_.hiddenEventCoords(kind);
+}
+
 std::vector<AiAction> GameEngine::legalActions(PlayerId playerId) const {
     std::vector<AiAction> actions;
     if (phase_ != Phase::Preparation) return actions;
@@ -3032,6 +3121,7 @@ std::vector<double> GameEngine::actionFeatures(PlayerId playerId, const AiAction
     int kindIndex = static_cast<int>(action.kind);
     if (kindIndex >= 0 && kindIndex < 6) features[kindIndex] = 1.0;
 
+    const PlayerState& self = player(playerId);
     const UnitSpec* spec = specFor(action.type);
     const Unit* actionUnit = nullptr;
     if (action.unitId >= 0 && action.unitId < static_cast<int>(units_.size())) {
@@ -3055,6 +3145,86 @@ std::vector<double> GameEngine::actionFeatures(PlayerId playerId, const AiAction
     features[17] = board_.height > 1 ? action.coord.y / static_cast<double>(board_.height - 1) : 0.0;
     features[18] = playerId == PlayerId::One ? features[16] : 1.0 - features[16];
     features[19] = actionUnit && actionUnit->upgraded ? 1.0 : 0.0;
+
+    int enemyAir = 0;
+    int friendlyFrontline = 0;
+    int friendlyBackline = 0;
+    int friendlySupport = 0;
+    int friendlyAirAnswers = 0;
+    auto inspectFriendly = [&](const std::vector<UnitId>& ids) {
+        for (UnitId id : ids) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& owned = unit(id);
+            if (!owned.alive || owned.owner != playerId || isInternalUnit(owned.spec.type)) continue;
+            if (owned.spec.roleMask & (kRoleTank | kRoleMelee)) ++friendlyFrontline;
+            if (owned.spec.roleMask & (kRoleRanged | kRoleAoe | kRoleAssassin)) ++friendlyBackline;
+            if (owned.spec.roleMask & kRoleSupport) ++friendlySupport;
+            if (owned.spec.canAttackAir) ++friendlyAirAnswers;
+        }
+    };
+    inspectFriendly(self.bench);
+    inspectFriendly(self.deployed);
+
+    int nearestEnemy = std::numeric_limits<int>::max();
+    int nearestObjective = std::numeric_limits<int>::max();
+    int localFriendly = 0;
+    int localEnemyThreat = 0;
+    for (const Unit& candidate : units_) {
+        if (!candidate.alive || !candidate.deployed) continue;
+        if (candidate.owner == opponent(playerId) && !isInternalUnit(candidate.spec.type)) {
+            if (candidate.spec.layer == UnitLayer::Air) ++enemyAir;
+            int distance = manhattan(action.coord, candidate.coord);
+            nearestEnemy = std::min(nearestEnemy, distance);
+            if (distance <= 3) localEnemyThreat += candidate.spec.threat;
+        }
+        if (candidate.owner == playerId && !isInternalUnit(candidate.spec.type)) {
+            if (manhattan(action.coord, candidate.coord) <= 2) ++localFriendly;
+        }
+        if (isNeutralMonsterType(candidate.spec.type) &&
+            !candidate.neutralControlled &&
+            candidate.spec.type != UnitType::NeutralRedcap) {
+            nearestObjective = std::min(nearestObjective, manhattan(action.coord, candidate.coord));
+        }
+    }
+
+    bool isPlacementAction = action.kind == AiActionKind::Deploy ||
+                             action.kind == AiActionKind::MoveDeployed;
+    bool isBuyAction = action.kind == AiActionKind::Buy;
+    if (isPlacementAction) {
+        features[20] = distanceFeature(nearestEnemy == std::numeric_limits<int>::max() ? -1 : nearestEnemy, 12);
+        features[21] = distanceFeature(nearestObjective == std::numeric_limits<int>::max() ? -1 : nearestObjective, 14);
+        features[28] = clampUnitFeature(localFriendly, 4.0);
+        features[29] = clampUnitFeature(localEnemyThreat, 220.0);
+    }
+    if (isBuyAction && spec) {
+        features[24] = enemyAir > friendlyAirAnswers && spec->canAttackAir ? 1.0 : 0.0;
+        features[25] = friendlyFrontline < 2 && (spec->roleMask & (kRoleTank | kRoleMelee)) ? 1.0 : 0.0;
+        features[26] = friendlyBackline < 2 && (spec->roleMask & (kRoleRanged | kRoleAoe | kRoleAssassin)) ? 1.0 : 0.0;
+        features[27] = friendlySupport == 0 && (spec->roleMask & kRoleSupport) ? 1.0 : 0.0;
+        int cost = effectiveBuyCost(playerId, *spec);
+        features[30] = clampUnitFeature(self.money - cost, 48.0);
+    }
+    if (action.kind == AiActionKind::Ready) {
+        features[22] = clampUnitFeature(friendlyFrontline, 3.0);
+        features[23] = clampUnitFeature(friendlyBackline, 3.0);
+        features[24] = enemyAir > friendlyAirAnswers ? -1.0 : 0.25;
+    }
+    double actionQuality = 0.0;
+    if (spec) {
+        actionQuality = spec->threat + spec->attack * 0.5 + spec->range * 3.0 +
+                        spec->speed * 2.0 + spec->armorClass * 0.7;
+        if (action.kind == AiActionKind::Buy) {
+            actionQuality -= effectiveBuyCost(playerId, *spec) * 2.6;
+        }
+    }
+    if (isPlacementAction && actionUnit) {
+        actionQuality = aiDeploymentScore(playerId, *actionUnit, action.coord) +
+                        actionUnit->spec.threat * 0.5;
+    }
+    if (action.kind == AiActionKind::Ready) {
+        actionQuality = hasActiveCombatUnit(playerId) ? 5.0 : -260.0;
+    }
+    features[31] = clampUnitFeature(actionQuality, 260.0);
     return features;
 }
 
@@ -3086,7 +3256,8 @@ void GameEngine::resetBoard(MapKind kind) {
     mapKind_ = kind;
     board_ = Board();
     explorationMapTemplate_ = templateIndexForMapKind(kind);
-    paintExplorationMap(board_, explorationMapTemplate_);
+    explorationMapVariant_ = normalizedExplorationMapVariant(explorationMapVariant_);
+    paintExplorationMap(board_, explorationMapTemplate_, explorationMapVariant_);
     applyExplorationObjectiveTerrain();
 }
 
@@ -3258,7 +3429,10 @@ void GameEngine::initializeNeutralObjectives() {
 
 void GameEngine::initializeHiddenExplorationEvents() {
     exploration_.resetHiddenEvents({}, rng_);
+    exploration_.resetHiddenEvents(hiddenEventPlacementCandidates(), rng_);
+}
 
+std::vector<Coord> GameEngine::hiddenEventPlacementCandidates() const {
     std::vector<Coord> candidates;
     for (int y = 0; y < board_.height; ++y) {
         for (int x = 0; x < board_.width; ++x) {
@@ -3286,8 +3460,7 @@ void GameEngine::initializeHiddenExplorationEvents() {
             candidates.push_back(coord);
         }
     }
-
-    exploration_.resetHiddenEvents(std::move(candidates), rng_);
+    return candidates;
 }
 
 void GameEngine::applyExplorationObjectiveTerrain() {
@@ -3328,10 +3501,21 @@ bool GameEngine::triggerTrapAt(PlayerId triggeringPlayer, Coord coord, UnitId tr
         const ExplorationObjectiveState* objective = exploration_.objective(*objectiveIndex);
         int rewardQuality = objective ? objective->rewardQuality : 0;
         int dc = 13 + rewardQuality;
-        if (explorationCheckSucceeds(trigger, AbilityScoreKind::Dexterity, dc)) {
+        const RunModifiers& modifiers = runModifiers_[playerIndex(triggeringPlayer)];
+        if (explorationCheckSucceeds(trigger, AbilityScoreKind::Dexterity, dc,
+                                     SkillTag::None, std::max(0, modifiers.trapCheckBonus))) {
             pushEvent({EventType::StatusApplied, triggeringPlayer, triggerUnitId, kInvalidUnitId,
                        coord, coord, 0,
                        "Trap avoided"});
+            int disarmBonus = std::max(0, modifiers.trapDisarmGoldBonus);
+            if (disarmBonus > 0) {
+                int payout = economyPayout(disarmBonus);
+                player(triggeringPlayer).money += payout;
+                addExplorationScore(triggeringPlayer, payout);
+                pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                           coord, coord, payout,
+                           "Trap disarmed: +" + std::to_string(payout) + " gp"});
+            }
             clearExplorationObjective(*objectiveIndex, triggeringPlayer, triggerUnitId);
             return true;
         }
@@ -3357,7 +3541,8 @@ bool GameEngine::triggerRandomGoldEventAt(PlayerId triggeringPlayer, Coord coord
         exploration_.claimRandomGold(triggeringPlayer, coord, triggerUnitId);
     if (!event) return false;
 
-    int payout = economyPayout(event->amount);
+    int payout = economyPayout(event->amount +
+                               std::max(0, runModifiers_[playerIndex(triggeringPlayer)].hiddenEventPayoutBonus));
     player(triggeringPlayer).money += payout;
     addExplorationScore(triggeringPlayer, payout);
     ++hiddenEventsClaimedByPlayer_[playerIndex(triggeringPlayer)];
@@ -3386,14 +3571,30 @@ bool GameEngine::tryDetectHiddenEvent(PlayerId triggeringPlayer, Coord movedCoor
         int dc = 12;
     };
     std::vector<Candidate> candidates;
-    for (Coord coord : exploration_.randomGoldCoords()) {
-        if (manhattan(coord, movedCoord) <= 1) {
-            candidates.push_back({coord, HiddenExplorationEventKind::GoldCache, 12});
+    int revealRange = 1 + std::max(0, runModifiers_[playerIndex(triggeringPlayer)].hiddenEventRevealBonus);
+    auto dcFor = [](HiddenExplorationEventKind kind) {
+        switch (kind) {
+            case HiddenExplorationEventKind::GoldCache: return 12;
+            case HiddenExplorationEventKind::HealingSpring: return 13;
+            case HiddenExplorationEventKind::ArcaneFont: return 13;
+            case HiddenExplorationEventKind::SmugglerCache: return 13;
+            case HiddenExplorationEventKind::CursedIdol: return 14;
+            case HiddenExplorationEventKind::RallyBanner: return 12;
+            case HiddenExplorationEventKind::SilentWaystone: return 12;
         }
-    }
-    for (Coord coord : exploration_.hiddenHealingCoords()) {
-        if (manhattan(coord, movedCoord) <= 1) {
-            candidates.push_back({coord, HiddenExplorationEventKind::HealingSpring, 13});
+        return 12;
+    };
+    for (HiddenExplorationEventKind kind : {HiddenExplorationEventKind::GoldCache,
+                                            HiddenExplorationEventKind::HealingSpring,
+                                            HiddenExplorationEventKind::ArcaneFont,
+                                            HiddenExplorationEventKind::SmugglerCache,
+                                            HiddenExplorationEventKind::CursedIdol,
+                                            HiddenExplorationEventKind::RallyBanner,
+                                            HiddenExplorationEventKind::SilentWaystone}) {
+        for (Coord coord : exploration_.hiddenEventCoords(kind)) {
+            if (manhattan(coord, movedCoord) <= revealRange) {
+                candidates.push_back({coord, kind, dcFor(kind)});
+            }
         }
     }
     std::sort(candidates.begin(), candidates.end(), [movedCoord](const Candidate& lhs, const Candidate& rhs) {
@@ -3410,11 +3611,7 @@ bool GameEngine::tryDetectHiddenEvent(PlayerId triggeringPlayer, Coord movedCoor
                                       SkillTag::Perception, extra)) {
             continue;
         }
-        if (candidate.kind == HiddenExplorationEventKind::GoldCache) {
-            if (triggerRandomGoldEventAt(triggeringPlayer, candidate.coord, triggerUnitId)) return true;
-        } else {
-            if (triggerHiddenEventAt(triggeringPlayer, candidate.coord, triggerUnitId)) return true;
-        }
+        if (triggerHiddenEventAt(triggeringPlayer, candidate.coord, triggerUnitId)) return true;
     }
     return false;
 }
@@ -3430,33 +3627,153 @@ bool GameEngine::triggerHiddenEventAt(PlayerId triggeringPlayer, Coord coord, Un
         exploration_.claimHiddenEvent(triggeringPlayer, coord, triggerUnitId);
     if (!event) return false;
 
-    if (event->kind == HiddenExplorationEventKind::GoldCache) {
-        int payout = economyPayout(event->amount);
-        player(triggeringPlayer).money += payout;
-        addExplorationScore(triggeringPlayer, payout);
-        ++hiddenEventsClaimedByPlayer_[playerIndex(triggeringPlayer)];
-        pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
-                   coord, coord, payout,
-                   "Hidden cache found: +" + std::to_string(payout) + " gp"});
-        return true;
-    }
-
-    int healedTotal = 0;
+    const RunModifiers& modifiers = runModifiers_[playerIndex(triggeringPlayer)];
     std::vector<UnitId> allies = player(triggeringPlayer).deployed;
-    for (UnitId id : allies) {
-        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+    auto usableAlly = [&](UnitId id) -> Unit* {
+        if (id < 0 || id >= static_cast<int>(units_.size())) return nullptr;
         Unit& ally = unit(id);
-        if (!canTriggerHiddenEvent(ally) || ally.owner != triggeringPlayer || ally.hp.empty()) continue;
-        for (int& hp : ally.hp) {
-            int before = hp;
-            hp = std::min(ally.spec.maxHp, hp + event->amount);
-            healedTotal += hp - before;
+        if (!canReceivePartyCombatEffect(ally) || ally.owner != triggeringPlayer || ally.hp.empty()) return nullptr;
+        return &ally;
+    };
+
+    ++hiddenEventsClaimedByPlayer_[playerIndex(triggeringPlayer)];
+
+    switch (event->kind) {
+        case HiddenExplorationEventKind::GoldCache: {
+            int payout = economyPayout(event->amount + std::max(0, modifiers.hiddenEventPayoutBonus));
+            player(triggeringPlayer).money += payout;
+            addExplorationScore(triggeringPlayer, payout);
+            pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, payout,
+                       "Hidden cache found: +" + std::to_string(payout) + " gp"});
+            return true;
+        }
+        case HiddenExplorationEventKind::HealingSpring: {
+            int healedTotal = 0;
+            int healAmount = event->amount + std::max(0, modifiers.eventHealBonus);
+            for (UnitId id : allies) {
+                Unit* ally = usableAlly(id);
+                if (!ally) continue;
+                if (modifiers.healingSpringCleanses) {
+                    ally->statuses.erase(std::remove_if(ally->statuses.begin(), ally->statuses.end(),
+                                                        [](const StatusEffect& status) {
+                                                            return status.kind == StatusKind::Poisoned ||
+                                                                   status.kind == StatusKind::Chilled;
+                                                        }),
+                                        ally->statuses.end());
+                }
+                for (int& hp : ally->hp) {
+                    int before = hp;
+                    hp = std::min(ally->spec.maxHp, hp + healAmount);
+                    healedTotal += hp - before;
+                }
+            }
+            pushEvent({EventType::Healed, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, healedTotal,
+                       "Hidden healing spring restored the party"});
+            return true;
+        }
+        case HiddenExplorationEventKind::ArcaneFont: {
+            int shieldTotal = 0;
+            int shieldAmount = event->amount + std::max(0, modifiers.eventHealBonus);
+            for (UnitId id : allies) {
+                Unit* ally = usableAlly(id);
+                if (!ally) continue;
+                if (ally->spec.abilityCooldown > 0.0) {
+                    ally->abilityTimer = std::min(ally->spec.abilityCooldown,
+                                                  ally->abilityTimer + 1.0 + shieldAmount * 0.05);
+                }
+                shieldTotal += addShield(id, shieldAmount, triggerUnitId);
+            }
+            pushEvent({EventType::Shielded, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, shieldTotal,
+                       "Arcane font charged the party"});
+            return true;
+        }
+        case HiddenExplorationEventKind::SmugglerCache: {
+            bool passed = modifiers.smugglerAlwaysSucceeds;
+            if (!passed && triggerUnitId != kInvalidUnitId &&
+                triggerUnitId >= 0 && triggerUnitId < static_cast<int>(units_.size())) {
+                passed = explorationCheckSucceeds(unit(triggerUnitId), AbilityScoreKind::Dexterity, 13,
+                                                  SkillTag::SleightOfHand);
+            }
+            int rawReward = event->amount + std::max(0, modifiers.hiddenEventPayoutBonus);
+            if (passed) rawReward += 4;
+            int payout = economyPayout(rawReward);
+            player(triggeringPlayer).money += payout;
+            addExplorationScore(triggeringPlayer, payout);
+            pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, payout,
+                       "Smuggler cache found: +" + std::to_string(payout) + " gp"});
+            return true;
+        }
+        case HiddenExplorationEventKind::CursedIdol: {
+            bool warded = false;
+            if (triggerUnitId != kInvalidUnitId &&
+                triggerUnitId >= 0 && triggerUnitId < static_cast<int>(units_.size())) {
+                warded = explorationCheckSucceeds(unit(triggerUnitId), AbilityScoreKind::Wisdom, 14);
+            }
+            int rawReward = event->amount + std::max(0, modifiers.hiddenEventPayoutBonus) +
+                            std::max(0, modifiers.cursedIdolPayoutBonus);
+            int payout = economyPayout(rawReward);
+            player(triggeringPlayer).money += payout;
+            addExplorationScore(triggeringPlayer, payout);
+            int damage = std::max(1, event->amount / 2);
+            int reduction = std::max(0, modifiers.cursedIdolDamageReductionPercent);
+            damage = std::max(1, damage * std::max(0, 100 - reduction) / 100);
+            if (!warded) {
+                for (UnitId id : allies) {
+                    Unit* ally = usableAlly(id);
+                    if (!ally) continue;
+                    applyDamage(id, damage, DamageType::Necrotic, triggerUnitId);
+                }
+            }
+            pushEvent({EventType::GoldGained, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, payout,
+                       warded
+                           ? std::string("Cursed idol warded: +") + std::to_string(payout) + " gp"
+                           : std::string("Cursed idol claimed: +") + std::to_string(payout) + " gp"});
+            return true;
+        }
+        case HiddenExplorationEventKind::RallyBanner: {
+            int rallied = 0;
+            double duration = std::max(1, event->amount + std::max(0, modifiers.rallyDurationBonus));
+            for (UnitId id : allies) {
+                Unit* ally = usableAlly(id);
+                if (!ally) continue;
+                ally->firstStrikeReady = true;
+                double cooldown = effectiveAttackCooldown(*ally);
+                if (cooldown < std::numeric_limits<double>::infinity()) {
+                    ally->attackTimer = std::max(ally->attackTimer, cooldown);
+                }
+                addStatus(id, {StatusKind::FirstStrike, duration, 0, triggerUnitId});
+                ++rallied;
+            }
+            pushEvent({EventType::StatusApplied, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, rallied,
+                       "Rally banner readied the party"});
+            return true;
+        }
+        case HiddenExplorationEventKind::SilentWaystone: {
+            int shieldTotal = 0;
+            int shieldAmount = event->amount + std::max(0, modifiers.eventHealBonus);
+            for (UnitId id : allies) {
+                Unit* ally = usableAlly(id);
+                if (!ally) continue;
+                if (triggerUnitId != id && manhattan(ally->coord, coord) > 1) continue;
+                ally->statuses.erase(std::remove_if(ally->statuses.begin(), ally->statuses.end(),
+                                                    [](const StatusEffect& status) {
+                                                        return status.kind == StatusKind::Slow;
+                                                    }),
+                                    ally->statuses.end());
+                shieldTotal += addShield(id, shieldAmount, triggerUnitId);
+            }
+            pushEvent({EventType::Shielded, triggeringPlayer, triggerUnitId, kInvalidUnitId,
+                       coord, coord, shieldTotal,
+                       "Silent waystone steadied nearby allies"});
+            return true;
         }
     }
-    ++hiddenEventsClaimedByPlayer_[playerIndex(triggeringPlayer)];
-    pushEvent({EventType::Healed, triggeringPlayer, triggerUnitId, kInvalidUnitId,
-               coord, coord, healedTotal,
-               "Hidden healing spring restored the party"});
     return true;
 }
 
@@ -3749,6 +4066,16 @@ void GameEngine::startCombat() {
         }
         if (u.spec.ability == AbilityKind::RogueAmbush) {
             performAssassinLeap(u.id);
+        }
+    }
+    for (PlayerState& p : players_) {
+        int shield = std::max(0, runModifiers_[playerIndex(p.id)].roundStartShield);
+        if (shield <= 0) continue;
+        for (UnitId id : p.deployed) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            Unit& u = unit(id);
+            if (!canReceivePartyCombatEffect(u)) continue;
+            addShield(id, shield, kInvalidUnitId);
         }
     }
     pushEvent({EventType::CombatStarted, PlayerId::One, kInvalidUnitId, kInvalidUnitId,
@@ -4189,32 +4516,139 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
         return count;
     };
 
-    int enemyAir = 0;
-    int enemySupport = 0;
-    int enemyTanks = 0;
-    int enemyMelee = 0;
-    int enemyBackline = 0;
-    for (UnitId id : foe.deployed) {
-        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
-        const Unit& enemy = unit(id);
-        if (!enemy.alive || isInternalUnitType(enemy.spec.type)) {
+    struct NormalRosterProfile {
+        int combat = 0;
+        int deployedCombat = 0;
+        int benchCombat = 0;
+        int frontline = 0;
+        int tanks = 0;
+        int melee = 0;
+        int backline = 0;
+        int ranged = 0;
+        int support = 0;
+        int air = 0;
+        int airAnswers = 0;
+        int aoe = 0;
+        int assassin = 0;
+        int summoner = 0;
+        int cheapScreens = 0;
+        int highHpFrontline = 0;
+        int fragileBackline = 0;
+        int totalThreat = 0;
+        int totalHp = 0;
+        int totalCost = 0;
+    };
+
+    auto addRosterSpec = [](NormalRosterProfile& profile, const UnitSpec& spec, bool deployed) {
+        if (isInternalUnitType(spec.type)) return;
+        ++profile.combat;
+        if (deployed) {
+            ++profile.deployedCombat;
+        } else {
+            ++profile.benchCombat;
+        }
+        if (spec.roleMask & (kRoleTank | kRoleMelee)) ++profile.frontline;
+        if (spec.roleMask & kRoleTank) ++profile.tanks;
+        if (spec.roleMask & kRoleMelee) ++profile.melee;
+        if (spec.roleMask & (kRoleRanged | kRoleAoe | kRoleAssassin | kRoleSummoner)) ++profile.backline;
+        if (spec.roleMask & kRoleRanged) ++profile.ranged;
+        if (spec.roleMask & kRoleSupport) ++profile.support;
+        if (spec.layer == UnitLayer::Air) ++profile.air;
+        if (spec.canAttackAir) ++profile.airAnswers;
+        if (spec.roleMask & kRoleAoe) ++profile.aoe;
+        if (spec.roleMask & kRoleAssassin) ++profile.assassin;
+        if (spec.roleMask & kRoleSummoner) ++profile.summoner;
+        if (spec.cost > 0 && spec.cost <= 6) ++profile.cheapScreens;
+        if ((spec.roleMask & (kRoleTank | kRoleMelee)) &&
+            (spec.maxHp * spec.unitCount >= 180 || spec.threat >= 55)) {
+            ++profile.highHpFrontline;
+        }
+        if ((spec.roleMask & (kRoleRanged | kRoleAoe | kRoleSupport | kRoleSummoner)) &&
+            spec.maxHp * spec.unitCount <= 100) {
+            ++profile.fragileBackline;
+        }
+        profile.totalThreat += spec.threat;
+        profile.totalHp += spec.maxHp * spec.unitCount;
+        profile.totalCost += std::max(0, spec.cost);
+    };
+
+    auto inspectOwnedIds = [&](NormalRosterProfile& profile, PlayerId owner,
+                               const std::vector<UnitId>& ids) {
+        for (UnitId id : ids) {
+            if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+            const Unit& owned = unit(id);
+            if (!owned.alive || owned.owner != owner || isInternalUnitType(owned.spec.type)) {
+                continue;
+            }
+            addRosterSpec(profile, owned.spec, owned.deployed);
+        }
+    };
+
+    NormalRosterProfile selfProfile;
+    NormalRosterProfile foeProfile;
+    inspectOwnedIds(selfProfile, playerId, self.deployed);
+    inspectOwnedIds(selfProfile, playerId, self.bench);
+    inspectOwnedIds(foeProfile, opponent(playerId), foe.deployed);
+    inspectOwnedIds(foeProfile, opponent(playerId), foe.bench);
+
+    auto foeOwnsType = [&](UnitType type) {
+        auto containsType = [&](const std::vector<UnitId>& ids) {
+            for (UnitId id : ids) {
+                if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+                const Unit& enemy = unit(id);
+                if (enemy.alive && enemy.owner == opponent(playerId) &&
+                    enemy.spec.type == type && !isInternalUnitType(enemy.spec.type)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        return containsType(foe.deployed) || containsType(foe.bench);
+    };
+    for (UnitType recent : foe.recentBuys) {
+        if (foeOwnsType(recent)) {
             continue;
         }
-        if (enemy.spec.layer == UnitLayer::Air) ++enemyAir;
-        if (enemy.spec.roleMask & kRoleSupport) ++enemySupport;
-        if (enemy.spec.roleMask & kRoleTank) ++enemyTanks;
-        if (enemy.spec.roleMask & kRoleMelee) ++enemyMelee;
-        if (enemy.spec.roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) ++enemyBackline;
-    }
-    for (UnitType recent : foe.recentBuys) {
         const UnitSpec* spec = specFor(recent);
-        if (!spec) continue;
-        if (spec->layer == UnitLayer::Air) ++enemyAir;
-        if (spec->roleMask & kRoleSupport) ++enemySupport;
-        if (spec->roleMask & kRoleTank) ++enemyTanks;
-        if (spec->roleMask & kRoleMelee) ++enemyMelee;
-        if (spec->roleMask & (kRoleSupport | kRoleRanged | kRoleAoe)) ++enemyBackline;
+        if (spec) addRosterSpec(foeProfile, *spec, false);
     }
+
+    int enemyDenseCluster = 0;
+    for (UnitId anchorId : foe.deployed) {
+        if (anchorId < 0 || anchorId >= static_cast<int>(units_.size())) continue;
+        const Unit& anchor = unit(anchorId);
+        if (!anchor.alive || anchor.owner != opponent(playerId) ||
+            isInternalUnitType(anchor.spec.type)) {
+            continue;
+        }
+        int cluster = 0;
+        for (UnitId otherId : foe.deployed) {
+            if (otherId < 0 || otherId >= static_cast<int>(units_.size())) continue;
+            const Unit& other = unit(otherId);
+            if (!other.alive || other.owner != opponent(playerId) ||
+                isInternalUnitType(other.spec.type)) {
+                continue;
+            }
+            if (manhattan(anchor.coord, other.coord) <= 2) ++cluster;
+        }
+        enemyDenseCluster = std::max(enemyDenseCluster, cluster);
+    }
+
+    const bool enemyHasAir = foeProfile.air > 0;
+    const bool airPressure = enemyHasAir &&
+                             selfProfile.airAnswers < std::max(1, foeProfile.air);
+    const bool frontlinePressure = foeProfile.frontline >= 2 ||
+                                   foeProfile.highHpFrontline >= 2 ||
+                                   (foeProfile.frontline > selfProfile.frontline + 1 &&
+                                    foeProfile.totalHp > selfProfile.totalHp + 160);
+    const bool backlinePressure = foeProfile.support > 0 || foeProfile.backline >= 2;
+    const bool densePressure = enemyDenseCluster >= 3 ||
+                               (foeProfile.summoner > 0 && foeProfile.combat >= 2);
+    const bool assassinPressure = foeProfile.assassin > 0 ||
+                                  (foeProfile.melee >= 3 && selfProfile.backline > 0);
+    const bool fragileDamagePressure = foeProfile.backline >= 2 && foeProfile.frontline <= 1;
+    const bool hardCounterNeed = airPressure || frontlinePressure || backlinePressure ||
+                                 densePressure || assassinPressure || fragileDamagePressure;
 
     auto targetCount = [&](UnitType type) {
         int roundBand = explorationRound_ + 1;
@@ -4225,8 +4659,17 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
                 case UnitType::Ranger:
                 case UnitType::Cleric:
                     return 1;
+                case UnitType::Skeleton:
+                    return (frontlinePressure || densePressure) ? 2 : (enemyHasAir ? 1 : 0);
                 case UnitType::ImpSwarm:
-                    return enemyAir > 0 ? 1 : 0;
+                    return enemyHasAir ? 1 : 0;
+                case UnitType::Evoker:
+                    return (frontlinePressure || densePressure) ? 1 : 0;
+                case UnitType::RogueAssassin:
+                    return backlinePressure ? 1 : 0;
+                case UnitType::Druid:
+                    return (!frontlinePressure && !airPressure &&
+                            !backlinePressure && !densePressure) ? 1 : 0;
                 default:
                     return 0;
             }
@@ -4239,9 +4682,9 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
             case UnitType::Skeleton:
                 return 1;
             case UnitType::ImpSwarm:
-                return enemyAir > 0 || roundBand >= 2 ? 1 : 0;
+                return airPressure || roundBand >= 2 ? 1 : 0;
             case UnitType::RogueAssassin:
-                return enemySupport > 0 || enemyBackline > 1 || roundBand >= 3 ? 1 : 0;
+                return backlinePressure || roundBand >= 3 ? 1 : 0;
             case UnitType::Paladin:
             case UnitType::Evoker:
             case UnitType::Druid:
@@ -4262,49 +4705,293 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
 
     std::vector<UnitType> buyPlan;
     if (round_ <= 1) {
-        buyPlan.insert(buyPlan.end(), {
-            UnitType::ShieldGuardian,
-            UnitType::Ranger,
-            UnitType::Cleric
-        });
+        if (enemyHasAir) {
+            buyPlan.insert(buyPlan.end(), {
+                UnitType::ShieldGuardian,
+                UnitType::Ranger,
+                UnitType::Cleric,
+                UnitType::ImpSwarm,
+                UnitType::Skeleton
+            });
+        } else if (densePressure) {
+            buyPlan.insert(buyPlan.end(), {
+                UnitType::ShieldGuardian,
+                UnitType::Ranger,
+                UnitType::Evoker,
+                UnitType::Skeleton,
+                UnitType::Skeleton
+            });
+        } else if (frontlinePressure) {
+            buyPlan.insert(buyPlan.end(), {
+                UnitType::ShieldGuardian,
+                UnitType::Ranger,
+                UnitType::Evoker,
+                UnitType::Skeleton,
+                UnitType::Skeleton
+            });
+        } else if (backlinePressure) {
+            buyPlan.insert(buyPlan.end(), {
+                UnitType::ShieldGuardian,
+                UnitType::Ranger,
+                UnitType::Cleric,
+                UnitType::RogueAssassin
+            });
+        } else {
+            buyPlan.insert(buyPlan.end(), {
+                UnitType::ShieldGuardian,
+                UnitType::Ranger,
+                UnitType::Cleric,
+                UnitType::Druid
+            });
+        }
     }
-    if (enemyAir > 0) {
+    if (airPressure) {
         buyPlan.push_back(UnitType::Ranger);
         buyPlan.push_back(UnitType::ImpSwarm);
         buyPlan.push_back(UnitType::DragonWyrmling);
     }
-    if (enemySupport > 0) buyPlan.push_back(UnitType::RogueAssassin);
-    if (enemyTanks > 0) {
+    if (backlinePressure) buyPlan.push_back(UnitType::RogueAssassin);
+    if (densePressure) {
+        buyPlan.push_back(UnitType::Evoker);
+        buyPlan.push_back(UnitType::FireMephit);
+        buyPlan.push_back(UnitType::Necromancer);
+    }
+    if (frontlinePressure) {
         buyPlan.push_back(UnitType::Evoker);
         buyPlan.push_back(UnitType::Paladin);
     }
-    if (enemyMelee >= 2) {
+    if (assassinPressure || foeProfile.melee >= 2) {
         buyPlan.push_back(UnitType::ShieldGuardian);
         buyPlan.push_back(UnitType::Cleric);
     }
 
-    const std::vector<UnitType> defaultPlan = {
-        UnitType::ShieldGuardian,
-        UnitType::Ranger,
-        UnitType::Cleric,
-        UnitType::Paladin,
-        UnitType::Skeleton,
-        UnitType::Evoker,
-        UnitType::Druid,
-        UnitType::ImpSwarm,
-        UnitType::DragonWyrmling,
-        UnitType::Barbarian,
-        UnitType::RogueAssassin,
-        UnitType::Necromancer,
-        UnitType::FireMephit,
-        UnitType::GithyankiWarrior,
-        UnitType::GoblinSkirmisher
-    };
-    buyPlan.insert(buyPlan.end(), defaultPlan.begin(), defaultPlan.end());
+    if (round_ <= 1) {
+        const std::vector<UnitType> defaultPlan = {
+            UnitType::ShieldGuardian,
+            UnitType::Ranger,
+            UnitType::Cleric,
+            UnitType::Paladin,
+            UnitType::Skeleton,
+            UnitType::Evoker,
+            UnitType::Druid,
+            UnitType::ImpSwarm,
+            UnitType::DragonWyrmling,
+            UnitType::Barbarian,
+            UnitType::RogueAssassin,
+            UnitType::Necromancer,
+            UnitType::FireMephit,
+            UnitType::GithyankiWarrior,
+            UnitType::GoblinSkirmisher
+        };
+        buyPlan.insert(buyPlan.end(), defaultPlan.begin(), defaultPlan.end());
 
-    for (UnitType type : buyPlan) {
-        if (countOwned(type) >= targetCount(type)) continue;
-        if (const AiAction* buy = findAction(AiActionKind::Buy, type)) return *buy;
+        for (UnitType type : buyPlan) {
+            if (countOwned(type) >= targetCount(type)) continue;
+            if (const AiAction* buy = findAction(AiActionKind::Buy, type)) return *buy;
+        }
+    }
+
+    auto typeCap = [&](UnitType type) {
+        int roundBand = explorationRound_ + 1;
+        switch (type) {
+            case UnitType::Skeleton:
+                return frontlinePressure || densePressure ? 2 : (rosterCountNow < 6 ? 1 : 0);
+            case UnitType::ShieldGuardian:
+                return (assassinPressure || roundBand >= 4 || selfProfile.tanks == 0) ? 2 : 1;
+            case UnitType::Ranger:
+                return airPressure || roundBand >= 3 ? 2 : 1;
+            case UnitType::Cleric:
+                return selfProfile.combat >= 7 && roundBand >= 4 ? 2 : 1;
+            case UnitType::ImpSwarm:
+                return airPressure && foeProfile.air >= 2 ? 2 : 1;
+            case UnitType::RogueAssassin:
+                return backlinePressure && foeProfile.backline >= 3 ? 2 : 1;
+            case UnitType::Evoker:
+                return (densePressure || frontlinePressure) && roundBand >= 4 ? 2 : 1;
+            case UnitType::Druid:
+            case UnitType::Paladin:
+            case UnitType::DragonWyrmling:
+            case UnitType::Barbarian:
+            case UnitType::Necromancer:
+            case UnitType::FireMephit:
+                return 1;
+            case UnitType::GithyankiWarrior:
+            case UnitType::GoblinSkirmisher:
+                return rosterCountNow < 7 ? 1 : 0;
+            default:
+                return 0;
+        }
+    };
+
+    auto countersNeed = [&](const UnitSpec& spec) {
+        if (airPressure && spec.canAttackAir) return true;
+        if (frontlinePressure && (spec.roleMask & (kRoleAoe | kRoleTank | kRoleMelee))) return true;
+        if (backlinePressure && (spec.roleMask & kRoleAssassin)) return true;
+        if (densePressure && (spec.roleMask & (kRoleAoe | kRoleSummoner))) return true;
+        if (assassinPressure && (spec.roleMask & (kRoleTank | kRoleSupport))) return true;
+        if (fragileDamagePressure && (spec.roleMask & (kRoleTank | kRoleAssassin))) return true;
+        return false;
+    };
+
+    int desiredRoster = 4;
+    if (round_ <= 1) {
+        desiredRoster = 4;
+    } else if (round_ == 2) {
+        desiredRoster = 5;
+    } else if (round_ == 3) {
+        desiredRoster = 7;
+    } else if (round_ >= 5) {
+        desiredRoster = 9;
+    } else {
+        desiredRoster = 8;
+    }
+    desiredRoster = std::min(desiredRoster, benchLimit(playerId));
+    int desiredFrontline = desiredRoster >= 7 ? 3 : 2;
+    int desiredBackline = desiredRoster >= 7 ? 3 : 2;
+    int desiredSupport = selfProfile.combat >= 2 ? 1 : 0;
+    int reserveTarget = round_ <= 1 ? 0 : (round_ <= 3 ? 8 : 32);
+
+    auto normalBuyScore = [&](const UnitSpec& spec) {
+        int ownedSame = countOwned(spec.type);
+        int cap = typeCap(spec.type);
+        if (cap <= 0 || ownedSame >= cap) {
+            return -std::numeric_limits<double>::infinity();
+        }
+
+        int cost = effectiveBuyCost(playerId, spec);
+        int afterMoney = self.money - cost;
+        bool counter = countersNeed(spec);
+        if (afterMoney < 0) {
+            return -std::numeric_limits<double>::infinity();
+        }
+        if (rosterCountNow >= desiredRoster && !counter && afterMoney < reserveTarget) {
+            return -std::numeric_limits<double>::infinity();
+        }
+
+        const bool isTank = (spec.roleMask & kRoleTank) != 0;
+        const bool isMelee = (spec.roleMask & kRoleMelee) != 0;
+        const bool isAssassin = (spec.roleMask & kRoleAssassin) != 0;
+        const bool sturdyFrontlineCandidate =
+            isTank || (isMelee && !isAssassin && spec.maxHp * spec.unitCount >= 85);
+        const bool sustainedBacklineCandidate =
+            (spec.roleMask & (kRoleRanged | kRoleAoe | kRoleSummoner)) ||
+            (isAssassin && (backlinePressure || fragileDamagePressure));
+
+        double score = spec.threat * 0.45 + spec.attack * 0.25 +
+                       spec.maxHp * spec.unitCount * 0.010 +
+                       spec.range * 2.5 + spec.speed * 1.2 -
+                       cost * 1.15;
+
+        if (counter) score += 42.0;
+        if (airPressure && spec.canAttackAir) score += 56.0 + foeProfile.air * 12.0;
+        if (frontlinePressure && (spec.roleMask & kRoleAoe)) score += 46.0;
+        if (frontlinePressure && (spec.roleMask & (kRoleTank | kRoleMelee))) score += 28.0;
+        if (backlinePressure && (spec.roleMask & kRoleAssassin)) score += 58.0;
+        if (densePressure && (spec.roleMask & kRoleAoe)) score += 62.0;
+        if (densePressure && (spec.roleMask & kRoleSummoner)) score += 24.0;
+        if (assassinPressure && (spec.roleMask & kRoleTank)) score += 44.0;
+        if (assassinPressure && (spec.roleMask & kRoleSupport)) score += 22.0;
+        if (fragileDamagePressure && (spec.roleMask & kRoleAssassin)) score += 28.0;
+
+        if (selfProfile.frontline < desiredFrontline && sturdyFrontlineCandidate) {
+            score += 42.0 + (desiredFrontline - selfProfile.frontline) * 10.0;
+        }
+        if (selfProfile.backline < desiredBackline && sustainedBacklineCandidate) {
+            score += 34.0 + (desiredBackline - selfProfile.backline) * 7.0;
+        }
+        if (selfProfile.support < desiredSupport && (spec.roleMask & kRoleSupport)) {
+            score += 34.0;
+        }
+        if (selfProfile.airAnswers == 0 && spec.canAttackAir) score += 12.0;
+        if (selfProfile.tanks == 0 && isTank) score += 70.0;
+        if (selfProfile.ranged == 0 && (spec.roleMask & kRoleRanged)) score += 32.0;
+        if (isAssassin && !backlinePressure && !fragileDamagePressure) {
+            score -= rosterCountNow < desiredRoster ? 18.0 : 10.0;
+        }
+
+        if (rosterCountNow < desiredRoster) {
+            score += (desiredRoster - rosterCountNow) * 32.0;
+            if (cost <= 9) score += 12.0;
+            int remainingSlots = std::max(0, desiredRoster - rosterCountNow - 1);
+            int minimumFillBudget = reserveTarget + remainingSlots * 4;
+            if (!counter && remainingSlots > 0 && afterMoney < minimumFillBudget) {
+                score -= (minimumFillBudget - afterMoney) * (round_ <= 3 ? 6.0 : 3.0);
+            }
+            if (round_ <= 3 && cost <= 9) score += 10.0;
+            if (round_ <= 3 && cost >= 13 && !counter && remainingSlots >= 2) score -= 14.0;
+        } else {
+            score -= 12.0;
+        }
+
+        score -= ownedSame * 24.0;
+        if (selfProfile.combat >= 6 && cost <= 6 && !counter) score -= 18.0;
+        if (spec.roleMask & kRoleControl) score += 6.0;
+        if (spec.layer == UnitLayer::Air) score += airPressure ? 12.0 : 4.0;
+        if (afterMoney >= reserveTarget) {
+            score += round_ >= 4 ? 10.0 : 3.0;
+        } else if (!counter) {
+            score -= (reserveTarget - afterMoney) * (round_ >= 4 ? 4.0 : 1.5);
+        }
+        if (round_ <= 3 && afterMoney > 14 && rosterCountNow < desiredRoster) {
+            score -= afterMoney * 0.9;
+        }
+        return score;
+    };
+
+    const AiAction* bestBuy = nullptr;
+    double bestBuyScore = -std::numeric_limits<double>::infinity();
+    for (const AiAction& action : legalActions) {
+        if (action.kind != AiActionKind::Buy) continue;
+        const UnitSpec* spec = specFor(action.type);
+        if (!spec) continue;
+        double score = normalBuyScore(*spec);
+        if (!bestBuy || score > bestBuyScore) {
+            bestBuy = &action;
+            bestBuyScore = score;
+        }
+    }
+
+    double buyThreshold = 48.0;
+    if (rosterCountNow < desiredRoster) {
+        buyThreshold = 0.0;
+    } else if (hardCounterNeed) {
+        buyThreshold = 24.0;
+    } else if (self.money >= reserveTarget + 14 && rosterCountNow < desiredRoster + 1) {
+        buyThreshold = 30.0;
+    }
+    if (bestBuy && bestBuyScore >= buyThreshold) {
+        return *bestBuy;
+    }
+
+    bool hasWingUnit = false;
+    for (UnitId id : self.deployed) {
+        if (id < 0 || id >= static_cast<int>(units_.size())) continue;
+        const Unit& u = unit(id);
+        if (u.alive && u.owner == playerId && !isInternalUnit(u.spec.type) &&
+            isEdgeWingExplorationStagingCoord(playerId, u.coord)) {
+            hasWingUnit = true;
+            break;
+        }
+    }
+    if (!hasWingUnit && rosterCountNow <= 4) {
+        const AiAction* rangerWingDeploy = nullptr;
+        int rangerWingScore = std::numeric_limits<int>::min();
+        for (const AiAction& action : legalActions) {
+            if ((action.kind != AiActionKind::Deploy && action.kind != AiActionKind::MoveDeployed) ||
+                action.unitId < 0 || action.unitId >= static_cast<int>(units_.size()) ||
+                !isEdgeWingExplorationStagingCoord(playerId, action.coord)) {
+                continue;
+            }
+            const Unit& u = unit(action.unitId);
+            if (u.spec.type != UnitType::Ranger) continue;
+            int score = aiDeploymentScore(playerId, u, action.coord) -
+                        std::abs(action.coord.y - (action.coord.y < board_.height / 2 ? 1 : board_.height - 2)) * 12;
+            if (!rangerWingDeploy || score > rangerWingScore) {
+                rangerWingDeploy = &action;
+                rangerWingScore = score;
+            }
+        }
+        if (rangerWingDeploy) return *rangerWingDeploy;
     }
 
     const AiAction* bestDeploy = nullptr;
@@ -4344,7 +5031,9 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
                 break;
             case UnitType::RogueAssassin:
                 desiredForward = 2;
-                desiredY = coord.y < board_.height / 2 ? 0 : board_.height - 1;
+                desiredY = backlinePressure
+                               ? (coord.y < board_.height / 2 ? 0 : board_.height - 1)
+                               : 4;
                 break;
             case UnitType::FireMephit:
             case UnitType::ImpSwarm:
@@ -4361,10 +5050,12 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
         score += u.spec.threat / 2;
         score += aiDeploymentScore(playerId, u, coord);
         if (isEdgeWingExplorationStagingCoord(playerId, coord)) {
-            bool prefersWing = u.spec.type == UnitType::RogueAssassin ||
+            bool prefersWing = (u.spec.type == UnitType::RogueAssassin && backlinePressure) ||
                                u.spec.type == UnitType::GoblinSkirmisher ||
+                               u.spec.type == UnitType::Ranger ||
                                u.spec.layer == UnitLayer::Air;
             score += prefersWing ? 42 : -18;
+            if (u.spec.type == UnitType::Ranger) score += hasWingUnit ? 45 : 180;
         }
         if (rosterCountNow <= 4) {
             if (coord.y <= 1 || coord.y >= board_.height - 2) score += 10;
@@ -4374,6 +5065,71 @@ std::optional<AiAction> GameEngine::chooseScriptedNormalAction(
             (coord.y == 0 || coord.y == board_.height - 1)) {
             score += 20;
         }
+        int nearestObjective = std::numeric_limits<int>::max();
+        int nearestEnemy = std::numeric_limits<int>::max();
+        int nearestHostileMelee = std::numeric_limits<int>::max();
+        int nearestFriendlyFrontline = std::numeric_limits<int>::max();
+        int nearestFriendlyBackline = std::numeric_limits<int>::max();
+        int nearbyFriends = 0;
+        for (const Unit& candidate : units_) {
+            if (!candidate.alive || !candidate.deployed) continue;
+            int distance = manhattan(coord, candidate.coord);
+            if (isNeutralMonsterType(candidate.spec.type) &&
+                candidate.spec.type != UnitType::NeutralRedcap &&
+                !candidate.neutralControlled) {
+                nearestObjective = std::min(nearestObjective, distance);
+            }
+            if (candidate.owner == opponent(playerId) && !isInternalUnit(candidate.spec.type)) {
+                nearestEnemy = std::min(nearestEnemy, distance);
+                if (candidate.spec.roleMask & (kRoleTank | kRoleMelee | kRoleAssassin)) {
+                    nearestHostileMelee = std::min(nearestHostileMelee, distance);
+                }
+            }
+            if (candidate.owner == playerId && candidate.id != u.id && !isInternalUnit(candidate.spec.type) &&
+                distance <= 2) {
+                ++nearbyFriends;
+            }
+            if (candidate.owner == playerId && candidate.id != u.id && !isInternalUnit(candidate.spec.type)) {
+                if (candidate.spec.roleMask & (kRoleTank | kRoleMelee)) {
+                    nearestFriendlyFrontline = std::min(nearestFriendlyFrontline, distance);
+                }
+                if (candidate.spec.roleMask & (kRoleRanged | kRoleAoe | kRoleSupport | kRoleSummoner)) {
+                    nearestFriendlyBackline = std::min(nearestFriendlyBackline, distance);
+                }
+            }
+        }
+        if (nearestObjective != std::numeric_limits<int>::max()) {
+            score += std::max(0, 42 - nearestObjective * 5);
+        }
+        if (nearestEnemy != std::numeric_limits<int>::max()) {
+            if (u.spec.roleMask & (kRoleTank | kRoleMelee)) score += std::max(0, 30 - nearestEnemy * 5);
+            if (u.spec.roleMask & (kRoleRanged | kRoleSupport)) score += nearestEnemy <= 1 ? -28 : 10;
+        }
+        if (u.spec.roleMask & kRoleSupport) {
+            if (nearestFriendlyFrontline >= 1 && nearestFriendlyFrontline <= 3) {
+                score += 46;
+            } else if (nearestFriendlyFrontline == std::numeric_limits<int>::max()) {
+                score -= 24;
+            }
+            if (nearestHostileMelee <= 2) score -= 46;
+        }
+        if (u.spec.roleMask & (kRoleRanged | kRoleAoe | kRoleSummoner)) {
+            if (nearestFriendlyFrontline >= 2 && nearestFriendlyFrontline <= 4) score += 30;
+            if (nearestHostileMelee <= 2) score -= 42;
+            if (forward == 0) score += 10;
+        }
+        if (u.spec.roleMask & (kRoleTank | kRoleMelee)) {
+            if (nearestFriendlyBackline <= 3) score += 18;
+        }
+        if (u.spec.type == UnitType::RogueAssassin) {
+            if (backlinePressure && isEdgeWingExplorationStagingCoord(playerId, coord)) score += 48;
+            if (!backlinePressure && isEdgeWingExplorationStagingCoord(playerId, coord)) score -= 30;
+        }
+        if ((u.spec.roleMask & (kRoleRanged | kRoleAoe | kRoleSupport | kRoleSummoner)) &&
+            nearbyFriends >= 4) {
+            score -= 18;
+        }
+        score += std::min(24, nearbyFriends * 8);
         return score;
     };
 
@@ -4532,6 +5288,10 @@ double GameEngine::aiPurchaseScore(PlayerId playerId, const UnitSpec& spec) cons
     int enemyAir = 0;
     int enemyHealers = 0;
     int enemyDense = 0;
+    int enemyThreat = 0;
+    int enemySupportThreat = 0;
+    int enemyFrontline = 0;
+    int enemyBackline = 0;
     for (UnitId id : foe.deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& u = unit(id);
@@ -4539,11 +5299,19 @@ double GameEngine::aiPurchaseScore(PlayerId playerId, const UnitSpec& spec) cons
         if (u.spec.layer == UnitLayer::Air) ++enemyAir;
         if (u.spec.ability == AbilityKind::ClericHeal) ++enemyHealers;
         if (u.coord.x >= 3 && u.coord.x <= 7) ++enemyDense;
+        enemyThreat += u.spec.threat;
+        if (u.spec.roleMask & kRoleSupport) enemySupportThreat += u.spec.threat;
+        if (u.spec.roleMask & (kRoleTank | kRoleMelee)) ++enemyFrontline;
+        if (u.spec.roleMask & (kRoleRanged | kRoleAoe | kRoleSupport)) ++enemyBackline;
     }
 
     if (enemyAir > 0 && spec.canAttackAir) score += 25 + enemyAir * 8;
     if (enemyHealers > 0 && (spec.roleMask & kRoleAssassin)) score += 35;
     if (enemyDense >= 3 && (spec.roleMask & kRoleAoe)) score += 30;
+    if (enemyFrontline >= 2 && (spec.roleMask & kRoleAoe)) score += 10 + enemyFrontline * 4;
+    if (enemyBackline >= 2 && (spec.roleMask & kRoleAssassin)) score += 12 + enemyBackline * 5;
+    if (enemySupportThreat > 0 && (spec.roleMask & kRoleAssassin)) score += std::min(30, enemySupportThreat / 2);
+    if (enemyThreat >= 120 && (spec.roleMask & (kRoleTank | kRoleControl))) score += 10;
     if (spec.roleMask & kRoleTank) score += 8;
     if (spec.roleMask & kRoleSupport) score += 5;
     if (spec.roleMask & kRoleControl) score += 8;
@@ -4616,17 +5384,39 @@ int GameEngine::aiDeploymentScore(PlayerId playerId, const Unit& unit, Coord coo
     if (unit.spec.layer == UnitLayer::Air) score += 5 - centerPenalty;
 
     int bestTargetScore = std::numeric_limits<int>::min();
+    int nearbyFriends = 0;
+    int nearestEnemy = std::numeric_limits<int>::max();
+    int nearestObjective = std::numeric_limits<int>::max();
     for (const Unit& target : units_) {
-        if (!target.alive || !target.deployed || !canAttack(unit, target)) continue;
-        if (board_.blocked(coord) || board_.blocked(target.coord)) continue;
-        int targetScore = target.spec.threat - manhattan(coord, target.coord) * 2;
-        if (isNeutralMonsterType(target.spec.type)) targetScore += 45;
+        if (!target.alive || !target.deployed) continue;
+        int distance = manhattan(coord, target.coord);
+        if (target.owner == playerId && target.id != unit.id && !isInternalUnit(target.spec.type)) {
+            if (distance <= 2) ++nearbyFriends;
+            continue;
+        }
+        if (!canAttack(unit, target) || board_.blocked(coord) || board_.blocked(target.coord)) continue;
+        int targetScore = target.spec.threat - distance * 2;
+        if (isNeutralMonsterType(target.spec.type)) {
+            targetScore += 45;
+            nearestObjective = std::min(nearestObjective, distance);
+        } else if (target.owner == opponent(playerId)) {
+            nearestEnemy = std::min(nearestEnemy, distance);
+        }
         bestTargetScore = std::max(bestTargetScore, targetScore);
     }
     if (bestTargetScore == std::numeric_limits<int>::min()) {
         if (std::abs(coord.y - board_.height / 2) > 2) score -= 160;
     } else {
         score += std::min(150, bestTargetScore);
+    }
+    if (nearbyFriends == 0 && !(unit.spec.roleMask & kRoleAssassin)) score -= 12;
+    score += std::min(20, nearbyFriends * 6);
+    if (nearestObjective != std::numeric_limits<int>::max()) {
+        score += std::max(0, 28 - nearestObjective * 4);
+    }
+    if (nearestEnemy != std::numeric_limits<int>::max()) {
+        if (unit.spec.roleMask & (kRoleTank | kRoleMelee)) score += std::max(0, 24 - nearestEnemy * 4);
+        if ((unit.spec.roleMask & (kRoleRanged | kRoleSupport)) && nearestEnemy <= 1) score -= 24;
     }
 
     return score;
@@ -5018,8 +5808,9 @@ void GameEngine::tickCombat(double dt) {
         u.retargetTimer -= dt;
         refreshTarget(u, shouldForceRetarget(u));
 
-        if (u.target != kInvalidUnitId && u.attackTimer >= effectiveAttackCooldown(u) &&
-            inAttackRange(u, unit(u.target))) {
+        double cooldown = effectiveAttackCooldown(u);
+        bool readyToAttack = u.target != kInvalidUnitId && u.attackTimer >= cooldown;
+        if (readyToAttack && inAttackRange(u, unit(u.target))) {
             attack(id, u.target);
             if (id < static_cast<int>(units_.size()) && unit(id).alive) unit(id).attackTimer = 0.0;
         }
@@ -5055,11 +5846,10 @@ bool GameEngine::targetAllowedByAggro(const Unit& u, const Unit& candidate) cons
         if (manhattan(candidate.coord, origin) > kRedcapAmbushRadius) return false;
     }
     if ((isNeutralGuardianUnit(u) || isNeutralSpawServant(u)) &&
-        !withinNeutralLeash(u, candidate.coord)) {
+        candidate.id != u.provokedBy && !withinNeutralLeash(u, candidate.coord)) {
         return false;
     }
     if (isNeutralLikeCombatant(u)) return true;
-    if (isRoundTransientUnit(u.spec.type)) return false;
     return manhattan(u.coord, candidate.coord) <=
            std::max(kExplorationUnitAggroRadius, u.spec.range + 3);
 }
@@ -5162,7 +5952,6 @@ bool GameEngine::shouldForceRetarget(const Unit& u) const {
     const Unit& target = unit(u.target);
     if (!target.alive || !target.deployed || !canAttack(u, target)) return true;
     if (!targetAllowedByAggro(u, target)) return true;
-    if (isRoundTransientUnit(u.spec.type) && !isNeutralSpawServant(u)) return true;
     TargetCandidate current = evaluateTargetCandidate(u, target);
     if (!current.reachable) return true;
     if (!current.inRange && hasImmediateAttackTarget(u)) return true;
@@ -5298,7 +6087,7 @@ UnitId GameEngine::selectHealTarget(const Unit& healer) const {
     for (UnitId id : player(healer.owner).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& ally = unit(id);
-        if (!ally.alive || !ally.deployed || isInternalUnit(ally.spec.type)) continue;
+        if (!canReceivePartyCombatEffect(ally)) continue;
         if (manhattan(healer.coord, ally.coord) > healer.spec.abilityRange) continue;
 
         int maxHp = ally.spec.maxHp * ally.spec.unitCount;
@@ -5318,7 +6107,7 @@ UnitId GameEngine::selectGlobalHealTarget(const Unit& healer) const {
     for (UnitId id : player(healer.owner).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size())) continue;
         const Unit& ally = unit(id);
-        if (!ally.alive || !ally.deployed || isInternalUnit(ally.spec.type)) continue;
+        if (!canReceivePartyCombatEffect(ally)) continue;
 
         int maxHp = ally.spec.maxHp * ally.spec.unitCount;
         if (maxHp <= 0) continue;
@@ -5342,7 +6131,7 @@ UnitId GameEngine::selectFollowAlly(const Unit& u) const {
     for (UnitId id : player(u.owner).deployed) {
         if (id < 0 || id >= static_cast<int>(units_.size()) || id == u.id) continue;
         const Unit& ally = unit(id);
-        if (!ally.alive || !ally.deployed || isInternalUnit(ally.spec.type)) continue;
+        if (!canReceivePartyCombatEffect(ally)) continue;
         double score = ally.spec.threat + totalHp(ally) * 0.12 - manhattan(u.coord, ally.coord) * 2.0;
         if (ally.spec.roleMask & kRoleTank) score += 18.0;
         if (ally.spec.roleMask & kRoleMelee) score += 8.0;
@@ -5591,13 +6380,17 @@ void GameEngine::activateNeutralOnAttackIntent(UnitId attackerId, UnitId targetI
     const Unit& attacker = unit(attackerId);
     const Unit& target = unit(targetId);
     if (!attacker.alive || !target.alive || !target.deployed) return;
-    if (isRealObjectiveProvoker(attacker)) {
+    bool attackerProvokesObjective = isRealObjectiveProvoker(attacker);
+    bool attackerIsNeutralLike = isNeutralLikeCombatant(attacker);
+    bool targetIsNeutralGuardian = isNeutralGuardianUnit(target);
+    bool attackerCanStrikeTarget = canAttack(attacker, target);
+    if (attackerProvokesObjective) {
         if (std::optional<size_t> objectiveIndex = majorObjectiveIndexForUnit(targetId)) {
             triggerBossGuardian(*objectiveIndex, attackerId, "boss challenged");
         }
     }
-    if (isNeutralLikeCombatant(attacker) || !isNeutralGuardianUnit(target)) return;
-    if (!canAttack(attacker, target)) return;
+    if (attackerIsNeutralLike || !targetIsNeutralGuardian) return;
+    if (!attackerCanStrikeTarget) return;
     activateNeutral(targetId, attackerId, "attacked");
 }
 
@@ -6026,31 +6819,42 @@ void GameEngine::attack(UnitId attackerId, UnitId targetId) {
 bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetId) {
     Unit& attacker = unit(attackerId);
     Unit& target = unit(targetId);
+    AbilityKind ability = attacker.spec.ability;
+    PlayerId attackerOwner = attacker.owner;
+    Coord attackerCoord = attacker.coord;
+    Coord targetCoord = target.coord;
+    UnitType targetType = target.spec.type;
+    int attackValue = attacker.spec.attack;
+    int abilityValue = attacker.spec.abilityValue;
+    int attackRange = attacker.spec.range;
+    int abilityRange = attacker.spec.abilityRange;
+    double abilityDuration = attacker.spec.abilityDuration;
+    std::string attackerName = eventUnitName(attacker);
 
-    if (attacker.spec.ability == AbilityKind::DragonBreath) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " breathed fire through clustered enemies"});
+    if (ability == AbilityKind::DragonBreath) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " breathed fire through clustered enemies"});
         std::vector<UnitId> targets;
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed) continue;
-            if (!canAttack(attacker, enemy) || manhattan(attacker.coord, enemy.coord) > attacker.spec.range) continue;
+            if (!canAttack(attacker, enemy) || manhattan(attackerCoord, enemy.coord) > attackRange) continue;
             targets.push_back(enemy.id);
         }
         for (UnitId id : targets) {
             bool saved = savingThrowSucceeds(id, attackerId, "Dex");
-            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+            applyDamage(id, saved ? std::max(1, attackValue / 2) : attackValue,
                         DamageType::Fire, attackerId);
         }
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::MephitDeathBurst) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " scattered cinders around the target"});
+    if (ability == AbilityKind::MephitDeathBurst) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " scattered cinders around the target"});
         std::vector<UnitId> targets;
-        Coord center = target.coord;
+        Coord center = targetCoord;
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed) continue;
             if (!canAttack(attacker, enemy) || manhattan(center, enemy.coord) > 1) continue;
@@ -6058,18 +6862,18 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
         }
         for (UnitId id : targets) {
             bool saved = savingThrowSucceeds(id, attackerId, "Dex");
-            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+            applyDamage(id, saved ? std::max(1, attackValue / 2) : attackValue,
                         DamageType::Fire, attackerId);
         }
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::FrostNova) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " cast frost nova"});
+    if (ability == AbilityKind::FrostNova) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " cast frost nova"});
         std::vector<UnitId> targets;
-        Coord center = target.coord;
+        Coord center = targetCoord;
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed) continue;
             if (!canAttack(attacker, enemy) || manhattan(center, enemy.coord) > 1) continue;
@@ -6077,45 +6881,45 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
         }
         for (UnitId id : targets) {
             bool saved = savingThrowSucceeds(id, attackerId, "Con");
-            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+            applyDamage(id, saved ? std::max(1, attackValue / 2) : attackValue,
                         DamageType::Cold, attackerId);
             if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
-                addStatus(id, {StatusKind::Slow, attacker.spec.abilityDuration, attacker.spec.abilityValue, attackerId});
+                addStatus(id, {StatusKind::Slow, abilityDuration, abilityValue, attackerId});
             }
         }
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::SpectatorWoundingRay) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " cast Wounding Ray"});
+    if (ability == AbilityKind::SpectatorWoundingRay) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " cast Wounding Ray"});
         bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
-        applyDamage(targetId, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+        applyDamage(targetId, saved ? std::max(1, attackValue / 2) : attackValue,
                     DamageType::Necrotic, attackerId);
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::MindBlast) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " unleashed Mind Blast"});
+    if (ability == AbilityKind::MindBlast) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " unleashed Mind Blast"});
         std::vector<UnitId> targets;
-        Coord center = target.coord;
+        Coord center = targetCoord;
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed) continue;
             if (!canAttack(attacker, enemy)) continue;
-            if (manhattan(attacker.coord, enemy.coord) > attacker.spec.range) continue;
+            if (manhattan(attackerCoord, enemy.coord) > attackRange) continue;
             if (enemy.id != targetId && manhattan(center, enemy.coord) > 2) continue;
             targets.push_back(enemy.id);
         }
         for (UnitId id : targets) {
             bool saved = savingThrowSucceeds(id, attackerId, "Int");
-            applyDamage(id, saved ? std::max(1, attacker.spec.attack / 2) : attacker.spec.attack,
+            applyDamage(id, saved ? std::max(1, attackValue / 2) : attackValue,
                         DamageType::Psychic, attackerId);
             if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
                 addStatus(id, {StatusKind::Stunned,
-                               std::max(0.8, attacker.spec.abilityDuration),
+                               std::max(0.8, abilityDuration),
                                0,
                                attackerId});
             }
@@ -6123,77 +6927,77 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::DiabolicChains) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " lashed out with Diabolic Chains"});
+    if (ability == AbilityKind::DiabolicChains) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " lashed out with Diabolic Chains"});
         std::vector<UnitId> targets{targetId};
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed || enemy.id == targetId) continue;
             if (!canAttack(attacker, enemy)) continue;
-            if (manhattan(attacker.coord, enemy.coord) <= attacker.spec.range &&
-                manhattan(target.coord, enemy.coord) <= 2) {
+            if (manhattan(attackerCoord, enemy.coord) <= attackRange &&
+                manhattan(targetCoord, enemy.coord) <= 2) {
                 targets.push_back(enemy.id);
             }
             if (targets.size() >= 3) break;
         }
+        DamagePacket chainDamage = abilityDamagePacketFor(attacker.spec, AbilityKind::DiabolicChains);
         for (UnitId id : targets) {
             bool saved = savingThrowSucceeds(id, attackerId, "Dex");
-            DamagePacket chainDamage = abilityDamagePacketFor(attacker.spec, AbilityKind::DiabolicChains);
             applyDamage(id, saved ? scaledDamagePacket(chainDamage, 1, 2) : chainDamage, attackerId);
             if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
-                addStatus(id, {StatusKind::Slow, std::max(0.8, attacker.spec.abilityDuration), 0, attackerId});
+                addStatus(id, {StatusKind::Slow, std::max(0.8, abilityDuration), 0, attackerId});
                 if (unit(id).spec.layer == UnitLayer::Land) {
-                    knockbackUnit(id, attacker.coord, 1, attackerId);
+                    knockbackUnit(id, attackerCoord, 1, attackerId);
                 }
             }
         }
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::SelunesIre) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack + attacker.spec.abilityValue,
-                   eventUnitName(attacker) + " invoked Selune's Ire"});
+    if (ability == AbilityKind::SelunesIre) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue + abilityValue,
+                   attackerName + " invoked Selune's Ire"});
         bool saved = savingThrowSucceeds(targetId, attackerId, "Dex");
-        int radiantDamage = attacker.spec.attack + std::max(0, attacker.spec.abilityValue);
+        int radiantDamage = attackValue + std::max(0, abilityValue);
         applyDamage(targetId, saved ? std::max(1, radiantDamage / 2) : radiantDamage,
                     DamageType::Radiant, attackerId);
         if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
             addStatus(targetId, {StatusKind::Blinded,
-                                 std::max(0.8, attacker.spec.abilityDuration),
+                                 std::max(0.8, abilityDuration),
                                  0,
                                  attackerId});
         }
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::Blight) {
-        int necroticDamage = isPlantLikeUnitType(target.spec.type) ? 64 : rollDice(8, 8);
-        bool plantLike = isPlantLikeUnitType(target.spec.type);
+    if (ability == AbilityKind::Blight) {
+        int necroticDamage = isPlantLikeUnitType(targetType) ? 64 : rollDice(8, 8);
+        bool plantLike = isPlantLikeUnitType(targetType);
         bool saved = savingThrowSucceeds(targetId, attackerId, "Con", plantLike ? -1 : 0);
         int finalDamage = saved ? std::max(1, necroticDamage / 2) : necroticDamage;
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, finalDamage,
-                   eventUnitName(attacker) + " cast Blight"});
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, finalDamage,
+                   attackerName + " cast Blight"});
         applyDamage(targetId, finalDamage, DamageType::Necrotic, attackerId);
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::EvokerMagicMissile) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.attack,
-                   eventUnitName(attacker) + " cast Magic Missile barrage"});
+    if (ability == AbilityKind::EvokerMagicMissile) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, attackValue,
+                   attackerName + " cast Magic Missile barrage"});
         std::vector<UnitId> targets{targetId};
-        Coord center = target.coord;
+        Coord center = targetCoord;
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed || enemy.id == targetId) continue;
             if (!canAttack(attacker, enemy)) continue;
-            if (manhattan(center, enemy.coord) <= 1 && manhattan(attacker.coord, enemy.coord) <= attacker.spec.range) {
+            if (manhattan(center, enemy.coord) <= 1 && manhattan(attackerCoord, enemy.coord) <= attackRange) {
                 targets.push_back(enemy.id);
             }
         }
-        int missileDamage = std::max(1, attacker.spec.attack / 3);
+        int missileDamage = std::max(1, attackValue / 3);
         for (int i = 0; i < 3 && !targets.empty(); ++i) {
             UnitId id = targets[static_cast<size_t>(i) % targets.size()];
             if (id >= 0 && id < static_cast<int>(units_.size()) && unit(id).alive) {
@@ -6203,16 +7007,16 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::StrikeOfTheGuardian) {
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.abilityValue,
-                   eventUnitName(attacker) + " used Strike of the Guardian"});
+    if (ability == AbilityKind::StrikeOfTheGuardian) {
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, abilityValue,
+                   attackerName + " used Strike of the Guardian"});
         std::vector<UnitId> targets;
-        Coord center = target.coord;
+        Coord center = targetCoord;
         for (const Unit& enemy : units_) {
             if (!enemy.alive || !enemy.deployed) continue;
             if (!canAttack(attacker, enemy)) continue;
-            if (manhattan(attacker.coord, enemy.coord) > std::max(1, attacker.spec.abilityRange)) continue;
+            if (manhattan(attackerCoord, enemy.coord) > std::max(1, abilityRange)) continue;
             if (manhattan(center, enemy.coord) > 1) continue;
             targets.push_back(enemy.id);
         }
@@ -6234,21 +7038,21 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
         return true;
     }
 
-    if (attacker.spec.ability == AbilityKind::MinotaurCharge) {
-        int dx = target.coord.x - attacker.coord.x;
-        int dy = target.coord.y - attacker.coord.y;
+    if (ability == AbilityKind::MinotaurCharge) {
+        int dx = targetCoord.x - attackerCoord.x;
+        int dy = targetCoord.y - attackerCoord.y;
         Coord step{0, 0};
         if (std::abs(dx) >= std::abs(dy) && dx != 0) {
             step.x = dx > 0 ? 1 : -1;
         } else if (dy != 0) {
             step.y = dy > 0 ? 1 : -1;
         } else {
-            step.x = attacker.owner == PlayerId::One ? 1 : -1;
+            step.x = attackerOwner == PlayerId::One ? 1 : -1;
         }
 
         std::vector<UnitId> targets;
-        Coord current = attacker.coord;
-        int chargeRange = std::max(1, attacker.spec.abilityRange);
+        Coord current = attackerCoord;
+        int chargeRange = std::max(1, abilityRange);
         for (int i = 0; i < chargeRange; ++i) {
             current = {current.x + step.x, current.y + step.y};
             if (!board_.inBounds(current) || board_.blocked(current)) break;
@@ -6264,17 +7068,17 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
             targets.push_back(targetId);
         }
 
-        pushEvent({EventType::UnitAttacked, attacker.owner, attackerId, targetId, attacker.coord,
-                   target.coord, attacker.spec.abilityValue,
-                   eventUnitName(attacker) + " used Charge"});
+        pushEvent({EventType::UnitAttacked, attackerOwner, attackerId, targetId, attackerCoord,
+                   targetCoord, abilityValue,
+                   attackerName + " used Charge"});
         DamagePacket charge = abilityDamagePacketFor(attacker.spec, AbilityKind::MinotaurCharge);
         for (UnitId id : targets) {
             if (id < 0 || id >= static_cast<int>(units_.size()) || !unit(id).alive) continue;
             bool saved = savingThrowSucceeds(id, attackerId, "Str");
             applyDamage(id, saved ? scaledDamagePacket(charge, 1, 2) : charge, attackerId);
             if (!saved && id < static_cast<int>(units_.size()) && unit(id).alive) {
-                addStatus(id, {StatusKind::Prone, std::max(1.0, attacker.spec.abilityDuration), 0, attackerId});
-                knockbackUnit(id, attacker.coord, 1, attackerId);
+                addStatus(id, {StatusKind::Prone, std::max(1.0, abilityDuration), 0, attackerId});
+                knockbackUnit(id, attackerCoord, 1, attackerId);
             }
         }
         return true;
@@ -6286,6 +7090,10 @@ bool GameEngine::tryResolveActiveAbilityAttack(UnitId attackerId, UnitId targetI
 void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
     Unit& attacker = unit(attackerId);
     Unit& target = unit(targetId);
+    Coord attackerCoord = attacker.coord;
+    int attackerAttack = attacker.spec.attack;
+    int attackerAbilityValue = attacker.spec.abilityValue;
+    double attackerAbilityDuration = attacker.spec.abilityDuration;
 
     int baseStrikeCount = std::max(1, static_cast<int>(attacker.hp.size()));
     int damage = attacker.spec.attack;
@@ -6424,14 +7232,14 @@ void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
     if (owlbearMultiattack) {
         applyDamage(targetId, strikePacket, attackerId);
         if (targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
-            applyDamage(targetId, DamagePacket{{damageRollForValue(std::max(1, (attacker.spec.attack * 2) / 3),
+            applyDamage(targetId, DamagePacket{{damageRollForValue(std::max(1, (attackerAttack * 2) / 3),
                                                                 DamageType::Piercing)},
                                                0,
                                                "bite"},
                         attackerId);
             if (targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
                 addStatus(targetId, {StatusKind::Prone, 1.1, 0, attackerId});
-                knockbackUnit(targetId, attacker.coord, 1, attackerId);
+                knockbackUnit(targetId, attackerCoord, 1, attackerId);
             }
         }
         return;
@@ -6440,16 +7248,16 @@ void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
     applyWeaponStrikes(attackerId, targetId, strikePacket, baseStrikeCount);
     if (hiemalStrike && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
         addStatus(targetId, {StatusKind::Chilled,
-                             std::max(1.0, attacker.spec.abilityDuration),
-                             attacker.spec.abilityValue,
+                             std::max(1.0, attackerAbilityDuration),
+                             attackerAbilityValue,
                              attackerId});
     }
     if (venomousBite && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
         bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
         if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
             addStatus(targetId, {StatusKind::Poisoned,
-                                 std::max(1.2, attacker.spec.abilityDuration),
-                                 attacker.spec.abilityValue,
+                                 std::max(1.2, attackerAbilityDuration),
+                                 attackerAbilityValue,
                                  attackerId});
         }
     }
@@ -6457,19 +7265,19 @@ void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
         bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
         if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
             addStatus(targetId, {StatusKind::Blinded,
-                                 std::max(1.2, attacker.spec.abilityDuration),
-                                 attacker.spec.abilityValue,
+                                 std::max(1.2, attackerAbilityDuration),
+                                 attackerAbilityValue,
                                  attackerId});
         }
     }
     if (kethericSmite && !kethericBlindingSmite) {
-        resolveRadialKnockback(attacker.coord, 1, 1, attackerId);
+        resolveRadialKnockback(attackerCoord, 1, 1, attackerId);
         if (targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
             bool saved = savingThrowSucceeds(targetId, attackerId, "Wis");
             if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
                 addStatus(targetId, {StatusKind::Frightened,
-                                     std::max(1.2, attacker.spec.abilityDuration),
-                                     attacker.spec.abilityValue,
+                                     std::max(1.2, attackerAbilityDuration),
+                                     attackerAbilityValue,
                                      attackerId});
             }
         }
@@ -6478,8 +7286,8 @@ void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
         bool saved = savingThrowSucceeds(targetId, attackerId, "Wis");
         if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
             addStatus(targetId, {StatusKind::Staggered,
-                                 std::max(1.2, attacker.spec.abilityDuration),
-                                 attacker.spec.abilityValue,
+                                 std::max(1.2, attackerAbilityDuration),
+                                 attackerAbilityValue,
                                  attackerId});
         }
     }
@@ -6487,7 +7295,7 @@ void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
         bool saved = savingThrowSucceeds(targetId, attackerId, "Con");
         if (!saved && targetId < static_cast<int>(units_.size()) && unit(targetId).alive) {
             addStatus(targetId, {StatusKind::Stunned,
-                                 std::max(0.8, attacker.spec.abilityDuration),
+                                 std::max(0.8, attackerAbilityDuration),
                                  0,
                                  attackerId});
         }
@@ -6499,8 +7307,18 @@ void GameEngine::resolveWeaponAttack(UnitId attackerId, UnitId targetId) {
 
 void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId sourceId) {
     if (targetId < 0 || targetId >= static_cast<int>(units_.size())) return;
-    Unit& target = unit(targetId);
-    if (!target.alive || target.hp.empty()) return;
+    UnitType targetType;
+    PlayerId targetOwner;
+    Coord targetCoord;
+    std::string targetName;
+    {
+        const Unit& target = unit(targetId);
+        if (!target.alive || target.hp.empty()) return;
+        targetType = target.spec.type;
+        targetOwner = target.owner;
+        targetCoord = target.coord;
+        targetName = eventUnitName(target);
+    }
 
     int amount = 0;
     std::vector<std::string> affinityNotes;
@@ -6508,7 +7326,7 @@ void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId
     for (const DamageRoll& roll : packet.rolls) {
         int raw = rollDamageRoll(roll);
         if (raw <= 0) continue;
-        DamageAffinity affinity = damageAffinity(target.spec.type, roll.type);
+        DamageAffinity affinity = damageAffinity(targetType, roll.type);
         int adjusted = raw;
         if (affinity == DamageAffinity::Immune) adjusted = 0;
         if (affinity == DamageAffinity::Resistant) adjusted = std::max(1, raw / 2);
@@ -6533,9 +7351,9 @@ void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId
     }
 
     if (amount <= 0) {
-        std::string text = eventUnitName(target) + " took no damage";
+        std::string text = targetName + " took no damage";
         if (!affinityNotes.empty()) text += " (" + affinityNotes.front() + ")";
-        pushEvent({EventType::DamageDealt, target.owner, sourceId, targetId, {}, target.coord, 0, text});
+        pushEvent({EventType::DamageDealt, targetOwner, sourceId, targetId, {}, targetCoord, 0, text});
         return;
     }
 
@@ -6547,6 +7365,10 @@ void GameEngine::applyDamage(UnitId targetId, const DamagePacket& packet, UnitId
     }
     activateNeutral(targetId, sourceId, "struck");
     markCombatProgress();
+
+    if (targetId < 0 || targetId >= static_cast<int>(units_.size())) return;
+    Unit& target = unit(targetId);
+    if (!target.alive || target.hp.empty()) return;
 
     if (target.spec.ability == AbilityKind::BarbarianHeavySwing) {
         int maxHp = target.spec.maxHp * target.spec.unitCount;
@@ -6753,7 +7575,7 @@ bool GameEngine::isEffectiveCombatMove(const Unit& u, Coord from, Coord to) cons
         return manhattan(to, u.homeCoord) < manhattan(from, u.homeCoord);
     }
 
-    if (!isNeutralLikeCombatant(u) && !isRoundTransientUnit(u.spec.type)) {
+    if (!isNeutralLikeCombatant(u)) {
         Unit probe = u;
         probe.coord = from;
         std::optional<Coord> goal = chooseExplorationGoal(probe);
@@ -6958,7 +7780,7 @@ std::optional<Coord> GameEngine::chooseNextStep(UnitId id, const std::vector<Coo
     if (u.neutralControlled && !hasUnitTarget) return std::nullopt;
 
     std::optional<Coord> explorationGoal;
-    if (!hasUnitTarget && !isNeutralLikeCombatant(u) && !isRoundTransientUnit(u.spec.type)) {
+    if (!hasUnitTarget && !isNeutralLikeCombatant(u)) {
         explorationGoal = chooseExplorationGoal(u);
         if (explorationGoal) target = *explorationGoal;
     }
@@ -7036,12 +7858,13 @@ std::optional<Coord> GameEngine::chooseNeutralGuardianStep(const Unit& u,
         return next;
     }
     if (u.target == kInvalidUnitId || u.target >= static_cast<int>(units_.size()) ||
-        !unit(u.target).alive || !unit(u.target).deployed ||
-        !withinNeutralLeash(u, unit(u.target).coord)) {
+        !unit(u.target).alive || !unit(u.target).deployed) {
         return std::nullopt;
     }
 
     const Unit& target = unit(u.target);
+    const bool targetIsProvoker = u.target == u.provokedBy;
+    if (!targetIsProvoker && !withinNeutralLeash(u, target.coord)) return std::nullopt;
     if (inAttackRange(u, target)) return std::nullopt;
     if (u.spec.layer == UnitLayer::Air) {
         std::optional<Coord> next = chooseAirStep(u, target.coord, reserved);
@@ -7628,8 +8451,13 @@ AiDifficulty aiDifficultyFromString(const std::string& text) {
     normalized.erase(std::remove(normalized.begin(), normalized.end(), ' '), normalized.end());
     normalized.erase(std::remove(normalized.begin(), normalized.end(), '-'), normalized.end());
     normalized.erase(std::remove(normalized.begin(), normalized.end(), '_'), normalized.end());
-    if (normalized == "hard" || normalized == "2") return AiDifficulty::Hard;
-    if (normalized == "superhard" || normalized == "nightmare" || normalized == "3" ||
+    if (normalized == "hard" || normalized == "difficult" || normalized == "difficultai" ||
+        normalized == "困难" || normalized == "难" || normalized == "2") {
+        return AiDifficulty::Hard;
+    }
+    if (normalized == "superhard" || normalized == "super" || normalized == "ultra" ||
+        normalized == "veryhard" || normalized == "nightmare" || normalized == "超难" ||
+        normalized == "极难" || normalized == "3" ||
         normalized == "4") {
         return AiDifficulty::SuperHard;
     }

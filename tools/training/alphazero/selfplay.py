@@ -119,10 +119,9 @@ def play_game(
                     env_module.env_finalize_round(handle)
                     break
 
-            # End-of-round bookkeeping: tower deltas + winner determine z for this round.
+            # End-of-round bookkeeping: exploration score, economy, and board
+            # presence provide a dense value target for the dungeon-run rules.
             obs = env_module.env_observation(handle)
-            self_tower = float(obs.get("playerTowerHp", 0))
-            enemy_tower = float(obs.get("enemyTowerHp", 0))
             if obs.get("done"):
                 winner = obs.get("winner", "")
                 z = 1.0 if winner == "Player1" else (-1.0 if winner == "Player2" else 0.0)
@@ -133,10 +132,7 @@ def play_game(
                 rounds_played += 1
                 break
             else:
-                # Round survived. Use tower-HP differential as a soft proxy
-                # (so winning-by-attrition still trains well); clip to [-1, 1].
-                # Sign convention: P1's advantage = self high, enemy low.
-                proxy = np.tanh((self_tower - enemy_tower) / 800.0)
+                proxy = _soft_value(obs)
                 for state, action_feats, legal_count, pi in round_pending:
                     pending_rows.append((state, action_feats, legal_count, pi))
                 # Apply proxy z to anything older than 1 round.
@@ -181,3 +177,21 @@ def _make_sample(
         policy=padded_visits,
         value=float(np.clip(z, -1.0, 1.0)),
     )
+
+
+def _soft_value(obs: dict) -> float:
+    """Dense non-terminal value for the exploration-run scoring model."""
+    score_delta = float(obs.get("playerExplorationScore", 0) - obs.get("enemyExplorationScore", 0))
+    money_delta = float(obs.get("playerMoney", 0) - obs.get("enemyMoney", 0))
+    boss_delta = float(obs.get("playerBossesCleared", 0) - obs.get("enemyBossesCleared", 0))
+    deploy_delta = float(obs.get("playerDeployed", 0) - obs.get("enemyDeployed", 0))
+    bench_delta = float(obs.get("playerBench", 0) - obs.get("enemyBench", 0))
+    progress = float(obs.get("explorationRound", 0)) / max(1.0, float(obs.get("explorationRoundLimit", 1)))
+    raw = (
+        score_delta / 120.0
+        + money_delta / 160.0
+        + boss_delta * 0.25
+        + deploy_delta * 0.04
+        + bench_delta * 0.02
+    )
+    return float(np.tanh(raw * (0.65 + 0.35 * progress)))

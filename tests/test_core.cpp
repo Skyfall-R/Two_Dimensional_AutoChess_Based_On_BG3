@@ -46,6 +46,36 @@ const UnitView* findUnit(const GameSnapshot& snapshot, UnitId id) {
     return nullptr;
 }
 
+int combatUnitsFor(const GameSnapshot& snapshot, PlayerId owner) {
+    int count = 0;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.owner == owner && unit.alive && unit.deployed && !isInternalUnit(unit.type)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int armyCostFor(const GameSnapshot& snapshot, PlayerId owner) {
+    int cost = 0;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.owner == owner && unit.alive && unit.deployed && !isInternalUnit(unit.type)) {
+            cost += unit.cost;
+        }
+    }
+    return cost;
+}
+
+int unitTypeCountFor(const GameSnapshot& snapshot, PlayerId owner, UnitType type) {
+    int count = 0;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.owner == owner && unit.alive && unit.deployed && unit.type == type) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 TerrainKind terrainAtSnapshot(const GameSnapshot& snapshot, Coord coord);
 
 int landOccupantsAt(const GameSnapshot& snapshot, Coord coord) {
@@ -371,6 +401,59 @@ void advance(GameEngine& engine, double seconds) {
     for (int i = 0; i < ticks; ++i) engine.tick(1.0 / 30.0);
 }
 
+void advanceUntilPreparation(GameEngine& engine, int seconds = 60) {
+    for (int i = 0; i < 30 * seconds && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        engine.consumeEvents();
+    }
+}
+
+void forceNextPreparationByStall(GameEngine& engine) {
+    GameSnapshot snapshot = engine.snapshot();
+    for (const UnitView& unit : snapshot.units) {
+        if (!unit.alive || !unit.deployed || isInternalUnit(unit.type) ||
+            isNeutralMonster(unit.type)) {
+            continue;
+        }
+        if (unit.owner != PlayerId::One && unit.owner != PlayerId::Two) continue;
+        engine.debugApplyDamage(unit.id, unit.totalHp + unit.shield + 1000, DamageType::Force);
+    }
+    for (int i = 0; i < 90 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0);
+        engine.consumeEvents();
+    }
+}
+
+const std::array<HiddenExplorationEventKind, 7>& hiddenEventKindsForTests() {
+    static const std::array<HiddenExplorationEventKind, 7> kinds = {
+        HiddenExplorationEventKind::GoldCache,
+        HiddenExplorationEventKind::HealingSpring,
+        HiddenExplorationEventKind::ArcaneFont,
+        HiddenExplorationEventKind::SmugglerCache,
+        HiddenExplorationEventKind::CursedIdol,
+        HiddenExplorationEventKind::RallyBanner,
+        HiddenExplorationEventKind::SilentWaystone
+    };
+    return kinds;
+}
+
+int hiddenEventCoordCount(const GameEngine& engine) {
+    int total = 0;
+    for (HiddenExplorationEventKind kind : hiddenEventKindsForTests()) {
+        total += static_cast<int>(engine.debugHiddenEventCoords(kind).size());
+    }
+    return total;
+}
+
+std::vector<Coord> allHiddenEventCoords(const GameEngine& engine) {
+    std::vector<Coord> coords;
+    for (HiddenExplorationEventKind kind : hiddenEventKindsForTests()) {
+        std::vector<Coord> kindCoords = engine.debugHiddenEventCoords(kind);
+        coords.insert(coords.end(), kindCoords.begin(), kindCoords.end());
+    }
+    return coords;
+}
+
 void finishRunByRoundLimit(GameEngine& engine) {
     for (int i = 0; i < 120 && engine.snapshot().phase != Phase::Finished; ++i) {
         if (engine.snapshot().phase == Phase::Preparation) {
@@ -407,7 +490,7 @@ void writePolicyFile(const std::filesystem::path& directory,
     std::ofstream out(directory / filename);
     out << "{\n"
         << "  \"format\": \"autochess_policy_v1\",\n"
-        << "  \"modelVersion\": \"linear-v1\",\n"
+        << "  \"modelVersion\": \"linear-v2\",\n"
         << "  \"difficulty\": \"" << difficulty << "\",\n"
         << "  \"rulesFingerprint\": \"" << fingerprint << "\",\n"
         << "  \"stateFeatureCount\": " << schema.stateFeatureCount << ",\n"
@@ -425,6 +508,7 @@ void writePolicyFile(const std::filesystem::path& directory,
 
 void test_relic_taxonomy_has_four_layers_and_family_pools() {
     std::vector<RelicSpec> relics = relicCatalog();
+    assert(relics.size() == 42);
     bool sawBasic = false;
     bool sawBuild = false;
     bool sawTransform = false;
@@ -433,6 +517,11 @@ void test_relic_taxonomy_has_four_layers_and_family_pools() {
     bool sawRosterBonus = false;
     bool sawClearGold = false;
     bool sawSummonLimitBonus = false;
+    bool sawHiddenReveal = false;
+    bool sawHiddenPayout = false;
+    bool sawTrapBonus = false;
+    bool sawRoundStartShield = false;
+    bool sawEventHeal = false;
     for (const RelicSpec& relic : relics) {
         sawBasic = sawBasic || relic.tier == RelicTier::Basic;
         sawBuild = sawBuild || relic.tier == RelicTier::Build;
@@ -446,6 +535,11 @@ void test_relic_taxonomy_has_four_layers_and_family_pools() {
         sawRosterBonus = sawRosterBonus || relic.modifiers.benchBonus > 0;
         sawClearGold = sawClearGold || relic.modifiers.bonusGoldOnClear > 0;
         sawSummonLimitBonus = sawSummonLimitBonus || relic.modifiers.summonLimitBonus > 0;
+        sawHiddenReveal = sawHiddenReveal || relic.modifiers.hiddenEventRevealBonus > 0;
+        sawHiddenPayout = sawHiddenPayout || relic.modifiers.hiddenEventPayoutBonus > 0;
+        sawTrapBonus = sawTrapBonus || relic.modifiers.trapCheckBonus > 0;
+        sawRoundStartShield = sawRoundStartShield || relic.modifiers.roundStartShield > 0;
+        sawEventHeal = sawEventHeal || relic.modifiers.eventHealBonus > 0;
     }
     assert(sawBasic);
     assert(sawBuild);
@@ -455,17 +549,61 @@ void test_relic_taxonomy_has_four_layers_and_family_pools() {
     assert(sawRosterBonus);
     assert(sawClearGold);
     assert(sawSummonLimitBonus);
+    assert(sawHiddenReveal);
+    assert(sawHiddenPayout);
+    assert(sawTrapBonus);
+    assert(sawRoundStartShield);
+    assert(sawEventHeal);
 
     for (NeutralFamily family : {NeutralFamily::Swarm, NeutralFamily::Guardian,
                                  NeutralFamily::Caster, NeutralFamily::Assassin,
                                  NeutralFamily::Artillery}) {
         std::vector<RelicSpec> pool = relicPoolForFamily(family);
-        assert(pool.size() >= 5);
+        assert(pool.size() >= 8);
     }
+
+    bool sawCampDrop = false;
+    bool sawCampMiss = false;
+    for (unsigned seed = 1; seed < 40; ++seed) {
+        bool dropped = relicDropsForObjectiveClear(ExplorationObjectiveKind::Camp, UnitType::NeutralOwlbear, seed);
+        sawCampDrop = sawCampDrop || dropped;
+        sawCampMiss = sawCampMiss || !dropped;
+    }
+    assert(sawCampDrop);
+    assert(sawCampMiss);
+    assert(relicDropsForObjectiveClear(ExplorationObjectiveKind::Elite, UnitType::NeutralOwlbear, 1));
+    assert(relicDropsForObjectiveClear(ExplorationObjectiveKind::Boss, UnitType::NeutralRaphael, 1));
+    assert(!relicDropsForObjectiveClear(ExplorationObjectiveKind::Trap, UnitType::NeutralRedcap, 1));
+    assert(!relicDropEligibleForObjective(ExplorationObjectiveKind::Camp, UnitType::NeutralRedcap));
 }
 
 void test_battle_board_uses_33x19_isolated_wilds_map() {
     std::vector<MapKind> seenMapKinds;
+    std::array<std::array<bool, 3>, 2> seenVariantCombos{};
+    auto variantOpenings = [](MapKind kind, int variant) {
+        int templateSlot = kind == MapKind::ExplorationB ? 1 : 0;
+        if (variant == 1 && templateSlot == 0) {
+            return std::vector<Coord>{{10, 2}, {15, 3}, {25, 4}, {8, 6},
+                                      {14, 7}, {18, 8}, {10, 9}, {13, 10},
+                                      {14, 11}, {18, 12}, {15, 14}, {20, 16}};
+        }
+        if (variant == 2 && templateSlot == 0) {
+            return std::vector<Coord>{{4, 2}, {11, 3}, {19, 4}, {21, 5},
+                                      {22, 6}, {27, 7}, {9, 8}, {18, 9},
+                                      {4, 10}, {23, 11}, {9, 13}, {25, 14}};
+        }
+        if (variant == 1 && templateSlot == 1) {
+            return std::vector<Coord>{{9, 2}, {16, 3}, {24, 4}, {8, 5},
+                                      {13, 6}, {15, 7}, {12, 8}, {20, 9},
+                                      {23, 10}, {20, 11}, {14, 13}, {20, 15}};
+        }
+        if (variant == 2 && templateSlot == 1) {
+            return std::vector<Coord>{{15, 2}, {4, 3}, {11, 4}, {18, 5},
+                                      {25, 6}, {22, 7}, {18, 8}, {14, 9},
+                                      {5, 10}, {12, 12}, {21, 13}, {17, 14}};
+        }
+        return std::vector<Coord>{};
+    };
     for (unsigned seed = 1; seed <= 24; ++seed) {
         GameEngine engine(seed);
         engine.startNewGame(GameMode::TwoPlayer);
@@ -473,6 +611,14 @@ void test_battle_board_uses_33x19_isolated_wilds_map() {
 
         assert(snapshot.width == 33);
         assert(snapshot.height == 19);
+        assert(snapshot.explorationMapVariant >= 0);
+        assert(snapshot.explorationMapVariant < 3);
+        int templateSlot = snapshot.mapKind == MapKind::ExplorationB ? 1 : 0;
+        seenVariantCombos[static_cast<size_t>(templateSlot)]
+                         [static_cast<size_t>(snapshot.explorationMapVariant)] = true;
+        for (Coord coord : variantOpenings(snapshot.mapKind, snapshot.explorationMapVariant)) {
+            assert(terrainAtSnapshot(snapshot, coord) != TerrainKind::Wall);
+        }
         assert(snapshot.terrain.size() == static_cast<size_t>(snapshot.width * snapshot.height));
 
         int mirroredDifferences = 0;
@@ -603,6 +749,36 @@ void test_battle_board_uses_33x19_isolated_wilds_map() {
         }
     }
     assert(seenMapKinds.size() == 2);
+    int seenVariantComboCount = 0;
+    for (const auto& row : seenVariantCombos) {
+        for (bool seen : row) {
+            if (seen) ++seenVariantComboCount;
+        }
+    }
+    assert(seenVariantComboCount >= 4);
+}
+
+void test_exploration_map_variant_survives_round_reset() {
+    GameEngine engine(20260516);
+    engine.startNewGame(GameMode::TwoPlayer);
+
+    GameSnapshot opening = engine.snapshot();
+    int variant = opening.explorationMapVariant;
+    std::vector<TerrainKind> openingTerrain = opening.terrain;
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+    for (int i = 0; i < 10 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(0.1);
+        engine.consumeEvents();
+    }
+
+    GameSnapshot nextRound = engine.snapshot();
+    assert(nextRound.phase == Phase::Preparation);
+    assert(nextRound.explorationRound == opening.explorationRound + 1);
+    assert(nextRound.mapKind == opening.mapKind);
+    assert(nextRound.explorationMapVariant == variant);
+    assert(nextRound.terrain == openingTerrain);
 }
 
 void test_exploration_state_tracks_objectives_and_random_gold() {
@@ -695,25 +871,57 @@ void test_exploration_state_tracks_objectives_and_random_gold() {
     assert(claimed->amount <= 8);
     assert(!state.claimRandomGold(PlayerId::Two, coords.front(), kInvalidUnitId));
     assert(state.stats().randomGoldEventsClaimed == 1);
+
+    ExplorationState richState;
+    std::vector<Coord> richCandidates;
+    for (int y = 2; y < 12; ++y) {
+        for (int x = 4; x < 24; ++x) {
+            richCandidates.push_back({x, y});
+        }
+    }
+    std::mt19937 richRng(20260515);
+    richState.resetHiddenEvents(richCandidates, richRng);
+    int hiddenTotal = 0;
+    int specialTotal = 0;
+    for (HiddenExplorationEventKind kind : hiddenEventKindsForTests()) {
+        int count = static_cast<int>(richState.hiddenEventCoords(kind).size());
+        hiddenTotal += count;
+        if (kind != HiddenExplorationEventKind::GoldCache &&
+            kind != HiddenExplorationEventKind::HealingSpring) {
+            specialTotal += count;
+        }
+    }
+    assert(hiddenTotal >= 4);
+    assert(hiddenTotal <= 7);
+    assert(!richState.hiddenEventCoords(HiddenExplorationEventKind::GoldCache).empty());
+    assert(!richState.hiddenEventCoords(HiddenExplorationEventKind::HealingSpring).empty());
+    assert(specialTotal >= 2);
 }
 
 void test_hidden_events_are_not_visible_and_can_use_edge_rows() {
     GameEngine engine(20260513);
     std::vector<std::vector<Coord>> seenEventLayouts;
+    std::array<bool, 5> sawSpecial{};
 
-    for (int run = 0; run < 6; ++run) {
+    for (int run = 0; run < 24; ++run) {
         engine.startNewGame(GameMode::TwoPlayer);
         GameSnapshot snapshot = engine.snapshot();
 
-        std::vector<Coord> eventCoords = engine.debugRandomGoldCoords();
-        std::vector<Coord> healCoords = engine.debugHiddenHealingCoords();
-        eventCoords.insert(eventCoords.end(), healCoords.begin(), healCoords.end());
+        std::vector<Coord> eventCoords = allHiddenEventCoords(engine);
         std::sort(eventCoords.begin(), eventCoords.end(), [](Coord lhs, Coord rhs) {
             if (lhs.y != rhs.y) return lhs.y < rhs.y;
             return lhs.x < rhs.x;
         });
 
-        assert(eventCoords.size() >= 2);
+        assert(eventCoords.size() >= 4);
+        assert(eventCoords.size() <= 7);
+        assert(!engine.debugRandomGoldCoords().empty());
+        assert(!engine.debugHiddenHealingCoords().empty());
+        sawSpecial[0] = sawSpecial[0] || !engine.debugHiddenEventCoords(HiddenExplorationEventKind::ArcaneFont).empty();
+        sawSpecial[1] = sawSpecial[1] || !engine.debugHiddenEventCoords(HiddenExplorationEventKind::SmugglerCache).empty();
+        sawSpecial[2] = sawSpecial[2] || !engine.debugHiddenEventCoords(HiddenExplorationEventKind::CursedIdol).empty();
+        sawSpecial[3] = sawSpecial[3] || !engine.debugHiddenEventCoords(HiddenExplorationEventKind::RallyBanner).empty();
+        sawSpecial[4] = sawSpecial[4] || !engine.debugHiddenEventCoords(HiddenExplorationEventKind::SilentWaystone).empty();
         for (Coord coord : eventCoords) {
             TerrainKind terrain = terrainAtSnapshot(snapshot, coord);
             assert(terrain != TerrainKind::NeutralCamp);
@@ -730,6 +938,7 @@ void test_hidden_events_are_not_visible_and_can_use_edge_rows() {
     }
 
     assert(seenEventLayouts.size() > 1);
+    for (bool saw : sawSpecial) assert(saw);
 }
 
 void test_exploration_round_selector_uses_allowed_values() {
@@ -967,6 +1176,148 @@ void test_internal_units_cannot_detect_hidden_events() {
     assert(after.players[0].money == before.players[0].money);
 }
 
+void test_expanded_hidden_event_types_resolve() {
+    for (HiddenExplorationEventKind kind : {HiddenExplorationEventKind::ArcaneFont,
+                                            HiddenExplorationEventKind::SmugglerCache,
+                                            HiddenExplorationEventKind::CursedIdol,
+                                            HiddenExplorationEventKind::RallyBanner,
+                                            HiddenExplorationEventKind::SilentWaystone}) {
+        bool tested = false;
+        for (unsigned seed = 900; seed < 1100 && !tested; ++seed) {
+            GameEngine engine(seed);
+            engine.startNewGame(GameMode::TwoPlayer);
+            std::vector<Coord> coords = engine.debugHiddenEventCoords(kind);
+            if (coords.empty()) continue;
+
+            UnitId trigger = buyAndDeployNear(engine, PlayerId::One, UnitType::Druid, Coord{2, 9});
+            assert(trigger != kInvalidUnitId);
+            assert(engine.debugSetUnitAbilityScore(trigger, AbilityScoreKind::Wisdom, 50));
+            RunModifiers modifiers;
+            if (kind == HiddenExplorationEventKind::SmugglerCache) {
+                modifiers.smugglerAlwaysSucceeds = true;
+                modifiers.hiddenEventPayoutBonus = 4;
+            }
+            engine.setRunModifiers(PlayerId::One, modifiers);
+            engine.consumeEvents();
+
+            GameSnapshot before = engine.snapshot();
+            const UnitView* beforeTrigger = findUnit(before, trigger);
+            assert(beforeTrigger);
+            int moneyBefore = before.players[0].money;
+            int scoreBefore = before.explorationScores[0];
+            int shieldBefore = beforeTrigger->shield;
+
+            assert(engine.debugTriggerHiddenEvent(PlayerId::One, coords.front(), trigger));
+            GameSnapshot after = engine.snapshot();
+            const UnitView* afterTrigger = findUnit(after, trigger);
+            assert(afterTrigger);
+            assert(after.hiddenEventsClaimed == before.hiddenEventsClaimed + 1);
+            assert(after.hiddenEventsClaimedByPlayer[0] == before.hiddenEventsClaimedByPlayer[0] + 1);
+
+            if (kind == HiddenExplorationEventKind::ArcaneFont ||
+                kind == HiddenExplorationEventKind::SilentWaystone) {
+                assert(afterTrigger->shield > shieldBefore);
+            } else if (kind == HiddenExplorationEventKind::SmugglerCache ||
+                       kind == HiddenExplorationEventKind::CursedIdol) {
+                assert(after.players[0].money > moneyBefore);
+                assert(after.explorationScores[0] > scoreBefore);
+            } else if (kind == HiddenExplorationEventKind::RallyBanner) {
+                bool sawRally = false;
+                for (const Event& event : engine.consumeEvents()) {
+                    if (event.text.find("Rally banner") != std::string::npos) sawRally = true;
+                }
+                assert(sawRally);
+            }
+            tested = true;
+        }
+        assert(tested);
+    }
+}
+
+void test_run_modifiers_affect_hidden_events_traps_and_round_start_shield() {
+    {
+        GameEngine engine(1201);
+        engine.startNewGame(GameMode::TwoPlayer);
+        int beforeCount = hiddenEventCoordCount(engine);
+        RunModifiers modifiers;
+        modifiers.hiddenEventCountBonus = 1;
+        engine.setRunModifiers(PlayerId::One, modifiers);
+        assert(hiddenEventCoordCount(engine) == beforeCount + 1);
+    }
+
+    {
+        GameEngine engine(1202);
+        engine.startNewGame(GameMode::TwoPlayer);
+        UnitId scout = buyAndDeployNear(engine, PlayerId::One, UnitType::Druid, Coord{2, 9});
+        assert(engine.debugSetUnitAbilityScore(scout, AbilityScoreKind::Wisdom, 50));
+        assert(engine.debugSetUnitSkillProficiency(scout, SkillTag::Perception, true));
+        std::vector<Coord> gold = engine.debugRandomGoldCoords();
+        assert(!gold.empty());
+        Coord probe = gold.front();
+        probe.x = probe.x + 2 < kBoardWidth ? probe.x + 2 : probe.x - 2;
+        RunModifiers modifiers;
+        modifiers.hiddenEventRevealBonus = 1;
+        modifiers.hiddenEventPayoutBonus = 4;
+        engine.setRunModifiers(PlayerId::One, modifiers);
+        int claimedBefore = engine.snapshot().hiddenEventsClaimed;
+        assert(engine.debugDetectHiddenEvent(PlayerId::One, probe, scout));
+        assert(engine.snapshot().hiddenEventsClaimed == claimedBefore + 1);
+    }
+
+    {
+        GameEngine engine(1205);
+        engine.startNewGame(GameMode::TwoPlayer);
+        std::vector<Coord> gold = engine.debugRandomGoldCoords();
+        assert(!gold.empty());
+        RunModifiers modifiers;
+        modifiers.hiddenEventPayoutBonus = 4;
+        engine.setRunModifiers(PlayerId::One, modifiers);
+        int moneyBefore = engine.snapshot().players[0].money;
+        assert(engine.debugTriggerRandomGold(PlayerId::One, gold.front()));
+        assert(engine.snapshot().players[0].money >= moneyBefore + 6);
+    }
+
+    {
+        const std::array<Coord, 10> candidates = {
+            Coord{7, 5}, Coord{25, 5}, Coord{7, 13}, Coord{25, 13}, Coord{16, 6},
+            Coord{11, 5}, Coord{21, 5}, Coord{11, 13}, Coord{21, 13}, Coord{16, 11}
+        };
+        GameEngine engine(1203);
+        engine.startNewGame(GameMode::TwoPlayer);
+        UnitId scout = buyAndDeployNear(engine, PlayerId::One, UnitType::Ranger, Coord{2, 9});
+        assert(engine.debugSetUnitAbilityScore(scout, AbilityScoreKind::Dexterity, 50));
+        RunModifiers modifiers;
+        modifiers.trapCheckBonus = 2;
+        modifiers.trapDisarmGoldBonus = 4;
+        engine.setRunModifiers(PlayerId::One, modifiers);
+        int moneyBefore = engine.snapshot().players[0].money;
+        bool triggered = false;
+        for (Coord coord : candidates) {
+            if (engine.debugTriggerTrap(PlayerId::One, coord, scout)) {
+                triggered = true;
+                break;
+            }
+        }
+        assert(triggered);
+        assert(engine.snapshot().players[0].money > moneyBefore);
+    }
+
+    {
+        GameEngine engine(1204);
+        engine.startNewGame(GameMode::TwoPlayer);
+        UnitId guard = buyAndDeployNear(engine, PlayerId::One, UnitType::ShieldGuardian, Coord{2, 9});
+        RunModifiers modifiers;
+        modifiers.roundStartShield = 7;
+        engine.setRunModifiers(PlayerId::One, modifiers);
+        engine.setReady(PlayerId::One, true);
+        engine.setReady(PlayerId::Two, true);
+        GameSnapshot snapshot = engine.snapshot();
+        const UnitView* view = findUnit(snapshot, guard);
+        assert(view);
+        assert(view->shield >= 7);
+    }
+}
+
 void test_neutral_camps_hold_their_guard_posts() {
     GameEngine engine(65);
     engine.startNewGame(GameMode::TwoPlayer);
@@ -1045,6 +1396,50 @@ void test_neutral_camps_wait_until_attacked_before_countering() {
     }
 
     assert(neutralCountered);
+}
+
+void test_neutral_guardian_pursues_provoker_to_leash_edge() {
+    GameEngine engine(67);
+    engine.startNewGame(GameMode::TwoPlayer);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), Coord{kBoardWidth / 2, kBoardHeight / 2}, 7);
+    UnitId guardian = engine.debugCreateUnit(PlayerId::Two, UnitType::NeutralOwlbear, coords[0]);
+    UnitId ranger = engine.debugCreateUnit(PlayerId::One, UnitType::Ranger, coords[6]);
+    assert(guardian != kInvalidUnitId);
+    assert(ranger != kInvalidUnitId);
+
+    assert(engine.debugApplyDamageFrom(ranger, guardian, 1, DamageType::Piercing));
+    GameSnapshot awakened = engine.snapshot();
+    const UnitView* awakenedGuardian = findUnit(awakened, guardian);
+    assert(awakenedGuardian && awakenedGuardian->neutralActivated);
+    assert(manhattan(awakenedGuardian->coord, coords[0]) == 0);
+    assert(manhattan(coords[6], coords[0]) > 5);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool guardianResponded = false;
+    Coord lastGuardianCoord = coords[0];
+    for (int i = 0; i < 30 * 5 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        GameSnapshot snapshot = engine.snapshot();
+        if (const UnitView* view = findUnit(snapshot, guardian)) {
+            lastGuardianCoord = view->coord;
+            assert(manhattan(view->coord, coords[0]) <= 5);
+        }
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.actor == guardian &&
+                (event.type == EventType::UnitMoved || event.type == EventType::UnitAttacked)) {
+                guardianResponded = true;
+            }
+        }
+        if (guardianResponded) break;
+    }
+
+    assert(guardianResponded);
+    assert(manhattan(lastGuardianCoord, coords[6]) < manhattan(coords[0], coords[6]));
+    assert(manhattan(lastGuardianCoord, coords[0]) <= 5);
 }
 
 void test_neutral_activation_ignores_proximity_hidden_events_and_sourceless_damage() {
@@ -2867,13 +3262,41 @@ void test_feature_schema_matches_exported_features() {
     engine.startNewGame(GameMode::SinglePlayerVsAi);
     AiFeatureSchema schema = engine.aiFeatureSchema();
     assert(schema.stateFeatureCount > 0);
-    assert(schema.actionFeatureCount > 0);
+    assert(schema.actionFeatureCount >= 32);
     assert(static_cast<int>(engine.stateFeatures(PlayerId::One).size()) == schema.stateFeatureCount);
     std::vector<AiAction> actions = engine.legalActions(PlayerId::One);
     assert(!actions.empty());
     assert(static_cast<int>(engine.actionFeatures(PlayerId::One, actions.front()).size()) ==
            schema.actionFeatureCount);
     assert(!engine.rulesFingerprint().empty());
+}
+
+void test_ai_action_features_include_tactical_context() {
+    GameEngine engine(29);
+    engine.startNewGame(GameMode::TwoPlayer);
+    assert(engine.buyUnit(PlayerId::One, UnitType::Ranger));
+    UnitId ranger = firstBenchUnit(engine, PlayerId::One);
+    assert(engine.buyUnit(PlayerId::Two, UnitType::DragonWyrmling));
+    UnitId dragon = firstBenchUnit(engine, PlayerId::Two);
+    assert(engine.deployUnit(PlayerId::Two, dragon, Coord{kBoardWidth - 3, kBoardHeight / 2}));
+
+    std::vector<AiAction> actions = engine.legalActions(PlayerId::One);
+    const AiAction* deploy = nullptr;
+    for (const AiAction& action : actions) {
+        if (action.kind == AiActionKind::Deploy && action.unitId == ranger) {
+            deploy = &action;
+            break;
+        }
+    }
+    assert(deploy);
+
+    std::vector<double> features = engine.actionFeatures(PlayerId::One, *deploy);
+    assert(features.size() >= 32);
+    assert(features[20] >= 0.0);
+    assert(features[21] >= 0.0);
+    assert(features[31] != 0.0);
+    assert(aiDifficultyFromString("difficult") == AiDifficulty::Hard);
+    assert(aiDifficultyFromString("超难") == AiDifficulty::SuperHard);
 }
 
 void test_normal_ai_uses_built_in_strategy_without_policy_file() {
@@ -2904,7 +3327,7 @@ void test_normal_ai_uses_built_in_strategy_without_policy_file() {
     assert(sawAiCombatUnit);
 }
 
-void test_normal_ai_round_one_opener_stays_readable() {
+void test_normal_ai_round_one_opener_spends_opening_budget() {
     GameEngine engine(28);
     GameConfig config;
     config.mode = GameMode::SinglePlayerVsAi;
@@ -2917,6 +3340,9 @@ void test_normal_ai_round_one_opener_stays_readable() {
     GameSnapshot snapshot = engine.snapshot();
     int aiCombatUnits = 0;
     int aiArmyCost = 0;
+    bool hasDruid = false;
+    bool hasEvoker = false;
+    int skeletons = 0;
     for (const UnitView& unit : snapshot.units) {
         if (unit.owner != PlayerId::Two || !unit.alive || !unit.deployed ||
             isInternalUnit(unit.type)) {
@@ -2924,12 +3350,19 @@ void test_normal_ai_round_one_opener_stays_readable() {
         }
         ++aiCombatUnits;
         aiArmyCost += unit.cost;
+        hasDruid = hasDruid || unit.type == UnitType::Druid;
+        hasEvoker = hasEvoker || unit.type == UnitType::Evoker;
+        if (unit.type == UnitType::Skeleton) ++skeletons;
     }
 
-    assert(aiCombatUnits >= 3);
-    assert(aiCombatUnits <= 4);
-    assert(aiArmyCost >= 30);
-    assert(aiArmyCost <= 40);
+    assert(aiCombatUnits >= 4);
+    assert(aiCombatUnits <= 5);
+    assert(aiArmyCost >= 45);
+    assert(aiArmyCost <= 48);
+    assert(snapshot.players[1].money <= 3);
+    assert(hasDruid);
+    assert(!hasEvoker);
+    assert(skeletons == 0);
 }
 
 void test_normal_ai_exploration_opener_covers_center_and_wing() {
@@ -2979,6 +3412,8 @@ void test_normal_ai_buys_air_answer_when_player_fields_air() {
 
     GameSnapshot snapshot = engine.snapshot();
     bool hasAirAnswer = false;
+    bool hasDedicatedAirScreen = false;
+    int aiArmyCost = 0;
     for (const UnitView& unit : snapshot.units) {
         if (unit.owner != PlayerId::Two || !unit.alive || !unit.deployed ||
             isInternalUnit(unit.type)) {
@@ -2989,9 +3424,193 @@ void test_normal_ai_buys_air_answer_when_player_fields_air() {
                        unit.type == UnitType::DragonWyrmling ||
                        unit.type == UnitType::Evoker ||
                        unit.type == UnitType::Cleric;
+        hasDedicatedAirScreen = hasDedicatedAirScreen || unit.type == UnitType::ImpSwarm;
+        aiArmyCost += unit.cost;
     }
 
     assert(hasAirAnswer);
+    assert(hasDedicatedAirScreen);
+    assert(aiArmyCost >= 45);
+}
+
+void test_normal_ai_buys_evoker_and_screen_against_frontline_pressure() {
+    GameEngine engine(130);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
+
+    buyAndDeployNear(engine, PlayerId::One, UnitType::ShieldGuardian, p1MainDeploy());
+    buyAndDeployNear(engine, PlayerId::One, UnitType::Paladin, Coord{2, kBoardHeight / 2 + 1});
+    engine.setReady(PlayerId::One, true);
+
+    GameSnapshot snapshot = engine.snapshot();
+    bool hasEvoker = false;
+    int skeletons = 0;
+    int aiArmyCost = 0;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.owner != PlayerId::Two || !unit.alive || !unit.deployed ||
+            isInternalUnit(unit.type)) {
+            continue;
+        }
+        hasEvoker = hasEvoker || unit.type == UnitType::Evoker;
+        if (unit.type == UnitType::Skeleton) ++skeletons;
+        aiArmyCost += unit.cost;
+    }
+
+    assert(hasEvoker);
+    assert(skeletons >= 2);
+    assert(aiArmyCost >= 45);
+}
+
+void test_normal_ai_buys_rogue_against_backline_pressure() {
+    GameEngine engine(131);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
+
+    buyAndDeployNear(engine, PlayerId::One, UnitType::Cleric, p1MainDeploy());
+    buyAndDeployNear(engine, PlayerId::One, UnitType::Ranger, Coord{1, kBoardHeight / 2 + 2});
+    engine.setReady(PlayerId::One, true);
+
+    GameSnapshot snapshot = engine.snapshot();
+    bool hasRogue = false;
+    int aiArmyCost = 0;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.owner != PlayerId::Two || !unit.alive || !unit.deployed ||
+            isInternalUnit(unit.type)) {
+            continue;
+        }
+        hasRogue = hasRogue || unit.type == UnitType::RogueAssassin;
+        aiArmyCost += unit.cost;
+    }
+
+    assert(hasRogue);
+    assert(aiArmyCost >= 45);
+}
+
+void test_normal_ai_buys_aoe_against_summon_or_dense_pressure() {
+    GameEngine engine(132);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
+
+    buyAndDeployNear(engine, PlayerId::One, UnitType::Necromancer, p1MainDeploy());
+    buyAndDeployNear(engine, PlayerId::One, UnitType::Skeleton, Coord{2, kBoardHeight / 2 + 1});
+    engine.setReady(PlayerId::One, true);
+
+    GameSnapshot snapshot = engine.snapshot();
+    assert(unitTypeCountFor(snapshot, PlayerId::Two, UnitType::Evoker) >= 1);
+    assert(unitTypeCountFor(snapshot, PlayerId::Two, UnitType::Skeleton) >= 2);
+    assert(armyCostFor(snapshot, PlayerId::Two) >= 45);
+}
+
+void test_normal_ai_continues_roster_after_round_one() {
+    GameEngine engine(133);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
+
+    buyAndDeploy(engine, PlayerId::One, UnitType::ShieldGuardian, p1MainDeploy());
+    engine.setReady(PlayerId::One, true);
+    GameSnapshot firstCombat = engine.snapshot();
+    assert(firstCombat.phase == Phase::Combat);
+    int firstUnits = combatUnitsFor(firstCombat, PlayerId::Two);
+    int firstCost = armyCostFor(firstCombat, PlayerId::Two);
+    assert(firstUnits >= 4);
+
+    advanceUntilPreparation(engine, 70);
+    GameSnapshot secondPrep = engine.snapshot();
+    assert(secondPrep.phase == Phase::Preparation);
+    assert(secondPrep.round >= 2);
+    int prepUnits = combatUnitsFor(secondPrep, PlayerId::Two);
+    int prepCost = armyCostFor(secondPrep, PlayerId::Two);
+
+    engine.grantGold(PlayerId::Two, 40);
+    engine.setReady(PlayerId::One, true);
+    GameSnapshot secondCombat = engine.snapshot();
+    assert(secondCombat.phase == Phase::Combat);
+    assert(combatUnitsFor(secondCombat, PlayerId::Two) >= std::max(5, prepUnits + 2));
+    assert(armyCostFor(secondCombat, PlayerId::Two) > prepCost);
+    assert(armyCostFor(secondCombat, PlayerId::Two) > firstCost);
+}
+
+void test_normal_ai_keeps_backline_behind_frontline() {
+    GameEngine engine(134);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
+
+    buyAndDeploy(engine, PlayerId::One, UnitType::ShieldGuardian, p1MainDeploy());
+    engine.setReady(PlayerId::One, true);
+
+    GameSnapshot snapshot = engine.snapshot();
+    const UnitView* tank = nullptr;
+    const UnitView* cleric = nullptr;
+    const UnitView* druid = nullptr;
+    for (const UnitView& unit : snapshot.units) {
+        if (unit.owner != PlayerId::Two || !unit.alive || !unit.deployed) continue;
+        if (unit.type == UnitType::ShieldGuardian) tank = &unit;
+        if (unit.type == UnitType::Cleric) cleric = &unit;
+        if (unit.type == UnitType::Druid) druid = &unit;
+    }
+
+    assert(tank);
+    assert(cleric);
+    assert(druid);
+    int tankForward = kBoardWidth - 1 - tank->coord.x;
+    int clericForward = kBoardWidth - 1 - cleric->coord.x;
+    int druidForward = kBoardWidth - 1 - druid->coord.x;
+    assert(tankForward > clericForward);
+    assert(tankForward > druidForward);
+    assert(manhattan(tank->coord, cleric->coord) <= 4);
+    assert(manhattan(tank->coord, druid->coord) <= 4);
+}
+
+void test_normal_ai_preserves_interest_after_core_roster() {
+    GameEngine engine(135);
+    GameConfig config;
+    config.mode = GameMode::SinglePlayerVsAi;
+    config.aiDifficulty = AiDifficulty::Normal;
+    engine.startNewGame(config);
+
+    for (int round = 0; round < 4; ++round) {
+        engine.setReady(PlayerId::One, true);
+        assert(engine.snapshot().phase == Phase::Combat);
+        forceNextPreparationByStall(engine);
+        assert(engine.snapshot().phase == Phase::Preparation);
+    }
+
+    std::vector<UnitType> core = {
+        UnitType::ShieldGuardian,
+        UnitType::Ranger,
+        UnitType::Cleric,
+        UnitType::Druid,
+        UnitType::Skeleton,
+        UnitType::GoblinSkirmisher,
+        UnitType::GithyankiWarrior,
+        UnitType::ImpSwarm,
+        UnitType::Evoker
+    };
+    for (size_t i = 0; i < core.size(); ++i) {
+        const UnitSpec* spec = engine.specFor(core[i]);
+        assert(spec);
+        Coord preferred{kBoardWidth - 1 - static_cast<int>(i / 4),
+                        4 + static_cast<int>(i % 5)};
+        Coord coord = legalDeployCoordNear(engine, PlayerId::Two, spec->layer, preferred);
+        assert(engine.debugCreateUnit(PlayerId::Two, core[i], coord) != kInvalidUnitId);
+    }
+
+    engine.grantGold(PlayerId::Two, 60);
+    engine.setReady(PlayerId::One, true);
+    GameSnapshot combat = engine.snapshot();
+    assert(combat.phase == Phase::Combat);
+    assert(combatUnitsFor(combat, PlayerId::Two) >= 7);
+    assert(combat.players[1].money >= 32);
 }
 
 void test_missing_policy_falls_back_to_heuristic_ai() {
@@ -3640,6 +4259,159 @@ void test_druid_summons_treant() {
         }
     }
     assert(foundTreant);
+}
+
+void test_druid_treant_moves_after_summon() {
+    GameEngine engine(4);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), openCoordFarthestFromNeutral(engine.snapshot()), 9);
+    assert(engine.debugCreateUnit(PlayerId::One, UnitType::Druid, coords[0]) != kInvalidUnitId);
+    assert(engine.debugCreateUnit(PlayerId::One, UnitType::ShieldGuardian, coords[3]) != kInvalidUnitId);
+    assert(engine.debugCreateUnit(PlayerId::Two, UnitType::ShieldGuardian, coords[8]) != kInvalidUnitId);
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    UnitId treant = kInvalidUnitId;
+    Coord spawnCoord{-1, -1};
+    for (int i = 0; i < 30 * 7 && treant == kInvalidUnitId && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        engine.consumeEvents();
+        GameSnapshot snapshot = engine.snapshot();
+        for (const UnitView& unit : snapshot.units) {
+            if (unit.type == UnitType::Treant && unit.owner == PlayerId::One &&
+                unit.alive && unit.deployed) {
+                treant = unit.id;
+                spawnCoord = unit.coord;
+                break;
+            }
+        }
+    }
+
+    assert(treant != kInvalidUnitId);
+    bool treantActed = false;
+    Coord lastCoord = spawnCoord;
+    for (int i = 0; i < 30 * 4 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        GameSnapshot snapshot = engine.snapshot();
+        if (const UnitView* view = findUnit(snapshot, treant)) {
+            if (view->alive && view->deployed) {
+                lastCoord = view->coord;
+                if (view->coord != spawnCoord) treantActed = true;
+            }
+        }
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.actor == treant &&
+                (event.type == EventType::UnitMoved || event.type == EventType::UnitAttacked)) {
+                treantActed = true;
+            }
+        }
+        if (treantActed) break;
+    }
+
+    assert(treantActed);
+    assert(lastCoord != spawnCoord || engine.snapshot().phase == Phase::Combat);
+}
+
+void test_player_summons_receive_party_event_effects_without_triggering_events() {
+    bool tested = false;
+    for (unsigned seed = 900; seed < 1100 && !tested; ++seed) {
+        GameEngine engine(seed);
+        engine.startNewGame(GameMode::TwoPlayer);
+        std::vector<Coord> arcaneFonts =
+            engine.debugHiddenEventCoords(HiddenExplorationEventKind::ArcaneFont);
+        if (arcaneFonts.empty()) continue;
+
+        Coord triggerCoord = openCoordNear(engine.snapshot(), Coord{2, kBoardHeight / 2}, 6);
+        UnitId trigger = engine.debugCreateUnit(PlayerId::One, UnitType::Druid, triggerCoord);
+        UnitId treant = engine.debugCreateUnit(
+            PlayerId::One,
+            UnitType::Treant,
+            openCoordNear(engine.snapshot(), Coord{triggerCoord.x + 1, triggerCoord.y}, 4));
+        assert(trigger != kInvalidUnitId);
+        assert(treant != kInvalidUnitId);
+
+        GameSnapshot before = engine.snapshot();
+        const UnitView* treantBefore = findUnit(before, treant);
+        assert(treantBefore);
+        assert(!engine.debugTriggerHiddenEvent(PlayerId::One, arcaneFonts.front(), treant));
+
+        assert(engine.debugTriggerHiddenEvent(PlayerId::One, arcaneFonts.front(), trigger));
+        GameSnapshot after = engine.snapshot();
+        const UnitView* treantAfter = findUnit(after, treant);
+        assert(treantAfter);
+        assert(treantAfter->shield > treantBefore->shield);
+        tested = true;
+    }
+    assert(tested);
+}
+
+void test_round_start_shield_applies_to_player_summons() {
+    GameEngine engine(1210);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), openCoordFarthestFromNeutral(engine.snapshot()), 3);
+    UnitId druid = engine.debugCreateUnit(PlayerId::One, UnitType::Druid, coords[0]);
+    UnitId treant = engine.debugCreateUnit(PlayerId::One, UnitType::Treant, coords[1]);
+    assert(druid != kInvalidUnitId);
+    assert(treant != kInvalidUnitId);
+
+    RunModifiers modifiers;
+    modifiers.roundStartShield = 7;
+    engine.setRunModifiers(PlayerId::One, modifiers);
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    GameSnapshot snapshot = engine.snapshot();
+    const UnitView* druidView = findUnit(snapshot, druid);
+    const UnitView* treantView = findUnit(snapshot, treant);
+    assert(druidView);
+    assert(treantView);
+    assert(druidView->shield >= 7);
+    assert(treantView->shield >= 7);
+}
+
+void test_cleric_can_heal_player_summons() {
+    GameEngine engine(1211);
+    engine.startNewGame(GameMode::TwoPlayer);
+    setupExplorationCombat(engine);
+
+    std::vector<Coord> coords =
+        horizontalOpenRun(engine.snapshot(), openCoordFarthestFromNeutral(engine.snapshot()), 3);
+    UnitId cleric = engine.debugCreateUnit(PlayerId::One, UnitType::Cleric, coords[0]);
+    UnitId treant = engine.debugCreateUnit(PlayerId::One, UnitType::Treant, coords[1]);
+    assert(cleric != kInvalidUnitId);
+    assert(treant != kInvalidUnitId);
+    assert(engine.debugApplyDamage(treant, 20, DamageType::Slashing));
+
+    GameSnapshot damaged = engine.snapshot();
+    const UnitView* damagedTreant = findUnit(damaged, treant);
+    assert(damagedTreant);
+    int hpBefore = damagedTreant->totalHp;
+
+    engine.setReady(PlayerId::One, true);
+    engine.setReady(PlayerId::Two, true);
+
+    bool healedTreant = false;
+    for (int i = 0; i < 30 * 3 && engine.snapshot().phase == Phase::Combat; ++i) {
+        engine.tick(1.0 / 30.0);
+        GameSnapshot snapshot = engine.snapshot();
+        const UnitView* currentTreant = findUnit(snapshot, treant);
+        if (currentTreant && currentTreant->totalHp > hpBefore) healedTreant = true;
+        for (const Event& event : engine.consumeEvents()) {
+            if (event.type == EventType::Healed && event.target == treant) {
+                healedTreant = true;
+            }
+        }
+        if (healedTreant) break;
+    }
+
+    assert(healedTreant);
 }
 
 void test_summoners_respect_per_caster_summon_limits_and_relic_bonus() {
@@ -4349,6 +5121,7 @@ int main() {
 #define RUN_TEST(fn) do { fn(); } while (false)
     RUN_TEST(test_relic_taxonomy_has_four_layers_and_family_pools);
     RUN_TEST(test_battle_board_uses_33x19_isolated_wilds_map);
+    RUN_TEST(test_exploration_map_variant_survives_round_reset);
     RUN_TEST(test_exploration_state_tracks_objectives_and_random_gold);
     RUN_TEST(test_hidden_events_are_not_visible_and_can_use_edge_rows);
     RUN_TEST(test_exploration_round_selector_uses_allowed_values);
@@ -4359,8 +5132,11 @@ int main() {
     RUN_TEST(test_high_wis_perception_detects_hidden_gold_and_healing);
     RUN_TEST(test_low_wis_unit_can_miss_hidden_detection);
     RUN_TEST(test_internal_units_cannot_detect_hidden_events);
+    RUN_TEST(test_expanded_hidden_event_types_resolve);
+    RUN_TEST(test_run_modifiers_affect_hidden_events_traps_and_round_start_shield);
     RUN_TEST(test_neutral_camps_hold_their_guard_posts);
     RUN_TEST(test_neutral_camps_wait_until_attacked_before_countering);
+    RUN_TEST(test_neutral_guardian_pursues_provoker_to_leash_edge);
     RUN_TEST(test_neutral_activation_ignores_proximity_hidden_events_and_sourceless_damage);
     RUN_TEST(test_neutral_knockback_activates_only_the_shoved_guardian);
     RUN_TEST(test_neutral_activation_resets_next_preparation_without_healing);
@@ -4407,10 +5183,17 @@ int main() {
     RUN_TEST(test_boss_units_resist_standard_knockback);
     RUN_TEST(test_radial_knockback_pushes_hostile_units_away_from_center);
     RUN_TEST(test_feature_schema_matches_exported_features);
+    RUN_TEST(test_ai_action_features_include_tactical_context);
     RUN_TEST(test_normal_ai_uses_built_in_strategy_without_policy_file);
-    RUN_TEST(test_normal_ai_round_one_opener_stays_readable);
+    RUN_TEST(test_normal_ai_round_one_opener_spends_opening_budget);
     RUN_TEST(test_normal_ai_exploration_opener_covers_center_and_wing);
     RUN_TEST(test_normal_ai_buys_air_answer_when_player_fields_air);
+    RUN_TEST(test_normal_ai_buys_evoker_and_screen_against_frontline_pressure);
+    RUN_TEST(test_normal_ai_buys_rogue_against_backline_pressure);
+    RUN_TEST(test_normal_ai_buys_aoe_against_summon_or_dense_pressure);
+    RUN_TEST(test_normal_ai_continues_roster_after_round_one);
+    RUN_TEST(test_normal_ai_keeps_backline_behind_frontline);
+    RUN_TEST(test_normal_ai_preserves_interest_after_core_roster);
     RUN_TEST(test_missing_policy_falls_back_to_heuristic_ai);
     RUN_TEST(test_stale_policy_falls_back_to_heuristic_ai);
     RUN_TEST(test_exported_policy_loads_when_rules_match);
@@ -4431,6 +5214,10 @@ int main() {
     RUN_TEST(test_continuing_combat_is_not_cut_off_at_forty_five_seconds);
     RUN_TEST(test_stalled_combat_ends_after_no_attacks_or_movement);
     RUN_TEST(test_druid_summons_treant);
+    RUN_TEST(test_druid_treant_moves_after_summon);
+    RUN_TEST(test_player_summons_receive_party_event_effects_without_triggering_events);
+    RUN_TEST(test_round_start_shield_applies_to_player_summons);
+    RUN_TEST(test_cleric_can_heal_player_summons);
     RUN_TEST(test_summoners_respect_per_caster_summon_limits_and_relic_bonus);
     RUN_TEST(test_land_units_cannot_stack_but_air_units_can);
     RUN_TEST(test_land_units_block_land_movement_but_not_air);

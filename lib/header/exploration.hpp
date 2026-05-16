@@ -73,6 +73,8 @@ public:
     ExplorationStats stats() const;
     std::vector<Coord> randomGoldCoords() const;
     std::vector<Coord> hiddenHealingCoords() const;
+    std::vector<Coord> hiddenEventCoords(HiddenExplorationEventKind kind) const;
+    void addBonusHiddenEvents(std::vector<Coord> candidates, std::mt19937& rng, int count);
     std::optional<HiddenExplorationEventState> claimHiddenEvent(PlayerId player, Coord coord, UnitId unitId);
     std::optional<RandomGoldEventState> claimRandomGold(PlayerId player, Coord coord, UnitId unitId);
 

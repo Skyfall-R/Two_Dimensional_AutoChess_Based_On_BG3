@@ -13,6 +13,6 @@ Modules:
     trainer      - Training loop (cross-entropy + MSE).
     arena        - Evaluation against scripted / previous checkpoints.
     opponent_pool - Frozen opponent snapshots (PFSP sampling).
-    export       - Distill trained net into linear-v1 policy JSON for C++.
+    export       - Distill trained net into linear-v2 policy JSON for C++.
     utils        - Logging / checkpoint paths.
 """

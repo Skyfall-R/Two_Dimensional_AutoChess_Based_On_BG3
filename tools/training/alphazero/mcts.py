@@ -177,7 +177,7 @@ class MCTS:
         done = bool(result.get("done", False))
         if done:
             # env_step's reward already includes the ±1 terminal bonus plus
-            # tower deltas; do NOT add _terminal_value on top (would double-count).
+            # exploration-score delta; do NOT add _terminal_value on top.
             # Clamp into the value-head's [-1, 1] range so MCTS Q-values stay
             # comparable with the bootstrap values used for non-terminal leaves.
             value = max(-1.0, min(1.0, reward))

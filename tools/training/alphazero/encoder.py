@@ -2,7 +2,7 @@
 
 The C++ env exposes:
     state_features  -> list[float] of length stateFeatureCount (478)
-    legal_actions   -> list[dict] each with `features` (length 20) +
+    legal_actions   -> list[dict] each with `features` (length 32) +
                        (kind, type, unitId, x, y, kindId, typeId)
 
 We turn each (state, legal_actions) into:
