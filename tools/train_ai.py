@@ -333,6 +333,7 @@ def main() -> int:
             # 1. Self-play.
             new_samples = 0
             zs = []
+            max_legal_actions = 0
             game_count = max(1, cfg.selfplay.games_per_worker_iter * max(1, cfg.selfplay.workers))
             for game in range(game_count):
                 seed = (iteration * 10_000 + game) ^ cfg.seed
@@ -348,10 +349,13 @@ def main() -> int:
                 replay.extend(samples)
                 new_samples += len(samples)
                 zs.append(stats.final_value)
+                max_legal_actions = max(max_legal_actions, stats.max_legal_actions)
             avg_z = sum(zs) / max(1, len(zs))
+            replay_mb = replay.approx_bytes() / (1024.0 * 1024.0)
             utils.info(
                 f"iter {iteration} self-play: {new_samples} samples, "
-                f"avg_z={avg_z:+.3f}, replay={len(replay)}"
+                f"avg_z={avg_z:+.3f}, replay={len(replay)}, "
+                f"replay_mb={replay_mb:.1f}, max_legal={max_legal_actions}"
             )
 
             # 2. Train.

@@ -28,14 +28,49 @@ class _ReplayDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        sample = self.samples[idx]
-        return (
-            torch.from_numpy(sample.state),
-            torch.from_numpy(sample.action_features),
-            torch.from_numpy(sample.action_mask),
-            torch.from_numpy(sample.policy),
-            torch.tensor(sample.value, dtype=torch.float32),
+        return self.samples[idx]
+
+
+def _collate_samples(samples: list[Sample]):
+    batch_size = len(samples)
+    states = torch.stack([
+        torch.from_numpy(sample.state.astype(np.float32, copy=False))
+        for sample in samples
+    ])
+    max_actions = max(1, max(sample.action_features.shape[0] for sample in samples))
+    action_dim = next(
+        (
+            sample.action_features.shape[1]
+            for sample in samples
+            if sample.action_features.ndim == 2 and sample.action_features.shape[1] > 0
+        ),
+        0,
+    )
+
+    action_feats = torch.zeros(batch_size, max_actions, action_dim, dtype=torch.float32)
+    mask = torch.zeros(batch_size, max_actions, dtype=torch.bool)
+    target_pi = torch.zeros(batch_size, max_actions, dtype=torch.float32)
+    target_z = torch.tensor([sample.value for sample in samples], dtype=torch.float32)
+
+    for row, sample in enumerate(samples):
+        if sample.action_features.ndim != 2 or sample.action_features.shape[0] == 0:
+            continue
+        if sample.action_features.shape[1] != action_dim:
+            raise ValueError(
+                f"inconsistent action feature width: {sample.action_features.shape[1]} != {action_dim}"
+            )
+        count = min(sample.action_features.shape[0], max_actions)
+        action_feats[row, :count] = torch.from_numpy(
+            sample.action_features[:count].astype(np.float32, copy=False)
         )
+        mask[row, :count] = True
+        policy = sample.policy[:count].astype(np.float32, copy=False)
+        total = float(policy.sum())
+        if total > 0.0:
+            policy = policy / total
+        target_pi[row, :count] = torch.from_numpy(policy)
+
+    return states, action_feats, mask, target_pi, target_z
 
 
 @dataclass
@@ -61,6 +96,10 @@ def train_one_iteration(
         return metrics
 
     samples = buffer.sample(config.trainer.batch_size * config.trainer.minibatches_per_iter)
+    samples = [
+        sample for sample in samples
+        if sample.action_features.ndim == 2 and sample.action_features.shape[0] > 0
+    ]
     if not samples:
         return metrics
 
@@ -71,6 +110,7 @@ def train_one_iteration(
         shuffle=True,
         num_workers=0,
         drop_last=False,
+        collate_fn=_collate_samples,
     )
 
     total_p, total_v, total_loss, batches = 0.0, 0.0, 0.0, 0

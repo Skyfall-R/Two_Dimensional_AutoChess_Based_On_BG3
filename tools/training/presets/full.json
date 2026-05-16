@@ -40,7 +40,7 @@
     "max_grad_norm": 1.0
   },
   "replay": {
-    "capacity": 200000,
+    "capacity": 60000,
     "min_size_to_train": 4000
   },
   "arena": {

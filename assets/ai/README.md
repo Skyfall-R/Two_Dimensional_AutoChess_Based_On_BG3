@@ -17,3 +17,8 @@ reason to the event log.
 
 `Difficult` is parsed as the same difficulty tier as `Hard`; the file name
 stays `hard.policy.json` for compatibility.
+
+The training replay buffer stores variable-length action lists and pads only
+inside each minibatch. This keeps Exploration-mode states with many deployed
+units from wasting memory on absent action slots; the `full` preset therefore
+uses a 60,000-sample replay cap by default.

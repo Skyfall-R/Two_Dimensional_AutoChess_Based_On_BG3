@@ -20,9 +20,9 @@ import numpy as np
 import torch
 
 from .config import TrainingConfig
-from .encoder import encode, MAX_ACTIONS_PER_STATE
+from .encoder import encode
 from .mcts import MCTS
-from .replay import Sample
+from .replay import Sample, make_sample
 
 
 @dataclass
@@ -31,6 +31,7 @@ class GameStats:
     moves_played: int
     final_value: float
     duration_sec: float
+    max_legal_actions: int = 0
 
 
 def play_game(
@@ -70,6 +71,7 @@ def play_game(
     moves_played = 0
     started = time.time()
     final_value = 0.0
+    max_legal_actions = 0
 
     try:
         for round_idx in range(config.selfplay.rounds_per_game):
@@ -87,6 +89,7 @@ def play_game(
                 legal_actions = env_module.env_legal_actions(handle)
                 if not legal_actions:
                     break
+                max_legal_actions = max(max_legal_actions, len(legal_actions))
 
                 encoded = encode(state_features, legal_actions)
                 visit_dist, _root_value, legal_indices = mcts.run(
@@ -152,6 +155,7 @@ def play_game(
         moves_played=moves_played,
         final_value=final_value,
         duration_sec=duration,
+        max_legal_actions=max_legal_actions,
     )
 
 
@@ -162,21 +166,7 @@ def _make_sample(
     visits: np.ndarray,
     z: float,
 ) -> Sample:
-    feat_dim = action_features.shape[1] if action_features.size else 0
-    padded_actions = np.zeros((MAX_ACTIONS_PER_STATE, feat_dim), dtype=np.float32)
-    padded_visits = np.zeros(MAX_ACTIONS_PER_STATE, dtype=np.float32)
-    mask = np.zeros(MAX_ACTIONS_PER_STATE, dtype=bool)
-    if legal_count > 0:
-        padded_actions[:legal_count] = action_features[:legal_count]
-        padded_visits[:legal_count] = visits[:legal_count]
-        mask[:legal_count] = True
-    return Sample(
-        state=state,
-        action_features=padded_actions,
-        action_mask=mask,
-        policy=padded_visits,
-        value=float(np.clip(z, -1.0, 1.0)),
-    )
+    return make_sample(state, action_features, legal_count, visits, z)
 
 
 def _soft_value(obs: dict) -> float:
