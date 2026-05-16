@@ -2,10 +2,13 @@
 # Headless training entry point for Paratera (or any Linux GPU instance).
 #
 # Usage:
-#   tools/run_cloud.sh                      # cloud preset, ~20h
+#   tools/run_cloud.sh                      # cloud preset (default: 40h, 8 workers)
 #   tools/run_cloud.sh short                # smaller preset
 #   tools/run_cloud.sh cloud --hours 6      # cap wall clock
 #   tools/run_cloud.sh cloud --resume ai_runs/cloud
+#
+# Note: cloud preset writes replay checkpoints as compressed npz (~500MB
+# at 200k samples), not multi-GB JSON, so a 40GB system disk is sufficient.
 #
 # Assumptions on the instance:
 #   - Ubuntu 22.04 or similar

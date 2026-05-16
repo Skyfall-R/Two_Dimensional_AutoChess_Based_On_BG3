@@ -126,6 +126,20 @@ def train_one_iteration(
         loss_v = value_loss(value_pred, target_z)
         loss = loss_pi + config.trainer.value_loss_weight * loss_v
 
+        # Entropy bonus: encourages the policy to keep some spread over
+        # the legal-action set instead of collapsing onto MCTS's argmax
+        # too early. Mean entropy over masked-in actions only.
+        entropy_weight = float(getattr(config.trainer, "entropy_bonus", 0.0) or 0.0)
+        if entropy_weight > 0.0:
+            # Mask logits so invalid slots don't poison softmax.
+            masked_logits = logits.masked_fill(~mask.bool(), -1e9)
+            log_probs = torch.nn.functional.log_softmax(masked_logits, dim=-1)
+            probs = log_probs.exp()
+            # Per-row entropy in nats, summing only legal slots.
+            ent_per_row = -(probs * log_probs * mask.float()).sum(dim=-1)
+            entropy_term = ent_per_row.mean()
+            loss = loss - entropy_weight * entropy_term
+
         optimizer.zero_grad()
         loss.backward()
         if config.trainer.max_grad_norm > 0:

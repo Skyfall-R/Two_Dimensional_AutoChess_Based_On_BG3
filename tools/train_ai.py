@@ -254,7 +254,8 @@ def main() -> int:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     state_path = checkpoint_dir / "state.json"
     weights_path = checkpoint_dir / "network.pt"
-    replay_path = checkpoint_dir / "replay.json"
+    replay_path = checkpoint_dir / "replay.npz"
+    legacy_replay_path = checkpoint_dir / "replay.json"
     opponent_dir = checkpoint_dir / "opponents"
 
     network = PolicyValueNet(
@@ -275,15 +276,28 @@ def main() -> int:
 
     iteration_start = 0
     state_meta = utils.read_json(state_path) if not args.fresh else None
+    resumed_from_checkpoint = False
     if state_meta and state_meta.get("rules_fingerprint") == rules_fingerprint and weights_path.exists():
         utils.info(f"resuming from {checkpoint_dir} (iter {state_meta['iteration']})")
+        resumed_from_checkpoint = True
         network.load_state_dict(torch.load(weights_path, map_location=device))
         if replay_path.exists():
             try:
-                replay = ReplayBuffer.deserialize(json.loads(replay_path.read_text(encoding="utf-8")))
-                utils.info(f"replay buffer restored: {len(replay)} samples")
+                replay = ReplayBuffer.load_npz(replay_path)
+                utils.info(f"replay buffer restored from npz: {len(replay)} samples")
             except Exception as exc:
-                utils.fatal(f"failed to restore replay: {exc}; starting empty")
+                utils.fatal(f"failed to restore replay npz: {exc}; starting empty")
+                replay = ReplayBuffer(capacity=cfg.replay.capacity)
+        elif legacy_replay_path.exists():
+            try:
+                replay = ReplayBuffer.deserialize(
+                    json.loads(legacy_replay_path.read_text(encoding="utf-8"))
+                )
+                utils.info(
+                    f"replay buffer restored from legacy json: {len(replay)} samples"
+                )
+            except Exception as exc:
+                utils.fatal(f"failed to restore legacy replay json: {exc}; starting empty")
                 replay = ReplayBuffer(capacity=cfg.replay.capacity)
         iteration_start = int(state_meta["iteration"]) + 1
     elif state_meta and state_meta.get("rules_fingerprint") != rules_fingerprint:
@@ -297,11 +311,29 @@ def main() -> int:
     rng = np.random.default_rng(cfg.seed + iteration_start)
     deadline = time.time() + cfg.hours * 3600 if cfg.hours else None
     last_iter = iteration_start
-    last_metrics: dict[str, Any] = {}
+    last_metrics: dict[str, Any] = (
+        dict(state_meta.get("metrics", {}))
+        if (
+            resumed_from_checkpoint
+            and state_meta
+            and isinstance(state_meta.get("metrics"), dict)
+        )
+        else {}
+    )
 
     def save_checkpoint(iteration: int, metrics: dict | None) -> None:
         torch.save(network.state_dict(), weights_path)
-        replay_path.write_text(json.dumps(replay.serialize()), encoding="utf-8")
+        # Use the compact compressed-binary npz path: 11GB JSON for 200k
+        # samples becomes ~500MB on disk and avoids building the whole
+        # buffer as one giant Python str in RAM during checkpoint.
+        replay.save_npz(replay_path)
+        # Remove a stale legacy JSON dump if one is hanging around so that
+        # next resume always sees the npz authoritative.
+        if legacy_replay_path.exists():
+            try:
+                legacy_replay_path.unlink()
+            except OSError:
+                pass
         utils.write_json(
             state_path,
             {
@@ -434,12 +466,38 @@ def main() -> int:
     finally:
         save_checkpoint(last_iter, last_metrics)
 
-        export_dir = (
+        # Arena gate: if the latest evaluated win-rate is below the preset's
+        # accept_threshold, we refuse to overwrite the production
+        # assets/ai/*.policy.json files. We still write the artifacts to a
+        # quarantine subdirectory so the operator can inspect them.
+        rejected_dir = checkpoint_dir / "rejected"
+        configured_export_dir = (
             Path(cfg.export_dir)
             if Path(cfg.export_dir).is_absolute()
             else (ROOT / cfg.export_dir)
         ).resolve()
-        utils.info(f"distilling network -> linear policy at {export_dir}")
+        win_rate = float(last_metrics.get("win_rate_vs_normal", 0.0))
+        gate_threshold = float(cfg.arena.accept_threshold)
+        if not last_metrics or "win_rate_vs_normal" not in last_metrics:
+            utils.fatal(
+                "no arena evaluation captured this run; exporting to rejected/ "
+                "instead of overwriting production policies"
+            )
+            export_dir = rejected_dir
+        elif win_rate < gate_threshold:
+            utils.fatal(
+                f"win_rate vs Normal {win_rate:.2%} < accept_threshold "
+                f"{gate_threshold:.2%}; exporting to {rejected_dir} instead of "
+                f"{configured_export_dir}. Inspect and copy manually if you want to ship this."
+            )
+            export_dir = rejected_dir
+        else:
+            utils.info(
+                f"arena gate PASSED: win_rate {win_rate:.2%} >= "
+                f"threshold {gate_threshold:.2%}; exporting to production"
+            )
+            export_dir = configured_export_dir
+        utils.info(f"distilling network -> policy package at {export_dir}")
 
         # Pick a weak-but-coherent snapshot for Hard. We prefer the median
         # opponent-pool entry (mid-training strength) so Hard plays
