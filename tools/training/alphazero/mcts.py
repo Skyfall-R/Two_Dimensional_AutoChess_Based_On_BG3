@@ -139,11 +139,26 @@ class MCTS:
         # Backprop already happened during _descend's recursion.
         _ = value
 
+    # Depth cap for a single MCTS simulation. Each "depth step" corresponds to
+    # one env_step in the cloned env, and Ready actions trigger a full combat
+    # simulation that can take seconds. Without this cap a simulation could
+    # roll out 8 rounds * many prep actions, with multiple combats per sim;
+    # 256 sims * that depth is tens of thousands of expensive env_steps per
+    # root decision and the trainer appears to hang. Bootstrapping with the
+    # value head at this depth is the standard AlphaZero recipe anyway.
+    MAX_SIM_DEPTH = 8
+
     def _descend(self, handle: int, node: _Node, encoded: EncodedState, depth: int) -> float:
         """PUCT descent + recursive backup. Returns the leaf value seen by `node`."""
         if encoded.legal_count == 0:
             # Terminal-like with no legal actions: read result directly.
             value = self._terminal_value(handle) if self._is_terminal(handle) else 0.0
+            self._backup(node, value)
+            return value
+
+        if depth >= self.MAX_SIM_DEPTH:
+            # Depth cap: do not descend further, just bootstrap with NN value.
+            _, value = self._evaluate(encoded)
             self._backup(node, value)
             return value
 
@@ -172,23 +187,45 @@ class MCTS:
 
         chosen_idx = best_idx
         engine_idx = encoded.legal_indices[chosen_idx]
+
+        # Note the round before stepping. If env_step caused the round to
+        # advance, that means a Ready was applied and a full combat ran
+        # inside env_step. That's the expensive transition. Treat it like a
+        # "leaf-ish" boundary and bootstrap with NN value, instead of
+        # continuing to recurse into the next round and potentially through
+        # the rest of the game.
+        round_before = int(self.env_module.env_observation(handle).get("explorationRound", 0))
+
         result = self.env_module.env_step(handle, engine_idx)
         reward = float(result.get("reward", 0.0))
         done = bool(result.get("done", False))
         if done:
-            # env_step's reward already includes the ±1 terminal bonus plus
-            # exploration-score delta; do NOT add _terminal_value on top.
-            # Clamp into the value-head's [-1, 1] range so MCTS Q-values stay
-            # comparable with the bootstrap values used for non-terminal leaves.
             value = max(-1.0, min(1.0, reward))
             self._backup(node.children[chosen_idx], value)
             self._backup(node, value)
             return value
 
+        obs_after = self.env_module.env_observation(handle)
+        round_after = int(obs_after.get("explorationRound", 0))
         next_encoded = encode(
             self.env_module.env_state_features(handle),
             self.env_module.env_legal_actions(handle),
         )
+
+        if round_after > round_before:
+            # A round just resolved (combat ran inside env_step). Bootstrap
+            # the value of the new prep state via the network and stop the
+            # simulation here. This caps each MCTS rollout to at most one
+            # combat resolution, which is what makes the budget tractable.
+            if next_encoded.legal_count == 0:
+                future = max(-1.0, min(1.0, reward))
+            else:
+                _, future = self._evaluate(next_encoded)
+            value = max(-1.0, min(1.0, reward + future))
+            self._backup(node.children[chosen_idx], value)
+            self._backup(node, value)
+            return value
+
         future = self._descend(handle, node.children[chosen_idx], next_encoded, depth + 1)
         # Within a single round we don't discount (~12 prep steps total).
         # Clamp to keep numerical scale aligned with the value head.
@@ -197,6 +234,6 @@ class MCTS:
         return value
 
     @staticmethod
-    def _backup(node: _Node, value: float) -> None:
+    def _backup(node: "_Node", value: float) -> None:
         node.visit_count += 1
         node.value_sum += value

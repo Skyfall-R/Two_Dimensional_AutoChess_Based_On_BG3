@@ -14,11 +14,11 @@
     "dropout": 0.0
   },
   "mcts": {
-    "simulations": 256,
+    "simulations": 48,
     "c_puct": 1.5,
     "dirichlet_alpha": 0.3,
     "dirichlet_epsilon": 0.25,
-    "temperature_moves": 16,
+    "temperature_moves": 12,
     "temperature": 1.0
   },
   "selfplay": {
