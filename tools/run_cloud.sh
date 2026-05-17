@@ -2,7 +2,7 @@
 # Headless training entry point for Paratera (or any Linux GPU instance).
 #
 # Usage:
-#   tools/run_cloud.sh                      # cloud preset (default: 40h, 8 workers)
+#   tools/run_cloud.sh                      # cloud preset (default: 60h, 8 workers)
 #   tools/run_cloud.sh short                # smaller preset
 #   tools/run_cloud.sh cloud --hours 6      # cap wall clock
 #   tools/run_cloud.sh cloud --resume ai_runs/cloud

@@ -1,7 +1,7 @@
 {
   "preset": "cloud",
-  "iterations": 800,
-  "hours": 40.0,
+  "iterations": 1200,
+  "hours": 60.0,
   "seed": 7,
   "device": "cuda",
   "checkpoint_dir": "ai_runs/cloud",
