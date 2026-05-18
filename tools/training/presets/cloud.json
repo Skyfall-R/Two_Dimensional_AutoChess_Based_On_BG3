@@ -1,7 +1,7 @@
 {
   "preset": "cloud",
-  "iterations": 1200,
-  "hours": 60.0,
+  "iterations": 1500,
+  "hours": 72.0,
   "seed": 7,
   "device": "cuda",
   "checkpoint_dir": "ai_runs/cloud",
@@ -26,7 +26,7 @@
     "games_per_worker_iter": 6,
     "max_actions_per_round": 32,
     "rounds_per_game": 8,
-    "opponent_difficulty": "Hard",
+    "opponent_difficulty": "Normal",
     "use_opponent_pool": true,
     "opponent_snapshot_every_iter": 3
   },

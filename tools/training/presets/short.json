@@ -26,7 +26,7 @@
     "games_per_worker_iter": 4,
     "max_actions_per_round": 24,
     "rounds_per_game": 4,
-    "opponent_difficulty": "Hard",
+    "opponent_difficulty": "Normal",
     "use_opponent_pool": true,
     "opponent_snapshot_every_iter": 4
   },
