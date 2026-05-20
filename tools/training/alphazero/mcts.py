@@ -188,12 +188,28 @@ class MCTS:
         chosen_idx = best_idx
         engine_idx = encoded.legal_indices[chosen_idx]
 
-        # Note the round before stepping. If env_step caused the round to
-        # advance, that means a Ready was applied and a full combat ran
-        # inside env_step. That's the expensive transition. Treat it like a
-        # "leaf-ish" boundary and bootstrap with NN value, instead of
-        # continuing to recurse into the next round and potentially through
-        # the rest of the game.
+        # Ready short-circuit. If the chosen action is Ready, stepping it
+        # would trigger a full combat tick loop inside env_step, which on a
+        # 33x19 board is the dominant cost of MCTS. AlphaZero-style: do NOT
+        # step; bootstrap the value with the NN's prediction at the current
+        # state, then back-prop. Combat still runs ONCE in the outer
+        # selfplay loop when the agent really commits to Ready, so the value
+        # head learns from real outcomes.
+        chosen_kind = (
+            encoded.action_kinds[chosen_idx]
+            if chosen_idx < len(encoded.action_kinds)
+            else ""
+        )
+        if chosen_kind == "Ready":
+            _, value = self._evaluate(encoded)
+            value = max(-1.0, min(1.0, value))
+            self._backup(node.children[chosen_idx], value)
+            self._backup(node, value)
+            return value
+
+        # Defensive round-advance detection in case env_step still triggers
+        # combat (e.g. stale state from a non-Ready action - shouldn't
+        # happen, but the bootstrap is cheap insurance).
         round_before = int(self.env_module.env_observation(handle).get("explorationRound", 0))
 
         result = self.env_module.env_step(handle, engine_idx)

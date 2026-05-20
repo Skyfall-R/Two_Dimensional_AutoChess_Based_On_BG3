@@ -1,14 +1,17 @@
-"""Self-play game generator.
+"""Self-play game generator with stall-guard forced Ready.
 
-A self-play "iteration" produces a batch of (s, pi, z) tuples by running MCTS
-at every prep state of each game. After the player presses Ready and combat
-resolves, the round outcome (±1) backfills as the value target z for every
-recorded state in that round.
+The AutoChess engine has a degenerate equilibrium: if Player 1 never
+issues Ready, Player 2 never preps, no combat ever runs, and every
+prep state in the round inherits a near-zero proxy z. The agent learns
+"Ready = risky (negative z if combat lost), stall = safe (z=0)" and
+collapses onto MoveDeployed forever, which loses every arena game.
 
-For now we run sequentially in the parent process (works on any platform and
-plays well with checkpoint/resume). When AUTOCHESS_PARALLEL_SELFPLAY=1 the
-generator can be wrapped in a multiprocessing pool by the orchestrator. The
-orchestrator owns process spawning so this module stays simple.
+To break this, the stall-guard inside this module forces Ready with a
+probability that ramps up across the second half of the round. The
+forced-Ready training sample carries a one-hot policy target on the
+Ready slot, so the policy directly learns "you should ready around
+this point in the round". The same forced-Ready logic is mirrored in
+arena.py so evaluation matches selfplay.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import numpy as np
 import torch
 
 from .config import TrainingConfig
-from .encoder import encode
+from .encoder import encode, MAX_ACTIONS_PER_STATE
 from .mcts import MCTS
 from .replay import Sample, make_sample
 
@@ -41,14 +44,9 @@ def play_game(
     config: TrainingConfig,
     seed: int,
     rng: np.random.Generator,
-    opponent_difficulty: str = "Hard",
+    opponent_difficulty: str = "Normal",
 ) -> tuple[list[Sample], GameStats]:
-    """Play a single game and return generated training samples.
-
-    A "game" is a fixed number of rounds. We record (state, MCTS policy,
-    final_z) for each prep decision. final_z is the round outcome ±1 from
-    the player's view, propagated back to all states in that round.
-    """
+    """Play a single game and return generated training samples."""
     handle = env_module.env_create(
         seed=seed,
         max_steps=config.selfplay.max_actions_per_round * config.selfplay.rounds_per_game,
@@ -81,7 +79,6 @@ def play_game(
                 if obs.get("done"):
                     break
                 if obs.get("phase") != "Preparation":
-                    # Combat is auto-running; let it finish.
                     env_module.env_finalize_round(handle)
                     break
 
@@ -92,19 +89,53 @@ def play_game(
                 max_legal_actions = max(max_legal_actions, len(legal_actions))
 
                 encoded = encode(state_features, legal_actions)
+
+                # Find Ready slot if any.
+                ready_slot = None
+                ready_engine_idx = None
+                for slot, action in enumerate(legal_actions):
+                    if action.get("kind") == "Ready":
+                        ready_engine_idx = int(action.get("index", slot))
+                        ready_slot = slot
+                        break
+
+                # Stall guard: progressively ramp up Ready-forcing
+                # probability through the second half of the round.
+                forced_ready = False
+                if ready_engine_idx is not None:
+                    progress = move_idx / max(1, config.selfplay.max_actions_per_round - 1)
+                    force_prob = max(0.0, (progress - 0.5) * 2.0) ** 2
+                    if move_idx >= config.selfplay.max_actions_per_round - 1:
+                        force_prob = 1.0
+                    if rng.random() < force_prob:
+                        forced_ready = True
+
+                if forced_ready:
+                    synthetic = np.zeros(encoded.legal_count, dtype=np.float32)
+                    if ready_slot is not None and ready_slot < encoded.legal_count:
+                        synthetic[ready_slot] = 1.0
+                    round_pending.append(
+                        (encoded.state, encoded.action_features, encoded.legal_count, synthetic)
+                    )
+                    result = env_module.env_step(handle, ready_engine_idx)
+                    moves_played += 1
+                    if result.get("done"):
+                        break
+                    if env_module.env_observation(handle).get("phase") != "Preparation":
+                        env_module.env_finalize_round(handle)
+                        break
+                    continue
+
                 visit_dist, _root_value, legal_indices = mcts.run(
                     handle, config.mcts.simulations, add_noise=True
                 )
                 if visit_dist.size == 0:
                     break
 
-                # Record sample (z filled later from round outcome).
                 round_pending.append(
                     (encoded.state, encoded.action_features, encoded.legal_count, visit_dist.copy())
                 )
 
-                # Sample action: temperature for first N moves of the game,
-                # then argmax (greedy).
                 if move_idx < config.mcts.temperature_moves:
                     probs = np.power(visit_dist + 1e-8, 1.0 / max(0.01, config.mcts.temperature))
                     probs /= probs.sum()
@@ -117,13 +148,10 @@ def play_game(
                 moves_played += 1
                 if result.get("done"):
                     break
-                # If we just played Ready, combat already ran inside env_step.
                 if env_module.env_observation(handle).get("phase") != "Preparation":
                     env_module.env_finalize_round(handle)
                     break
 
-            # End-of-round bookkeeping: exploration score, economy, and board
-            # presence provide a dense value target for the dungeon-run rules.
             obs = env_module.env_observation(handle)
             if obs.get("done"):
                 winner = obs.get("winner", "")
@@ -138,7 +166,6 @@ def play_game(
                 proxy = _soft_value(obs)
                 for state, action_feats, legal_count, pi in round_pending:
                     pending_rows.append((state, action_feats, legal_count, pi))
-                # Apply proxy z to anything older than 1 round.
                 if len(pending_rows) > 0:
                     for state, action_feats, legal_count, pi in pending_rows:
                         samples.append(
@@ -166,11 +193,24 @@ def _make_sample(
     visits: np.ndarray,
     z: float,
 ) -> Sample:
-    return make_sample(state, action_features, legal_count, visits, z)
+    feat_dim = action_features.shape[1] if action_features.size else 0
+    padded_actions = np.zeros((MAX_ACTIONS_PER_STATE, feat_dim), dtype=np.float32)
+    padded_visits = np.zeros(MAX_ACTIONS_PER_STATE, dtype=np.float32)
+    mask = np.zeros(MAX_ACTIONS_PER_STATE, dtype=bool)
+    if legal_count > 0:
+        padded_actions[:legal_count] = action_features[:legal_count]
+        padded_visits[:legal_count] = visits[:legal_count]
+        mask[:legal_count] = True
+    return Sample(
+        state=state,
+        action_features=padded_actions,
+        action_mask=mask,
+        policy=padded_visits,
+        value=float(np.clip(z, -1.0, 1.0)),
+    )
 
 
 def _soft_value(obs: dict) -> float:
-    """Dense non-terminal value for the exploration-run scoring model."""
     score_delta = float(obs.get("playerExplorationScore", 0) - obs.get("enemyExplorationScore", 0))
     money_delta = float(obs.get("playerMoney", 0) - obs.get("enemyMoney", 0))
     boss_delta = float(obs.get("playerBossesCleared", 0) - obs.get("enemyBossesCleared", 0))

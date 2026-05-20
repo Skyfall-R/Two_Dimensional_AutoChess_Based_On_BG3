@@ -53,11 +53,14 @@ def evaluate_vs_difficulty(
     device: torch.device,
     config: TrainingConfig,
     difficulty: str,
+    seed_offset: int = 0,
 ) -> ArenaResult:
     wins = losses = draws = 0
     games = config.arena.games_per_eval
     for game_idx in range(games):
-        seed = 1000 + game_idx
+        # Seed varies per call so identical iterations don't repeat the
+        # exact same 48 games (which can mask incremental policy gains).
+        seed = 1000 + seed_offset + game_idx
         handle = env_module.env_create(
             seed=seed,
             max_steps=config.selfplay.max_actions_per_round * config.selfplay.rounds_per_game,
@@ -65,13 +68,29 @@ def evaluate_vs_difficulty(
         )
         try:
             for _round in range(config.selfplay.rounds_per_game):
-                for _move in range(config.selfplay.max_actions_per_round):
+                for move_idx in range(config.selfplay.max_actions_per_round):
                     obs = env_module.env_observation(handle)
                     if obs.get("done") or obs.get("phase") != "Preparation":
                         break
                     legal = env_module.env_legal_actions(handle)
                     if not legal:
                         break
+
+                    # Force Ready at the end of the round if it's legal.
+                    # Mirrors the selfplay stall-guard so arena evaluates
+                    # the policy under the same "must commit" pressure.
+                    ready_engine_idx = None
+                    for action in legal:
+                        if action.get("kind") == "Ready":
+                            ready_engine_idx = int(action.get("index", -1))
+                            break
+                    last_move = move_idx >= config.selfplay.max_actions_per_round - 1
+                    if last_move and ready_engine_idx is not None:
+                        env_module.env_step(handle, ready_engine_idx)
+                        if env_module.env_observation(handle).get("done"):
+                            break
+                        continue
+
                     encoded = encode(env_module.env_state_features(handle), legal)
                     engine_idx = _greedy_action(network, device, encoded)
                     if engine_idx < 0:

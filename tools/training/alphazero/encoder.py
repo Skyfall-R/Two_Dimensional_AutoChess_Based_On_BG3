@@ -13,11 +13,16 @@ The policy network supports variable action counts. Replay storage keeps each
 sample unpadded, and the trainer pads only within the current minibatch. The
 MAX_ACTIONS_PER_STATE value is a defensive cap for pathological states, not
 the normal replay tensor width.
+
+EncodedState also carries action_kinds (parallel list to legal_indices) so
+the MCTS / selfplay layers can detect Ready actions without re-fetching the
+legal-actions list. This is essential for the Ready short-circuit and for
+the stall-guard that forces Ready near the end of a round.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -32,6 +37,7 @@ class EncodedState:
     action_mask: np.ndarray        # shape [A], bool
     legal_count: int               # number of legal actions present
     legal_indices: list[int]       # original engine indices for legal actions
+    action_kinds: list[str] = field(default_factory=list)  # parallel; e.g. "Ready"
 
 
 def _select_actions_with_cap(legal_actions: list[dict]) -> list[dict]:
@@ -63,6 +69,7 @@ def encode(state_features: list[float], legal_actions: list[dict]) -> EncodedSta
             action_mask=np.zeros(0, dtype=bool),
             legal_count=0,
             legal_indices=[],
+            action_kinds=[],
         )
 
     selected_actions = _select_actions_with_cap(legal_actions)
@@ -70,9 +77,11 @@ def encode(state_features: list[float], legal_actions: list[dict]) -> EncodedSta
     legal_count = len(selected_actions)
     action_features = np.zeros((legal_count, feat_len), dtype=np.float32)
     legal_indices: list[int] = []
+    action_kinds: list[str] = []
     for slot, action in enumerate(selected_actions):
         action_features[slot] = action["features"]
         legal_indices.append(int(action["index"]))
+        action_kinds.append(str(action.get("kind", "")))
 
     mask = np.ones(legal_count, dtype=bool)
 
@@ -82,4 +91,5 @@ def encode(state_features: list[float], legal_actions: list[dict]) -> EncodedSta
         action_mask=mask,
         legal_count=legal_count,
         legal_indices=legal_indices,
+        action_kinds=action_kinds,
     )
