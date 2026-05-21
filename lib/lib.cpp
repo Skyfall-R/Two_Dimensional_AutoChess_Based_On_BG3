@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cmath>
 #include <fstream>
@@ -1897,6 +1898,282 @@ private:
     std::vector<MlpLayer> stateTrunk_;
     std::vector<MlpLayer> actionHead_;
     MlpLayer actionLogit_;
+};
+
+// MctsAiPlanner: classical flat MCTS with action pruning + stochastic rollouts.
+//
+// Why not AlphaZero NN here: the earlier AlphaZero attempt was killed by the
+// action-space / sims-budget mismatch (avg 150 legal actions, max 760, NN
+// MCTS only afforded ~48 sims). That gives <0.4 visits per action — visit
+// distribution is essentially the NN prior, no MCTS improvement signal, pi_loss
+// stuck at log(N). For our compute budget the right answer is classical MCTS
+// with a strong action-pruning heuristic, not a neural network.
+//
+// Algorithm:
+//   1. Score every legal action via engine.heuristicActionScore() and keep the
+//      top-K (Ready is always retained, even if its score is low — MCTS needs
+//      the option to commit). Without this prune the same action-budget
+//      mismatch returns.
+//   2. Flat MCTS over the K candidates: UCB1 picks which candidate to sample
+//      next, balancing mean reward against visit count.
+//   3. Per rollout: clone the engine, reseed the clone's RNG so each sample
+//      gets fresh combat dice, apply the candidate action, then both players
+//      play out the prep phase using chooseHeuristicAction. Force Ready if the
+//      rollout exceeds MAX_PREP_STEPS. Tick the combat loop until phase leaves
+//      Combat. Evaluate the post-combat state.
+//   4. Pick the candidate with the highest sample mean (UCB1 explores
+//      uncertain candidates so max-visits isn't the right output here).
+//
+// Combat is stochastic (d20 attacks/saves), so MCTS is doing real expected-value
+// estimation. SuperHard (256 sims) gets ~16 samples per candidate after the
+// initial sweep, enough to discriminate strong vs weak plays.
+class MctsAiPlanner : public AiPlanner {
+public:
+    explicit MctsAiPlanner(int simulations,
+                           int top_k = 12,
+                           double time_budget_sec = 0.0,
+                           double c_explore = 1.4,
+                           uint64_t seed = 0xC0FFEEULL,
+                           std::string label = "mcts")
+        : sims_(std::max(1, simulations)),
+          top_k_(std::max(1, top_k)),
+          time_budget_sec_(time_budget_sec),
+          c_explore_(c_explore),
+          seed_(seed),
+          own_rng_(seed),
+          label_(std::move(label)) {}
+
+    std::optional<AiAction> chooseAction(GameEngine& engine,
+                                         PlayerId player,
+                                         const std::vector<AiAction>& legalActions) override {
+        if (legalActions.empty()) return std::nullopt;
+        if (legalActions.size() == 1) return legalActions[0];
+
+        const std::vector<int> candidates = pickCandidates(engine, player, legalActions);
+        const int K = static_cast<int>(candidates.size());
+        if (K == 0) return std::nullopt;
+        if (K == 1) return legalActions[candidates[0]];
+
+        struct Stats { int n = 0; double sum = 0.0; };
+        std::vector<Stats> stats(K);
+
+        const auto t_start = std::chrono::steady_clock::now();
+        auto elapsed_sec = [&t_start]() -> double {
+            using sec = std::chrono::duration<double>;
+            return std::chrono::duration_cast<sec>(
+                std::chrono::steady_clock::now() - t_start).count();
+        };
+
+        for (int s = 0; s < sims_; ++s) {
+            if (time_budget_sec_ > 0.0 && s >= K && elapsed_sec() > time_budget_sec_) {
+                break;
+            }
+
+            int idx;
+            if (s < K) {
+                idx = s;  // initial sweep: visit each candidate once
+            } else {
+                int total_n = 0;
+                for (const Stats& st : stats) total_n += st.n;
+                const double log_total = std::log(static_cast<double>(std::max(1, total_n)));
+                int best = 0;
+                double best_ucb = -std::numeric_limits<double>::infinity();
+                for (int i = 0; i < K; ++i) {
+                    if (stats[i].n == 0) { best = i; break; }
+                    const double mean = stats[i].sum / stats[i].n;
+                    const double ucb = mean + c_explore_ * std::sqrt(log_total / stats[i].n);
+                    if (ucb > best_ucb) { best_ucb = ucb; best = i; }
+                }
+                idx = best;
+            }
+
+            const uint64_t sim_seed = own_rng_();
+            const double value = rollout(engine, player,
+                                         legalActions[candidates[idx]], sim_seed);
+            stats[idx].n++;
+            stats[idx].sum += value;
+        }
+
+        // Pick highest sample mean; visit-count micro-bonus breaks ties toward
+        // better-explored candidates.
+        int best = 0;
+        double best_score = -std::numeric_limits<double>::infinity();
+        for (int i = 0; i < K; ++i) {
+            if (stats[i].n == 0) continue;
+            const double mean = stats[i].sum / stats[i].n;
+            const double score = mean + 1e-6 * stats[i].n;
+            if (score > best_score) { best_score = score; best = i; }
+        }
+        return legalActions[candidates[best]];
+    }
+
+    std::string name() const override { return label_; }
+
+    std::unique_ptr<AiPlanner> clone() const override {
+        return std::make_unique<MctsAiPlanner>(*this);
+    }
+
+private:
+    int sims_;
+    int top_k_;
+    double time_budget_sec_;
+    double c_explore_;
+    uint64_t seed_;
+    mutable std::mt19937_64 own_rng_;
+    std::string label_;
+
+    // Score every legal action by the engine's existing heuristicActionScore,
+    // keep the top_k, and always retain Ready if it's legal. Ready often scores
+    // low (engine prefers Buy/Deploy) but MCTS must have the option to commit.
+    std::vector<int> pickCandidates(GameEngine& engine,
+                                    PlayerId player,
+                                    const std::vector<AiAction>& legal) const {
+        const int N = static_cast<int>(legal.size());
+        std::vector<std::pair<double, int>> scored;
+        scored.reserve(N);
+        int ready_idx = -1;
+        for (int i = 0; i < N; ++i) {
+            const double s = engine.heuristicActionScore(player, legal[i]);
+            scored.emplace_back(s, i);
+            if (legal[i].kind == AiActionKind::Ready) ready_idx = i;
+        }
+        const int K = std::min(top_k_, N);
+        std::partial_sort(scored.begin(), scored.begin() + K, scored.end(),
+                          [](const std::pair<double, int>& a,
+                             const std::pair<double, int>& b) {
+                              return a.first > b.first;
+                          });
+
+        std::vector<int> out;
+        out.reserve(K + 1);
+        for (int i = 0; i < K; ++i) out.push_back(scored[i].second);
+
+        if (ready_idx >= 0 &&
+            std::find(out.begin(), out.end(), ready_idx) == out.end()) {
+            if (static_cast<int>(out.size()) >= top_k_) {
+                out.back() = ready_idx;  // displace weakest non-Ready
+            } else {
+                out.push_back(ready_idx);
+            }
+        }
+        return out;
+    }
+
+    // One MCTS rollout: clone engine, reseed for stochastic combat, apply root
+    // action, let heuristic finish the prep, run combat, return evaluation in
+    // [-1, +1] from `me`'s perspective.
+    double rollout(const GameEngine& root_engine,
+                   PlayerId me,
+                   const AiAction& first_action,
+                   uint64_t seed) const {
+        GameEngine sim(root_engine);
+        // Fresh RNG = each rollout samples a different combat outcome.
+        sim.rng_.seed(static_cast<std::mt19937::result_type>(seed));
+
+        if (!sim.applyAiAction(me, first_action)) {
+            // Root action illegal on the clone — treat as a losing move so MCTS
+            // never picks it again.
+            return -1.0;
+        }
+
+        const int MAX_PREP_STEPS = 40;
+        for (int step = 0;
+             step < MAX_PREP_STEPS && sim.phase_ == Phase::Preparation;
+             ++step) {
+            bool any_action = false;
+            for (PlayerId p : {PlayerId::One, PlayerId::Two}) {
+                if (sim.phase_ != Phase::Preparation) break;
+                if (sim.player(p).ready) continue;
+                const std::vector<AiAction> legal = sim.legalActions(p);
+                if (legal.empty()) {
+                    sim.setReady(p, true);
+                    any_action = true;
+                    continue;
+                }
+                const std::optional<AiAction> act = sim.chooseHeuristicAction(p, legal);
+                if (!act) {
+                    sim.setReady(p, true);
+                    any_action = true;
+                    continue;
+                }
+                if (sim.applyAiAction(p, *act)) {
+                    any_action = true;
+                } else {
+                    sim.setReady(p, true);
+                    any_action = true;
+                }
+            }
+            if (!any_action) break;  // both players done or stuck
+        }
+        // Stall guard: if we hit MAX_PREP_STEPS still in prep, force Ready so
+        // combat actually runs and we can score this branch.
+        if (sim.phase_ == Phase::Preparation) {
+            sim.setReady(PlayerId::One, true);
+            sim.setReady(PlayerId::Two, true);
+        }
+
+        // Run combat until phase leaves Combat. Engine has its own 10s stall
+        // guard inside tickCombat (shouldEndStalledCombat); 20s here is just a
+        // belt-and-braces hard cap so a buggy combat can't hang the rollout.
+        const double dt = 0.05;
+        const double max_sim_time = 20.0;
+        double elapsed = 0.0;
+        while (sim.phase_ == Phase::Combat && elapsed < max_sim_time) {
+            sim.tick(dt);
+            elapsed += dt;
+        }
+
+        return evaluatePostState(sim, me);
+    }
+
+    // Heuristic eval after one combat resolution. Terminal winner dominates;
+    // otherwise weighted advantages over exploration score, army strength,
+    // economy, and boss kills. Each advantage passed through tanh so no single
+    // axis can saturate the value out of [-1, +1].
+    static double evaluatePostState(GameEngine& engine, PlayerId me) {
+        if (engine.winner_.has_value()) {
+            return (*engine.winner_ == me) ? 1.0 : -1.0;
+        }
+        const GameSnapshot snap = engine.snapshot();
+        const int meIdx  = (me == PlayerId::One) ? 0 : 1;
+        const int oppIdx = 1 - meIdx;
+
+        const double score_d = static_cast<double>(
+            snap.explorationScores[meIdx] - snap.explorationScores[oppIdx]);
+        const double money_d = static_cast<double>(
+            snap.players[meIdx].money - snap.players[oppIdx].money);
+        const double army_d = armyValue(snap, meIdx) - armyValue(snap, oppIdx);
+        const double boss_d = static_cast<double>(
+            snap.explorationBossesClearedByPlayer[meIdx]
+            - snap.explorationBossesClearedByPlayer[oppIdx]);
+
+        const double v =
+              0.35 * std::tanh(score_d / 50.0)
+            + 0.10 * std::tanh(money_d / 30.0)
+            + 0.45 * std::tanh(army_d / 25.0)
+            + 0.10 * std::tanh(boss_d * 1.0);
+        return std::clamp(v, -1.0, 1.0);
+    }
+
+    // Sum of (hp_fraction × cost) for deployed alive units, plus 0.3 × cost
+    // for bench-alive units (potential, but not on the board this round).
+    static double armyValue(const GameSnapshot& snap, int playerIdx) {
+        const PlayerId me = (playerIdx == 0) ? PlayerId::One : PlayerId::Two;
+        double total = 0.0;
+        for (const UnitView& u : snap.units) {
+            if (u.owner != me) continue;
+            const double cost = static_cast<double>(std::max(1, u.cost));
+            if (u.deployed && u.alive) {
+                const int max_hp = std::max(1, u.maxTotalHp);
+                const double hp_frac = std::clamp(
+                    static_cast<double>(u.totalHp) / max_hp, 0.0, 1.0);
+                total += hp_frac * cost;
+            } else if (!u.deployed && u.alive) {
+                total += 0.3 * cost;
+            }
+        }
+        return total;
+    }
 };
 
 bool operator==(Coord lhs, Coord rhs) {
@@ -4478,138 +4755,33 @@ void GameEngine::loadAiPlanner() {
         return;
     }
 
-    std::string path = joinPath(config_.aiPolicyDirectory, policyFileName(config_.aiDifficulty));
-    aiPolicyMetadata_.path = path;
-
-    std::string json;
-    if (!readTextFile(path, json)) {
-        useHeuristicAiPlanner("policy file missing: " + path);
-        return;
+    // Hard / SuperHard now use classical MCTS (no neural network, no policy
+    // file). The earlier AlphaZero pipeline was killed by the action-space /
+    // sims-budget mismatch — see MctsAiPlanner comment above for details.
+    // PolicyAiPlanner / MlpAiPlanner classes are kept above for backward
+    // reference (training distillation, if revisited), but the engine no
+    // longer instantiates them at runtime.
+    int sims = 64;
+    double time_budget = 3.0;
+    std::string label = "mcts-hard";
+    if (config_.aiDifficulty == AiDifficulty::SuperHard) {
+        sims = 256;
+        time_budget = 10.0;
+        label = "mcts-superhard";
     }
-
-    auto format = jsonStringValue(json, "format");
-    auto modelVersion = jsonStringValue(json, "modelVersion");
-    auto difficulty = jsonStringValue(json, "difficulty");
-    auto fingerprint = jsonStringValue(json, "rulesFingerprint");
-    auto stateCount = jsonNumberValue(json, "stateFeatureCount");
-    auto actionCount = jsonNumberValue(json, "actionFeatureCount");
-    auto heuristicBlend = jsonNumberValue(json, "heuristicBlend");
-    auto bias = jsonNumberValue(json, "bias");
-    std::vector<double> weights = jsonNumberArray(json, "weights");
-
-    if (format) aiPolicyMetadata_.format = *format;
-    if (modelVersion) aiPolicyMetadata_.modelVersion = *modelVersion;
-    if (difficulty) aiPolicyMetadata_.difficulty = *difficulty;
-    if (fingerprint) aiPolicyMetadata_.rulesFingerprint = *fingerprint;
-    if (stateCount) aiPolicyMetadata_.stateFeatureCount = static_cast<int>(*stateCount);
-    if (actionCount) aiPolicyMetadata_.actionFeatureCount = static_cast<int>(*actionCount);
-    if (heuristicBlend) aiPolicyMetadata_.heuristicBlend = *heuristicBlend;
-    if (bias) aiPolicyMetadata_.bias = *bias;
-    aiPolicyMetadata_.loaded = true;
-
-    const int expectedWeights = kStateFeatureCount + kActionFeatureCount;
-    std::string expectedDifficulty = toString(config_.aiDifficulty);
-    if (aiPolicyMetadata_.format != kPolicyFormat) {
-        useHeuristicAiPlanner("policy format mismatch: " + aiPolicyMetadata_.format);
-        return;
-    }
-    const bool isLinearV2 = aiPolicyMetadata_.modelVersion == kPolicyModelVersion;
-    const bool isMlpV3 = aiPolicyMetadata_.modelVersion == kPolicyMlpModelVersion;
-    if (!isLinearV2 && !isMlpV3) {
-        useHeuristicAiPlanner("policy model mismatch: " + aiPolicyMetadata_.modelVersion);
-        return;
-    }
-    if (lowerCopy(aiPolicyMetadata_.difficulty) != lowerCopy(expectedDifficulty)) {
-        useHeuristicAiPlanner("policy difficulty mismatch: " + aiPolicyMetadata_.difficulty);
-        return;
-    }
-    if (aiPolicyMetadata_.rulesFingerprint != rulesFingerprint()) {
-        useHeuristicAiPlanner("policy rules fingerprint stale: " + aiPolicyMetadata_.rulesFingerprint);
-        return;
-    }
-    if (aiPolicyMetadata_.stateFeatureCount != kStateFeatureCount ||
-        aiPolicyMetadata_.actionFeatureCount != kActionFeatureCount) {
-        useHeuristicAiPlanner("policy feature schema mismatch");
-        return;
-    }
-
-    if (isMlpV3) {
-        // mlp-v3 layout: hidden sizes describe stateTrunk + actionHead;
-        // each layer's flat matrix lives in stateW_<i>/stateB_<i>/headW_<i>/headB_<i>;
-        // actionLogit is a single (in -> 1) layer.
-        std::vector<double> hiddenSizes = jsonNumberArray(json, "hiddenSizes");
-        std::vector<double> actionHiddenSizes = jsonNumberArray(json, "actionHiddenSizes");
-        if (hiddenSizes.empty() || actionHiddenSizes.empty()) {
-            useHeuristicAiPlanner("mlp-v3 missing layer sizes");
-            return;
-        }
-        auto buildLayers = [&](int inDim,
-                               const std::vector<double>& sizes,
-                               const std::string& wPrefix,
-                               const std::string& bPrefix,
-                               std::vector<MlpLayer>& out) -> bool {
-            int cur = inDim;
-            for (size_t i = 0; i < sizes.size(); ++i) {
-                int outDim = static_cast<int>(sizes[i]);
-                std::vector<double> w = jsonNumberArray(json, wPrefix + std::to_string(i));
-                std::vector<double> b = jsonNumberArray(json, bPrefix + std::to_string(i));
-                if (static_cast<int>(w.size()) != cur * outDim || static_cast<int>(b.size()) != outDim) {
-                    return false;
-                }
-                MlpLayer layer;
-                layer.inDim = cur;
-                layer.outDim = outDim;
-                layer.weights = std::move(w);
-                layer.biases = std::move(b);
-                out.push_back(std::move(layer));
-                cur = outDim;
-            }
-            return true;
-        };
-        std::vector<MlpLayer> stateTrunk;
-        if (!buildLayers(kStateFeatureCount, hiddenSizes, "stateW_", "stateB_", stateTrunk)) {
-            useHeuristicAiPlanner("mlp-v3 state layer shape mismatch");
-            return;
-        }
-        int stateEmbDim = stateTrunk.back().outDim;
-        std::vector<MlpLayer> actionHead;
-        if (!buildLayers(stateEmbDim + kActionFeatureCount, actionHiddenSizes,
-                         "headW_", "headB_", actionHead)) {
-            useHeuristicAiPlanner("mlp-v3 action layer shape mismatch");
-            return;
-        }
-        std::vector<double> logitW = jsonNumberArray(json, "actionLogitW");
-        std::vector<double> logitB = jsonNumberArray(json, "actionLogitB");
-        int logitInDim = actionHead.empty() ? (stateEmbDim + kActionFeatureCount) : actionHead.back().outDim;
-        if (static_cast<int>(logitW.size()) != logitInDim || logitB.size() != 1) {
-            useHeuristicAiPlanner("mlp-v3 logit head shape mismatch");
-            return;
-        }
-        MlpLayer logitLayer;
-        logitLayer.inDim = logitInDim;
-        logitLayer.outDim = 1;
-        logitLayer.weights = std::move(logitW);
-        logitLayer.biases = std::move(logitB);
-
-        aiPolicyMetadata_.valid = true;
-        aiPolicyMetadata_.status = "loaded mlp-v3 policy: " + path;
-        aiPlanner_ = std::make_unique<MlpAiPlanner>(
-            aiPolicyMetadata_, std::move(stateTrunk), std::move(actionHead), std::move(logitLayer));
-        pushEvent({EventType::AiPolicyStatus, PlayerId::Two, kInvalidUnitId, kInvalidUnitId,
-                   {}, {}, 0, "AI policy " + toString(config_.aiDifficulty) + " (mlp-v3) loaded"});
-        return;
-    }
-
-    if (static_cast<int>(weights.size()) != expectedWeights) {
-        useHeuristicAiPlanner("policy weight count mismatch");
-        return;
-    }
-
     aiPolicyMetadata_.valid = true;
-    aiPolicyMetadata_.status = "loaded policy: " + path;
-    aiPlanner_ = std::make_unique<PolicyAiPlanner>(aiPolicyMetadata_, std::move(weights));
+    aiPolicyMetadata_.path = "built-in";
+    aiPolicyMetadata_.status = label + " (sims=" + std::to_string(sims)
+                             + ", budget=" + std::to_string(time_budget) + "s)";
+    aiPlanner_ = std::make_unique<MctsAiPlanner>(
+        sims,
+        /*top_k=*/ 12,
+        /*time_budget_sec=*/ time_budget,
+        /*c_explore=*/ 1.4,
+        /*seed=*/ static_cast<uint64_t>(0xC0FFEEULL),
+        label);
     pushEvent({EventType::AiPolicyStatus, PlayerId::Two, kInvalidUnitId, kInvalidUnitId,
-               {}, {}, 0, "AI policy " + toString(config_.aiDifficulty) + " loaded"});
+               {}, {}, 0, "AI " + toString(config_.aiDifficulty) + " uses " + label});
 }
 
 void GameEngine::useScriptedNormalAiPlanner() {

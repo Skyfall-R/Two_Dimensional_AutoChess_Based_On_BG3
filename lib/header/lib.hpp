@@ -675,6 +675,7 @@ public:
 class HeuristicAiPlanner;
 class PolicyAiPlanner;
 class MlpAiPlanner;
+class MctsAiPlanner;
 
 class GameEngine {
 public:
@@ -746,6 +747,7 @@ private:
     friend class HeuristicAiPlanner;
     friend class PolicyAiPlanner;
     friend class MlpAiPlanner;
+    friend class MctsAiPlanner;
 
     struct PathResult {
         bool found = false;
