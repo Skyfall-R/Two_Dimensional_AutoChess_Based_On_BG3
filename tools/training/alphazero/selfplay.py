@@ -158,7 +158,7 @@ def play_game(
                 z = 1.0 if winner == "Player1" else (-1.0 if winner == "Player2" else 0.0)
                 final_value = z
                 for state, action_feats, legal_count, pi in round_pending + pending_rows:
-                    samples.append(_make_sample(state, action_feats, legal_count, pi, z))
+                    samples.append(make_sample(state, action_feats, legal_count, pi, z))
                 pending_rows.clear()
                 rounds_played += 1
                 break
@@ -169,7 +169,7 @@ def play_game(
                 if len(pending_rows) > 0:
                     for state, action_feats, legal_count, pi in pending_rows:
                         samples.append(
-                            _make_sample(state, action_feats, legal_count, pi, float(proxy))
+                            make_sample(state, action_feats, legal_count, pi, float(proxy))
                         )
                     pending_rows.clear()
                 rounds_played += 1
@@ -186,13 +186,18 @@ def play_game(
     )
 
 
-def _make_sample(
+def _legacy_padded_make_sample(
     state: np.ndarray,
     action_features: np.ndarray,
     legal_count: int,
     visits: np.ndarray,
     z: float,
 ) -> Sample:
+    # Deprecated: this padded variant ate ~540KB per sample because it
+    # zero-padded action_features and policy to MAX_ACTIONS_PER_STATE in
+    # float32. Use replay.make_sample (variable-length fp16, ~50KB per
+    # sample) instead. Kept here only as historical reference; selfplay
+    # now imports make_sample from replay.py and calls that directly.
     feat_dim = action_features.shape[1] if action_features.size else 0
     padded_actions = np.zeros((MAX_ACTIONS_PER_STATE, feat_dim), dtype=np.float32)
     padded_visits = np.zeros(MAX_ACTIONS_PER_STATE, dtype=np.float32)
